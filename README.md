@@ -43,6 +43,7 @@
 - [agent](agent)：LLM 评审逻辑（Gemini）
 - [config](config)：抓取、初选、Gemini 复评配置
 - [data](data)：运行数据与结果
+- [docs](docs)：方案文档
 - [run_all.py](run_all.py)：全流程一键入口
 
 ---
@@ -181,7 +182,9 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 
 - model：模型名称
 - request_delay：调用间隔（防限流）
-- max_requests_per_run：单次运行最多请求数
+- batch_size：每次 Gemini CLI 请求最多提交几张图，默认 5
+- fallback_to_single_on_batch_error：批量 JSON 解析失败时是否自动降级逐只复评
+- max_requests_per_run：单次运行最多请求数；batch_size=5 时，1 次请求最多覆盖 5 支股票
 - daily_request_budget：项目侧每日请求预算
 - skip_existing：是否断点续跑
 - suggest_min_score：推荐分数门槛

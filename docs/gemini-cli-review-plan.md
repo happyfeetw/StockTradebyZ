@@ -73,6 +73,8 @@ prompt_path: agent/prompt.md
 gemini_bin: gemini
 model: ""
 request_delay: 10
+batch_size: 5
+fallback_to_single_on_batch_error: true
 skip_existing: true
 suggest_min_score: 4.0
 timeout_seconds: 180
@@ -89,8 +91,11 @@ usage_file: data/review/.gemini_cli_usage.json
 - `gemini_bin`：Gemini CLI 可执行文件名或绝对路径。
 - `model`：可为空，使用 CLI 当前默认模型；如果 CLI 支持 `--model`，再传入指定模型。
 - `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
-- `timeout_seconds`：防止单股复评长时间卡住。
-- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI。
+- `timeout_seconds`：防止单次 CLI 调用长时间卡住。
+- `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限固定为 5。
+- `fallback_to_single_on_batch_error`：批量 JSON 解析失败时，自动降级为逐只复评。
+- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=5`
+  时，1 次请求最多覆盖 5 支股票。
 - `daily_request_budget`：项目侧每日调用预算，避免撞到订阅账号日限额。
 - `stop_on_rate_limit`：遇到限流或额度错误时停止，保留已完成结果。
 
@@ -99,28 +104,32 @@ usage_file: data/review/.gemini_cli_usage.json
 Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量图表复评必须按“少量、限速、可续跑”的方式设计：
 
 - 默认不一次性打满全部候选。
-- 每次调用后 sleep `request_delay` 秒。
+- 默认每次 CLI 请求提交最多 5 张图，降低每分钟请求次数。
+- 每次 CLI 调用后 sleep `request_delay` 秒。
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。
 - 如果 stdout/stderr 或退出码显示 rate limit、quota、too many requests 等错误，立即停止或长时间退避，不连续重试。
 - `skip_existing: true` 时优先复用已有 `{code}.json`，支持隔天继续跑。
+- 批量返回解析失败时，默认降级为逐只复评，避免整批结果丢失。
 
 ### 2. 新增 GeminiCliReviewer
 
 新增 `agent/gemini_cli_review.py`：
 
 - 继承 `BaseReviewer`。
-- `review_stock()` 中通过 `subprocess.Popen()` 调用 `gemini`，并在超时时清理
+- `review_stock()`/`review_batch()` 中通过 `subprocess.Popen()` 调用 `gemini`，并在超时时清理
   Gemini CLI 子进程组。
 - prompt 中包含：
   - `agent/prompt.md` 的系统评分规则。
-  - 股票代码。
+  - 单股或批量股票代码。
   - 本地图片的 `@file` 引用。
-  - 强制只返回评分 JSON。
+  - 单股强制返回 JSON 对象，批量强制返回 JSON 数组。
 - Python 只读取 CLI stdout，不允许 Gemini CLI 写入结果文件。
 - 由于 `data/` 在仓库中被 gitignore，脚本会把待分析图表临时复制到
   `.gemini_cli_tmp/`，再用 `@.gemini_cli_tmp/{code}_day.jpg` 传给 CLI；
   调用结束后删除临时图表。
+- 批量模式要求 Gemini CLI 返回与输入股票顺序一致的 JSON 数组；脚本会校验
+  `code` 顺序和数组长度，再拆分写入单股 `{code}.json`。
 
 实际命令形态：
 
@@ -251,7 +260,7 @@ python run_all.py --skip-review
 2. 新增 `agent/gemini_cli_review.py`。
 3. `run_all.py` 默认调用 Gemini CLI 复评。
 4. 保留 `--reviewer gemini-api` 兼容旧 API Key 模式。
-5. 增加单次运行上限、每日预算、限流识别、断点续跑和超时清理。
+5. 增加 5 图批处理、批量失败单股降级、单次运行上限、每日预算、限流识别、断点续跑和超时清理。
 
 后续如果需要重新启用 Digital Oracle，应作为 Gemini CLI 复评之后的独立可选步骤
 接入，避免侵入现有初选、图表导出和复评步骤。

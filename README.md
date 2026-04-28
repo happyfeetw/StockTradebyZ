@@ -5,7 +5,7 @@
 - 使用 Tushare 拉取股票日线数据
 - 用量化规则做初选（目前只实现了B1选股）
 - 导出候选股票 K 线图
-- 调用 Gemini 对图表进行 AI 复评打分
+- 调用 Gemini CLI 对图表进行 AI 复评打分
 
 ---
 
@@ -24,7 +24,7 @@
 1. 下载 K 线数据（pipeline.fetch_kline）
 2. 量化初选（pipeline.cli preselect）
 3. 导出候选图表（dashboard/export_kline_charts.py）
-4. Gemini 复评（agent/gemini_review.py）
+4. Gemini CLI 复评（agent/gemini_cli_review.py）
 5. 打印推荐结果（读取 suggestion.json）
 
 输出主链路：
@@ -68,10 +68,11 @@ Windows PowerShell（永久写入）：
 
 ~~~powershell
 [Environment]::SetEnvironmentVariable("TUSHARE_TOKEN", "你的TushareToken", "User")
-[Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "你的GeminiApiKey", "User")
 ~~~
 
 写入后请重开终端，环境变量才会在新会话中生效。
+Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧的 Gemini API
+复评方式，再额外设置 `GEMINI_API_KEY`。
 
 ### 3.4 运行一键脚本
 
@@ -86,12 +87,16 @@ python run_all.py
 ~~~bash
 python run_all.py --skip-fetch
 python run_all.py --start-from 3
+python run_all.py --reviewer gemini-api
+python run_all.py --skip-review
 ~~~
 
 参数说明：
 
 - --skip-fetch：跳过数据下载，直接进入初选
 - --start-from N：从第 N 步开始执行（1 到 4）
+- --reviewer：选择复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY
+- --skip-review：跳过 Gemini 复评，直接打印已有 suggestion.json
 
 ---
 
@@ -134,19 +139,21 @@ python dashboard/export_kline_charts.py
 
 输出到 data/kline/选股日期，图像命名为 代码_day.jpg。
 
-### 步骤 4：Gemini 图表复评
+### 步骤 4：Gemini CLI 图表复评
 
 ~~~bash
-python agent/gemini_review.py
+python agent/gemini_cli_review.py
 ~~~
 
 可选参数示例：
 
 ~~~bash
+python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
 python agent/gemini_review.py --config config/gemini_review.yaml
 ~~~
 
-配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
+Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
+旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
 
 读取候选与图表后，输出：
 
@@ -157,23 +164,25 @@ python agent/gemini_review.py --config config/gemini_review.yaml
 
 ## 5. 关键配置建议
 
-### 6.1 抓取层
+### 5.1 抓取层
 
 - 首次全量抓取建议 workers 设小一些（如 4 到 8）
 - 若遇到频率限制，降低并发并重试
 
-### 6.2 初选层
+### 5.2 初选层
 
 - top_m 决定流动性股票池大小
 - b1.enabled、brick.enabled 控制策略开关
 - 可先只开一个策略做回放验证
 
-### 6.3 复评层
+### 5.3 复评层
 
-在 [config/gemini_review.yaml](config/gemini_review.yaml) 中可调整：
+在 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml) 中可调整：
 
 - model：模型名称
 - request_delay：调用间隔（防限流）
+- max_requests_per_run：单次运行最多请求数
+- daily_request_budget：项目侧每日请求预算
 - skip_existing：是否断点续跑
 - suggest_min_score：推荐分数门槛
 
@@ -212,7 +221,8 @@ data/review/日期/suggestion.json
 
 ### Q3：Gemini 运行失败
 
-- 检查 GEMINI_API_KEY 是否设置
+- CLI 模式：检查 `gemini` 是否已安装并登录
+- API 模式：检查 GEMINI_API_KEY 是否设置
 - 观察是否命中限流，可提高 request_delay
 
 ### Q4：没有候选股票

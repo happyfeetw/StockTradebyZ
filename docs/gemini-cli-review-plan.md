@@ -1,6 +1,8 @@
 # Gemini CLI 复评方案
 
 本文档描述将当前项目的 Gemini API 复评环节扩展为 Gemini CLI 复评的方案。
+当前实现已把 `run_all.py` 的默认复评方式切换为 Gemini CLI，并保留 Gemini API
+作为显式兼容模式。
 
 ## 背景
 
@@ -70,15 +72,16 @@ prompt_path: agent/prompt.md
 
 gemini_bin: gemini
 model: ""
-request_delay: 5
-skip_existing: false
+request_delay: 10
+skip_existing: true
 suggest_min_score: 4.0
 timeout_seconds: 180
 output_format: json
-max_requests_per_run: 20
+max_requests_per_run: 50
 daily_request_budget: 80
 stop_on_rate_limit: true
 rate_limit_backoff_seconds: 300
+usage_file: data/review/.gemini_cli_usage.json
 ```
 
 说明：
@@ -107,29 +110,37 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
 新增 `agent/gemini_cli_review.py`：
 
 - 继承 `BaseReviewer`。
-- `review_stock()` 中通过 `subprocess.run()` 调用 `gemini`。
+- `review_stock()` 中通过 `subprocess.Popen()` 调用 `gemini`，并在超时时清理
+  Gemini CLI 子进程组。
 - prompt 中包含：
   - `agent/prompt.md` 的系统评分规则。
   - 股票代码。
-  - 本地图片绝对路径。
+  - 本地图片的 `@file` 引用。
   - 强制只返回评分 JSON。
 - Python 只读取 CLI stdout，不允许 Gemini CLI 写入结果文件。
+- 由于 `data/` 在仓库中被 gitignore，脚本会把待分析图表临时复制到
+  `.gemini_cli_tmp/`，再用 `@.gemini_cli_tmp/{code}_day.jpg` 传给 CLI；
+  调用结束后删除临时图表。
 
-建议命令形态：
+实际命令形态：
 
 ```bash
 gemini \
-  -p "<完整复评提示词，包含图片路径>" \
-  --output-format json
+  --skip-trust \
+  --approval-mode plan \
+  --output-format json \
+  --prompt "<完整复评提示词，包含 @file 图表引用>"
 ```
 
-如果实测支持模型参数，则使用：
+如果配置了模型，则增加：
 
 ```bash
 gemini \
   --model "<model>" \
-  -p "<完整复评提示词，包含图片路径>" \
-  --output-format json
+  --skip-trust \
+  --approval-mode plan \
+  --output-format json \
+  --prompt "<完整复评提示词，包含 @file 图表引用>"
 ```
 
 ### 3. 解析策略
@@ -152,7 +163,7 @@ Gemini CLI 的 stdout 可能有两层 JSON：
 正式改造前需要先做最小探针，确认 Gemini CLI 在 headless 模式下能读取本地图片：
 
 ```bash
-gemini -p "请读取这张图片并用一句话描述：/absolute/path/to/600000_day.jpg" --output-format json
+gemini --output-format json --prompt "请读取这张图片并用一句话描述：@.gemini_cli_tmp/600000_day.jpg"
 ```
 
 验收标准：
@@ -162,7 +173,8 @@ gemini -p "请读取这张图片并用一句话描述：/absolute/path/to/600000
 - 没有要求交互式确认。
 - 订阅账号额度可用。
 
-如果 CLI 无法通过纯路径读取图片，需要测试替代输入方式，例如 `@file` 引用或 CLI 支持的附件参数。
+当前实测路径使用 `@file` 引用；如果未来 CLI 改变附件机制，需要优先更新
+`agent/gemini_cli_review.py` 的图表引用构造逻辑。
 
 ## 安全边界
 
@@ -177,11 +189,12 @@ gemini -p "请读取这张图片并用一句话描述：/absolute/path/to/600000
 
 最终结果文件由本项目 Python 代码写入，避免 Gemini CLI 直接操作仓库。
 
-## run_all.py 集成建议
+## run_all.py 集成
 
-短期不建议让 `run_all.py` 默认切换到 Gemini CLI。建议先加参数：
+`run_all.py` 已集成复评方式参数，并默认使用 Gemini CLI：
 
 ```bash
+python run_all.py
 python run_all.py --reviewer gemini-api
 python run_all.py --reviewer gemini-cli
 python run_all.py --skip-review
@@ -189,9 +202,14 @@ python run_all.py --skip-review
 
 兼容策略：
 
-- 默认行为保持现状，避免破坏旧流程。
+- 默认行为使用 Gemini CLI，适配本机 Google 账号登录。
+- 旧 API Key 流程通过 `--reviewer gemini-api` 显式调用。
 - `--reviewer gemini-cli` 调用 `agent/gemini_cli_review.py`。
 - `--skip-review` 只跑到图表导出，方便人工或 Codex 复评。
+
+当前实现阶段先不接入 Digital Oracle。最终推荐仍以 Gemini CLI 图表复评生成的
+`data/review/{pick_date}/suggestion.json` 为准，后续如果重新启用交易数据复核，
+再作为独立可选步骤追加。
 
 ## 验收标准
 
@@ -225,12 +243,15 @@ python run_all.py --skip-review
 - CLI 输出格式可能随版本变化，需要解析逻辑保持宽容。
 - 批量调用可能触发每分钟速率限制和每日请求次数限制，需要限速、预算和断点续跑。
 
-## 推荐实施顺序
+## 当前实施状态
 
-1. 安装 Gemini CLI 并完成 Google 账号登录。
-2. 用一张已导出的 K 线图做图片输入探针。
-3. 新增 `gemini_cli_review.yaml`。
-4. 新增 `agent/gemini_cli_review.py`。
-5. 用 1 到 3 只候选股做小批量复评。
-6. 生成 `suggestion.json` 后用 `run_all.py --start-from 5` 或等价方式验证汇总打印。
-7. 最后再考虑把 `--reviewer gemini-cli` 集成到 `run_all.py`。
+已完成：
+
+1. 新增 `config/gemini_cli_review.yaml`。
+2. 新增 `agent/gemini_cli_review.py`。
+3. `run_all.py` 默认调用 Gemini CLI 复评。
+4. 保留 `--reviewer gemini-api` 兼容旧 API Key 模式。
+5. 增加单次运行上限、每日预算、限流识别、断点续跑和超时清理。
+
+后续如果需要重新启用 Digital Oracle，应作为 Gemini CLI 复评之后的独立可选步骤
+接入，避免侵入现有初选、图表导出和复评步骤。

@@ -1,0 +1,50 @@
+# gemini_cli_review.yaml
+# Gemini CLI 图表复评配置（相对路径基于项目根目录）
+
+# 候选列表 JSON
+candidates: data/candidates/candidates_latest.json
+
+# 候选图表目录（其下按 pick_date 分目录）
+kline_dir: data/kline
+
+# 评分结果输出目录
+output_dir: data/review
+
+# 提示词文件
+prompt_path: agent/prompt.md
+
+# Gemini CLI 可执行文件名或绝对路径
+gemini_bin: gemini
+
+# 留空表示使用 Gemini CLI 当前默认模型
+model: ""
+
+# CLI 输出格式：text 或 json
+output_format: json
+
+# 单只股票 CLI 调用超时时间（秒）
+timeout_seconds: 180
+
+# 相邻 CLI 调用间隔（秒），用于降低分钟级限流风险
+request_delay: 10
+
+# 单次运行最多新发起多少次 Gemini CLI 请求；null 表示不限制
+max_requests_per_run: 50
+
+# 项目侧每日请求预算；null 表示不限制
+daily_request_budget: 80
+
+# 每日使用计数文件
+usage_file: data/review/.gemini_cli_usage.json
+
+# 遇到 quota/rate limit/429 等错误时是否立即停止批量复评
+stop_on_rate_limit: true
+
+# stop_on_rate_limit=false 时，限流后的退避秒数
+rate_limit_backoff_seconds: 300
+
+# true: 跳过已存在单股 JSON（断点续跑）
+skip_existing: true
+
+# 推荐最小分数门槛
+suggest_min_score: 4.0

@@ -52,8 +52,15 @@ section[data-testid="stSidebar"] h3 {
 }
 
 .stApp header,
-.stApp [data-testid="stHeader"] {
-  background: #10141a;
+.stApp [data-testid="stHeader"],
+.stApp [data-testid="stToolbar"],
+.stApp [data-testid="stDecoration"],
+.stApp [data-testid="stStatusWidget"] {
+  display: none;
+}
+
+.stApp iframe[title="streamlit_navigation_bar"] {
+  display: none;
 }
 
 .stApp h1,
@@ -198,8 +205,10 @@ section[data-testid="stSidebar"] h3 {
   white-space: pre-wrap;
 }
 
-.log-box,
-.log-box * {
+.stApp .log-box,
+.stApp .log-box *,
+.stApp div.log-box,
+.stApp div.log-box * {
   color: #d8dee9;
 }
 

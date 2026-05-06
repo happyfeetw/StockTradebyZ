@@ -246,12 +246,13 @@ def main(log_path: Optional[Path] = None):
     # ---------- Tushare Token ---------- #
     os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
     os.environ["no_proxy"] = os.environ["NO_PROXY"]
-    ts_token = os.environ.get("TUSHARE_TOKEN")
+    ts_token = (os.environ.get("TUSHARE_TOKEN") or "").strip()
     if not ts_token:
         raise ValueError("请先设置环境变量 TUSHARE_TOKEN，例如：export TUSHARE_TOKEN=你的token")
-    ts.set_token(ts_token)
     global pro
-    pro = ts.pro_api()
+    # 直接向 pro_api 传 token，避免 ts.set_token() 写入 ~/tk.csv。
+    # 工作台/沙箱环境通常不应写用户 home 目录。
+    pro = ts.pro_api(ts_token)
 
     # ---------- 日期解析 ---------- #
     raw_start = str(cfg.get("start", "20190101"))

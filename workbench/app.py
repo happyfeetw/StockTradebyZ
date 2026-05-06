@@ -69,6 +69,13 @@ def default_run_cfg() -> dict[str, Any]:
     }
 
 
+def apply_workbench_defaults() -> None:
+    st.session_state.rules_cfg.setdefault("global", {})
+    g = st.session_state.rules_cfg["global"]
+    g.setdefault("prepare_executor", "thread")
+    g.setdefault("n_jobs", None)
+
+
 def load_candidates() -> dict[str, Any]:
     return load_json(ROOT / "data" / "candidates" / "candidates_latest.json")
 
@@ -121,6 +128,7 @@ def ensure_session_state() -> None:
         st.session_state.review_cfg = load_yaml(ROOT / "config" / "gemini_cli_review.yaml")
     if "run_cfg" not in st.session_state:
         st.session_state.run_cfg = default_run_cfg()
+    apply_workbench_defaults()
     if "last_run_log" not in st.session_state:
         st.session_state.last_run_log = "[System] 工作台已启动，等待执行指令..."
     if "last_run_dir" not in st.session_state:
@@ -556,6 +564,22 @@ def render_strategy_config() -> None:
         g["n_turnover_days"] = st.number_input("成交额窗口", min_value=1, value=int(g.get("n_turnover_days", 43)))
     with c3:
         g["min_bars_buffer"] = st.number_input("预热缓冲 bar", min_value=0, value=int(g.get("min_bars_buffer", 10)))
+    c4, c5 = st.columns(2)
+    with c4:
+        executor_options = ["thread", "process"]
+        current_executor = str(g.get("prepare_executor", "thread"))
+        g["prepare_executor"] = st.selectbox(
+            "预处理执行器",
+            executor_options,
+            index=executor_options.index(current_executor) if current_executor in executor_options else 0,
+            help="thread 更适合本地工作台；process 在部分 macOS/沙箱环境可能无法初始化 semaphore。",
+        )
+    with c5:
+        use_default_jobs = g.get("n_jobs") is None
+        if st.toggle("预处理并发数使用默认值", value=use_default_jobs):
+            g["n_jobs"] = None
+        else:
+            g["n_jobs"] = st.number_input("预处理并发数 n_jobs", min_value=1, max_value=32, value=int(g.get("n_jobs") or 4))
     p1, p2 = st.columns(2)
     with p1:
         g["data_dir"] = st.text_input("初选数据目录 data_dir", value=str(g.get("data_dir", "./data/raw")))

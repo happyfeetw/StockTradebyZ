@@ -9,6 +9,8 @@ global:
   top_m: 5000                     # 流动性池：取成交额最高的 top_m 只
   n_turnover_days: 43             # 滚动成交额窗口（日）
   min_bars_buffer: 10             # 额外的最小 bar 缓冲
+  prepare_executor: "thread"      # 预处理执行器：process 或 thread；受限环境会自动降级 thread
+  n_jobs: null                    # 预处理并发数；null = 默认
 
 # ── B1 策略参数（KDJ + 知行均线多头排列） ────────────────────────────
 b1:

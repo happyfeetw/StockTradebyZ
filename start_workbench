@@ -19,4 +19,11 @@ if [ ! -x ".venv/bin/streamlit" ]; then
   exit 1
 fi
 
-exec .venv/bin/streamlit run workbench/app.py --server.port 8601 --server.headless true
+exec .venv/bin/streamlit run workbench/app.py \
+  --server.port 8601 \
+  --server.headless true \
+  --theme.base light \
+  --theme.backgroundColor '#f7f8fa' \
+  --theme.secondaryBackgroundColor '#ffffff' \
+  --theme.textColor '#20252b' \
+  --theme.primaryColor '#1f6feb'

@@ -18,9 +18,25 @@
   color: var(--workbench-text);
 }
 
+.stApp,
+.stApp * {
+  color-scheme: light;
+}
+
 section[data-testid="stSidebar"] {
   background: var(--workbench-sidebar);
   border-right: 1px solid var(--workbench-border);
+}
+
+section[data-testid="stSidebar"] > div {
+  background: var(--workbench-sidebar);
+}
+
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div {
+  color: var(--workbench-text);
 }
 
 section[data-testid="stSidebar"] h1,
@@ -33,6 +49,67 @@ section[data-testid="stSidebar"] h3 {
   max-width: 1480px;
   padding-top: 1.25rem;
   padding-bottom: 2rem;
+}
+
+.stApp header,
+.stApp [data-testid="stHeader"] {
+  background: #10141a;
+}
+
+.stApp h1,
+.stApp h2,
+.stApp h3,
+.stApp h4,
+.stApp h5,
+.stApp h6,
+.stApp p,
+.stApp label,
+.stApp span,
+.stApp div {
+  color: var(--workbench-text);
+}
+
+.stApp [data-testid="stSelectbox"] div,
+.stApp [data-testid="stNumberInput"] div,
+.stApp [data-testid="stTextInput"] div,
+.stApp [data-testid="stDataFrame"] div {
+  color: var(--workbench-text);
+}
+
+.stApp [data-baseweb="select"] > div,
+.stApp [data-baseweb="input"] > div,
+.stApp input,
+.stApp textarea {
+  background: #ffffff;
+  border-color: var(--workbench-border);
+  color: var(--workbench-text);
+}
+
+.stApp [data-baseweb="select"] svg {
+  color: var(--workbench-muted);
+  fill: var(--workbench-muted);
+}
+
+.stApp [role="listbox"],
+.stApp [data-baseweb="popover"] > div {
+  background: #ffffff;
+  color: var(--workbench-text);
+}
+
+.stApp button[kind="primary"],
+.stApp div[data-testid="stButton"] button[kind="primary"] {
+  background: var(--workbench-primary);
+  border-color: var(--workbench-primary);
+  color: #ffffff;
+}
+
+.stApp div[data-testid="stButton"] button {
+  border-radius: 6px;
+}
+
+.stApp div[data-testid="stButton"] button p,
+.stApp div[data-testid="stButton"] button span {
+  color: inherit;
 }
 
 .workbench-status {
@@ -119,6 +196,11 @@ section[data-testid="stSidebar"] h3 {
   overflow: auto;
   padding: 14px;
   white-space: pre-wrap;
+}
+
+.log-box,
+.log-box * {
+  color: #d8dee9;
 }
 
 .run-plan {

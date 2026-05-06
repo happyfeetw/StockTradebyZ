@@ -9,10 +9,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +114,48 @@ def ensure_session_state() -> None:
         st.session_state.last_run_dir = ""
 
 
+def list_run_dirs() -> list[Path]:
+    if not RUNS_DIR.exists():
+        return []
+    return sorted([p for p in RUNS_DIR.iterdir() if p.is_dir()], reverse=True)
+
+
+def latest_run_dir() -> Path | None:
+    if st.session_state.get("last_run_dir"):
+        p = Path(str(st.session_state.last_run_dir))
+        if p.exists():
+            return p
+    runs = list_run_dirs()
+    return runs[0] if runs else None
+
+
+def run_state(run_dir: Path | None = None) -> dict[str, Any]:
+    if run_dir is None:
+        run_dir = latest_run_dir()
+    if run_dir is None:
+        return {}
+    return load_json(run_dir / "run_state.json")
+
+
+def is_pid_running(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def is_run_active(run_dir: Path | None = None) -> bool:
+    state = run_state(run_dir)
+    if state.get("status") != "running":
+        return False
+    return is_pid_running(int(state.get("runner_pid") or 0))
+
+
 def strategy_preset(cfg: dict[str, Any], preset: str) -> dict[str, Any]:
     updated = json.loads(json.dumps(cfg))
     updated.setdefault("b1", {})
@@ -148,6 +190,10 @@ def create_run_snapshot(run_mode: str) -> Path:
             "run_mode": run_mode,
             "rules_config": str(run_dir / "rules_preselect.yaml"),
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
+            "commands": [
+                {"name": name, "cmd": cmd}
+                for name, cmd in command_plan(run_mode, run_dir)
+            ],
         },
     )
     st.session_state.last_run_dir = str(run_dir)
@@ -183,49 +229,61 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     return plans[run_mode]
 
 
-def run_commands(run_mode: str, log_placeholder) -> None:
+def start_background_run(run_mode: str) -> Path:
+    current_run = latest_run_dir()
+    if current_run and is_run_active(current_run):
+        raise RuntimeError(f"已有任务正在运行：{current_run}")
+
     run_dir = create_run_snapshot(run_mode)
-    log_lines = [
-        f"[System] 运行快照: {run_dir}",
-        f"[System] 运行模式: {run_mode}",
-    ]
-    log_path = run_dir / "run.log"
+    write_json(
+        run_dir / "run_state.json",
+        {
+            "status": "starting",
+            "run_dir": str(run_dir),
+            "started_at": dt.datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "workbench.runner", str(run_dir)],
+        cwd=str(ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=resolved_env(),
+        start_new_session=True,
+    )
+    write_json(
+        run_dir / "run_state.json",
+        {
+            "status": "running",
+            "runner_pid": proc.pid,
+            "run_dir": str(run_dir),
+            "started_at": dt.datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    return run_dir
 
-    for step_name, cmd in command_plan(run_mode, run_dir):
-        log_lines.append("")
-        log_lines.append(f"[Step] {step_name}")
-        log_lines.append("[Command] " + " ".join(cmd))
-        log_placeholder.markdown(f"<div class='log-box'>{escape_log(log_lines)}</div>", unsafe_allow_html=True)
 
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=resolved_env(),
-            bufsize=1,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            log_lines.append(line.rstrip())
-            if len(log_lines) % 4 == 0:
-                log_placeholder.markdown(f"<div class='log-box'>{escape_log(log_lines)}</div>", unsafe_allow_html=True)
-
-        return_code = proc.wait()
-        if return_code != 0:
-            log_lines.append(f"[ERROR] {step_name} 失败，退出码 {return_code}")
-            write_json(run_dir / "run_state.json", {"status": "failed", "step": step_name, "return_code": return_code})
-            break
-        log_lines.append(f"[OK] {step_name} 完成")
-    else:
-        write_json(run_dir / "run_state.json", {"status": "success", "finished_at": dt.datetime.now().isoformat()})
-        log_lines.append("")
-        log_lines.append("[SUCCESS] 流程执行完毕")
-
-    log_path.write_text("\n".join(log_lines), encoding="utf-8")
-    st.session_state.last_run_log = "\n".join(log_lines)
-    log_placeholder.markdown(f"<div class='log-box'>{escape_log(log_lines)}</div>", unsafe_allow_html=True)
+def stop_background_run(run_dir: Path) -> None:
+    state = run_state(run_dir)
+    pid = int(state.get("runner_pid") or 0)
+    if pid:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            os.kill(pid, signal.SIGTERM)
+    write_json(
+        run_dir / "run_state.json",
+        {
+            **state,
+            "status": "stopped",
+            "stopped_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "run_dir": str(run_dir),
+        },
+    )
+    with open(run_dir / "run.log", "a", encoding="utf-8") as f:
+        f.write("\n[System] 收到停止指令，任务已终止。\n")
 
 
 def resolved_env() -> dict[str, str]:
@@ -234,6 +292,32 @@ def resolved_env() -> dict[str, str]:
         env["TUSHARE_TOKEN"] = env["TS_TOKEN"]
     env.setdefault("NO_COLOR", "1")
     return env
+
+
+def normalize_console_text(text: str, max_lines: int = 600) -> str:
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        if char == "\r":
+            current = ""
+        elif char == "\n":
+            lines.append(current.rstrip())
+            current = ""
+        else:
+            current += char
+    if current:
+        lines.append(current.rstrip())
+    return "\n".join(lines[-max_lines:])
+
+
+def read_run_log(run_dir: Path | None) -> str:
+    if run_dir is None:
+        return "[System] 工作台已启动，等待执行指令..."
+    log_path = run_dir / "run.log"
+    if not log_path.exists():
+        return "[System] 任务已创建，等待后台进程写入日志..."
+    with open(log_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+        return normalize_console_text(f.read())
 
 
 def escape_log(lines: list[str] | str) -> str:
@@ -269,6 +353,9 @@ def render_metrics() -> None:
 def render_run_center() -> None:
     st.title("运行中心")
     render_metrics()
+    current_run = latest_run_dir()
+    state = run_state(current_run)
+    active = is_run_active(current_run)
     left, right = st.columns([0.42, 0.58], gap="large")
 
     with left:
@@ -280,12 +367,23 @@ def render_run_center() -> None:
         )
         run_dir_preview = RUNS_DIR / "本次运行会自动生成时间戳目录"
         st.markdown(f"<div class='panel-note'>运行配置会保存到 <code>{run_dir_preview}</code>，不会覆盖默认 YAML。</div>", unsafe_allow_html=True)
-        if st.session_state.last_run_dir:
-            st.caption(f"最近运行快照：{st.session_state.last_run_dir}")
+        if current_run:
+            st.caption(f"最近运行快照：{current_run}")
 
-        if st.button("开始运行", type="primary", width="stretch"):
-            log_placeholder = st.empty()
-            run_commands(run_mode, log_placeholder)
+        if active:
+            step_text = state.get("current_step") or "启动中"
+            st.info(f"任务运行中：{step_text}")
+        if st.button("开始运行", type="primary", width="stretch", disabled=active):
+            try:
+                run_dir = start_background_run(run_mode)
+                st.session_state.last_run_dir = str(run_dir)
+                st.success(f"任务已在后台启动：{run_dir}")
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            st.rerun()
+        if st.button("停止当前任务", width="stretch", disabled=not active):
+            if current_run:
+                stop_background_run(current_run)
             st.rerun()
 
     with right:
@@ -293,8 +391,14 @@ def render_run_center() -> None:
         preview_dir = RUNS_DIR / "preview"
         plan_rows = [{"步骤": name, "命令": " ".join(cmd)} for name, cmd in command_plan(run_mode, preview_dir)]
         st.dataframe(pd.DataFrame(plan_rows), width="stretch", hide_index=True)
-        st.subheader("运行日志")
-        st.markdown(f"<div class='log-box'>{escape_log(st.session_state.last_run_log)}</div>", unsafe_allow_html=True)
+        status_label = state.get("status", "idle")
+        if active:
+            status_label = "running"
+        st.subheader(f"运行日志 · {status_label}")
+        st.markdown(f"<div class='log-box'>{escape_log(read_run_log(current_run))}</div>", unsafe_allow_html=True)
+        if active:
+            st.caption("任务在后台运行；切换菜单或刷新页面不会中断。返回运行中心即可继续查看日志。")
+            st.button("刷新日志", width="stretch")
 
 
 def render_strategy_config() -> None:

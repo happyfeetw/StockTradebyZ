@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import logging
 import random
@@ -232,9 +233,9 @@ def _load_config(config_path: Path = _CONFIG_PATH) -> dict:
 
 
 # --------------------------- 主入口 --------------------------- #
-def main(log_path: Optional[Path] = None):
+def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
     # ---------- 读取 YAML 配置 ---------- #
-    cfg = _load_config()
+    cfg = _load_config(Path(config_path) if config_path else _CONFIG_PATH)
 
     # ---------- 日志路径（优先参数，其次 YAML，最后默认值） ---------- #
     if log_path is None:
@@ -295,5 +296,16 @@ def main(log_path: Optional[Path] = None):
 
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="拉取 A 股日线 K 线数据")
+    parser.add_argument("--config", default=None, help="fetch_kline.yaml 路径")
+    parser.add_argument("--log", default=None, help="日志文件路径，覆盖配置文件 log")
+    return parser
+
+
 if __name__ == "__main__":
-    main()
+    args = build_parser().parse_args()
+    main(
+        config_path=Path(args.config) if args.config else None,
+        log_path=Path(args.log) if args.log else None,
+    )

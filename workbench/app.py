@@ -23,6 +23,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
+RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -58,6 +59,14 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def default_run_cfg() -> dict[str, Any]:
+    return {
+        "pick_date": "",
+        "end_date": "",
+        "preselect_log_dir": "./data/logs",
+    }
 
 
 def load_candidates() -> dict[str, Any]:
@@ -104,10 +113,14 @@ def render_status_bar() -> None:
 
 
 def ensure_session_state() -> None:
+    if "fetch_cfg" not in st.session_state:
+        st.session_state.fetch_cfg = load_yaml(ROOT / "config" / "fetch_kline.yaml")
     if "rules_cfg" not in st.session_state:
         st.session_state.rules_cfg = load_yaml(ROOT / "config" / "rules_preselect.yaml")
     if "review_cfg" not in st.session_state:
         st.session_state.review_cfg = load_yaml(ROOT / "config" / "gemini_cli_review.yaml")
+    if "run_cfg" not in st.session_state:
+        st.session_state.run_cfg = default_run_cfg()
     if "last_run_log" not in st.session_state:
         st.session_state.last_run_log = "[System] 工作台已启动，等待执行指令..."
     if "last_run_dir" not in st.session_state:
@@ -156,6 +169,14 @@ def is_run_active(run_dir: Path | None = None) -> bool:
     return is_pid_running(int(state.get("runner_pid") or 0))
 
 
+def display_run_status(run_dir: Path | None) -> str:
+    state = run_state(run_dir)
+    status = str(state.get("status", "idle"))
+    if status == "running" and not is_run_active(run_dir):
+        return "stale"
+    return status
+
+
 def strategy_preset(cfg: dict[str, Any], preset: str) -> dict[str, Any]:
     updated = json.loads(json.dumps(cfg))
     updated.setdefault("b1", {})
@@ -176,20 +197,28 @@ def make_run_id() -> str:
     return dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
 
+def clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 def create_run_snapshot(run_mode: str) -> Path:
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
+    write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     write_json(
         run_dir / "run_config.json",
         {
             "run_id": run_id,
             "created_at": dt.datetime.now().isoformat(timespec="seconds"),
             "run_mode": run_mode,
+            "fetch_config": str(run_dir / "fetch_kline.yaml"),
             "rules_config": str(run_dir / "rules_preselect.yaml"),
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
+            "run_options": str(run_dir / "run_options.json"),
             "commands": [
                 {"name": name, "cmd": cmd}
                 for name, cmd in command_plan(run_mode, run_dir)
@@ -202,22 +231,39 @@ def create_run_snapshot(run_mode: str) -> Path:
 
 def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     python = sys.executable
+    fetch_cfg = str(run_dir / "fetch_kline.yaml")
     rules_cfg = str(run_dir / "rules_preselect.yaml")
     review_cfg = str(run_dir / "gemini_cli_review.yaml")
+    run_cfg = st.session_state.get("run_cfg", default_run_cfg())
+    preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
+    if clean_text(run_cfg.get("pick_date")):
+        preselect_cmd += ["--date", clean_text(run_cfg.get("pick_date"))]
+    if clean_text(run_cfg.get("end_date")):
+        preselect_cmd += ["--end-date", clean_text(run_cfg.get("end_date"))]
+    if clean_text(run_cfg.get("preselect_log_dir")):
+        preselect_cmd += ["--log-dir", clean_text(run_cfg.get("preselect_log_dir"))]
+
     plans: dict[str, list[tuple[str, list[str]]]] = {
         "完整流程": [
-            ("拉取 K 线数据", [python, "-m", "pipeline.fetch_kline"]),
-            ("量化初选", [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]),
+            ("拉取 K 线数据", [python, "-m", "pipeline.fetch_kline", "--config", fetch_cfg]),
+            ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
         ],
         "跳过抓取": [
-            ("量化初选", [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]),
+            ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
         ],
+        "初选+导出图表": [
+            ("量化初选", preselect_cmd),
+            ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
+        ],
+        "只抓取数据": [
+            ("拉取 K 线数据", [python, "-m", "pipeline.fetch_kline", "--config", fetch_cfg]),
+        ],
         "只跑初选": [
-            ("量化初选", [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]),
+            ("量化初选", preselect_cmd),
         ],
         "只导出图表": [
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
@@ -350,6 +396,22 @@ def render_metrics() -> None:
     )
 
 
+@st.fragment(run_every=1.0)
+def render_run_log_panel(run_dir_str: str) -> None:
+    run_dir = Path(run_dir_str) if run_dir_str else None
+    state = run_state(run_dir)
+    active = is_run_active(run_dir)
+    status_label = "running" if active else display_run_status(run_dir)
+    st.subheader(f"运行日志 · {status_label}")
+    st.markdown(f"<div class='log-box'>{escape_log(read_run_log(run_dir))}</div>", unsafe_allow_html=True)
+    if active:
+        step = state.get("current_step") or "启动中"
+        idx = state.get("step_index")
+        total = state.get("step_total")
+        suffix = f"（{idx}/{total}）" if idx and total else ""
+        st.caption(f"实时刷新中：{step}{suffix}。切换菜单或刷新页面不会中断后台任务。")
+
+
 def render_run_center() -> None:
     st.title("运行中心")
     render_metrics()
@@ -360,15 +422,32 @@ def render_run_center() -> None:
 
     with left:
         st.subheader("任务配置")
-        run_mode = st.selectbox(
-            "运行模式",
-            ["完整流程", "跳过抓取", "只跑初选", "只导出图表", "只跑复评"],
-            index=1,
-        )
+        run_mode = st.selectbox("运行模式", RUN_MODES, index=1)
         run_dir_preview = RUNS_DIR / "本次运行会自动生成时间戳目录"
         st.markdown(f"<div class='panel-note'>运行配置会保存到 <code>{run_dir_preview}</code>，不会覆盖默认 YAML。</div>", unsafe_allow_html=True)
         if current_run:
             st.caption(f"最近运行快照：{current_run}")
+
+        run_cfg = st.session_state.run_cfg
+        with st.expander("本次运行参数", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                run_cfg["pick_date"] = st.text_input(
+                    "选股基准日期",
+                    value=clean_text(run_cfg.get("pick_date")),
+                    placeholder="留空=最新交易日；例 2026-04-28",
+                )
+            with c2:
+                run_cfg["end_date"] = st.text_input(
+                    "数据截断日期",
+                    value=clean_text(run_cfg.get("end_date")),
+                    placeholder="留空=不截断；回测用 YYYY-MM-DD",
+                )
+            run_cfg["preselect_log_dir"] = st.text_input(
+                "初选日志目录",
+                value=clean_text(run_cfg.get("preselect_log_dir") or "./data/logs"),
+            )
+        st.session_state.run_cfg = run_cfg
 
         if active:
             step_text = state.get("current_step") or "启动中"
@@ -391,14 +470,69 @@ def render_run_center() -> None:
         preview_dir = RUNS_DIR / "preview"
         plan_rows = [{"步骤": name, "命令": " ".join(cmd)} for name, cmd in command_plan(run_mode, preview_dir)]
         st.dataframe(pd.DataFrame(plan_rows), width="stretch", hide_index=True)
-        status_label = state.get("status", "idle")
-        if active:
-            status_label = "running"
-        st.subheader(f"运行日志 · {status_label}")
-        st.markdown(f"<div class='log-box'>{escape_log(read_run_log(current_run))}</div>", unsafe_allow_html=True)
-        if active:
-            st.caption("任务在后台运行；切换菜单或刷新页面不会中断。返回运行中心即可继续查看日志。")
-            st.button("刷新日志", width="stretch")
+        render_run_log_panel(str(current_run) if current_run else "")
+
+
+def render_data_config() -> None:
+    st.title("数据与运行配置")
+    fetch_cfg = st.session_state.fetch_cfg
+    rules_cfg = st.session_state.rules_cfg
+    run_cfg = st.session_state.run_cfg
+    fetch_cfg.setdefault("exclude_boards", [])
+    rules_cfg.setdefault("global", {})
+
+    st.subheader("行情下载")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        fetch_cfg["start"] = st.text_input("下载开始日期", value=str(fetch_cfg.get("start", "20190101")), placeholder="YYYYMMDD 或 today")
+    with c2:
+        fetch_cfg["end"] = st.text_input("下载结束日期", value=str(fetch_cfg.get("end", "today")), placeholder="YYYYMMDD 或 today")
+    with c3:
+        fetch_cfg["workers"] = st.number_input("并发下载线程 workers", min_value=1, max_value=16, value=int(fetch_cfg.get("workers", 4)))
+
+    c4, c5 = st.columns(2)
+    with c4:
+        fetch_cfg["stocklist"] = st.text_input("股票清单 CSV", value=str(fetch_cfg.get("stocklist", "./pipeline/stocklist.csv")))
+        fetch_cfg["out"] = st.text_input("K 线输出目录", value=str(fetch_cfg.get("out", "./data/raw")))
+    with c5:
+        fetch_cfg["exclude_boards"] = st.multiselect(
+            "排除板块",
+            ["gem", "star", "bj"],
+            default=[x for x in fetch_cfg.get("exclude_boards", []) if x in {"gem", "star", "bj"}],
+            help="gem=创业板，star=科创板，bj=北交所",
+        )
+        fetch_cfg["log"] = st.text_input("抓取日志文件", value=str(fetch_cfg.get("log", "")), placeholder="留空=按日期写入 data/logs")
+
+    st.divider()
+    st.subheader("初选输入输出")
+    g = rules_cfg["global"]
+    d1, d2 = st.columns(2)
+    with d1:
+        g["data_dir"] = st.text_input("初选 CSV 数据目录", value=str(g.get("data_dir", "./data/raw")))
+        run_cfg["pick_date"] = st.text_input(
+            "选股基准日期",
+            value=clean_text(run_cfg.get("pick_date")),
+            placeholder="留空=最新交易日；例 2026-04-28",
+            key="data_pick_date",
+        )
+    with d2:
+        g["output_dir"] = st.text_input("候选结果输出目录", value=str(g.get("output_dir", "./data/candidates")))
+        run_cfg["end_date"] = st.text_input(
+            "数据截断日期",
+            value=clean_text(run_cfg.get("end_date")),
+            placeholder="留空=不截断；回测用 YYYY-MM-DD",
+            key="data_end_date",
+        )
+    run_cfg["preselect_log_dir"] = st.text_input(
+        "初选流水日志目录",
+        value=clean_text(run_cfg.get("preselect_log_dir") or "./data/logs"),
+        key="data_preselect_log_dir",
+    )
+
+    st.session_state.fetch_cfg = fetch_cfg
+    st.session_state.rules_cfg = rules_cfg
+    st.session_state.run_cfg = run_cfg
+    st.info("这些配置只保存在工作台会话中；点击运行时会写入本次 data/runs 快照。")
 
 
 def render_strategy_config() -> None:
@@ -422,6 +556,11 @@ def render_strategy_config() -> None:
         g["n_turnover_days"] = st.number_input("成交额窗口", min_value=1, value=int(g.get("n_turnover_days", 43)))
     with c3:
         g["min_bars_buffer"] = st.number_input("预热缓冲 bar", min_value=0, value=int(g.get("min_bars_buffer", 10)))
+    p1, p2 = st.columns(2)
+    with p1:
+        g["data_dir"] = st.text_input("初选数据目录 data_dir", value=str(g.get("data_dir", "./data/raw")))
+    with p2:
+        g["output_dir"] = st.text_input("候选输出目录 output_dir", value=str(g.get("output_dir", "./data/candidates")))
 
     left, right = st.columns(2, gap="large")
     with left:
@@ -442,7 +581,13 @@ def render_strategy_config() -> None:
         brick["daily_return_threshold"] = st.number_input("今日涨幅上限", value=float(brick.get("daily_return_threshold", 0.2)), step=0.01, format="%.2f")
         brick["brick_growth_ratio"] = st.number_input("brick_growth 阈值", value=float(brick.get("brick_growth_ratio", 0.5)), step=0.1, format="%.2f")
         brick["min_prior_green_bars"] = st.number_input("最小连续绿柱", min_value=0, value=int(brick.get("min_prior_green_bars", 1)))
-        brick["zxdq_ratio"] = st.number_input("zxdq_ratio", value=float(brick.get("zxdq_ratio", 1.47)), step=0.01, format="%.2f")
+        use_zxdq_ratio = st.toggle("启用 zxdq_ratio 过滤", value=brick.get("zxdq_ratio") is not None)
+        brick["zxdq_ratio"] = (
+            st.number_input("zxdq_ratio", value=float(brick.get("zxdq_ratio") or 1.47), step=0.01, format="%.2f")
+            if use_zxdq_ratio
+            else None
+        )
+        brick["zxdq_span"] = st.number_input("zxdq_span", min_value=1, value=int(brick.get("zxdq_span", 10)))
         brick["require_zxdq_gt_zxdkx"] = st.toggle("要求 zxdq > zxdkx", value=bool(brick.get("require_zxdq_gt_zxdkx", True)))
         brick["require_weekly_ma_bull"] = st.toggle("要求周线均线多头", value=bool(brick.get("require_weekly_ma_bull", True)))
 
@@ -485,19 +630,37 @@ def render_review_config() -> None:
     cfg = st.session_state.review_cfg
     left, right = st.columns(2, gap="large")
     with left:
+        cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
+        cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
         cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=5, value=int(cfg.get("batch_size", 5)))
         cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
         cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
         cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 80)))
     with right:
+        cfg["output_format"] = st.selectbox(
+            "CLI 输出格式",
+            ["json", "text"],
+            index=0 if str(cfg.get("output_format", "json")) == "json" else 1,
+        )
         cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 180)), step=30)
         cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
+        cfg["rate_limit_backoff_seconds"] = st.number_input("限流退避秒数", min_value=1, value=int(cfg.get("rate_limit_backoff_seconds", 300)), step=30)
         cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
         cfg["fallback_to_single_on_batch_error"] = st.toggle(
             "批量失败后降级逐只复评",
             value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
         )
         cfg["stop_on_rate_limit"] = st.toggle("命中限流后停止", value=bool(cfg.get("stop_on_rate_limit", True)))
+
+    with st.expander("路径配置"):
+        p1, p2 = st.columns(2)
+        with p1:
+            cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
+            cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
+            cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
+        with p2:
+            cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review")))
+            cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
 
     st.markdown(
         "<div class='panel-note'>batch_size 会降低每分钟请求数；每日预算仍按 Gemini CLI 请求次数记录。配置会随运行快照保存。</div>",
@@ -610,13 +773,15 @@ def main() -> None:
         st.caption("本地选股工作台")
         page = st.radio(
             "导航",
-            ["运行中心", "策略配置", "复评配置", "结果中心", "单票复盘"],
+            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "单票复盘"],
             label_visibility="collapsed",
         )
 
     render_status_bar()
     if page == "运行中心":
         render_run_center()
+    elif page == "数据配置":
+        render_data_config()
     elif page == "策略配置":
         render_strategy_config()
     elif page == "复评配置":

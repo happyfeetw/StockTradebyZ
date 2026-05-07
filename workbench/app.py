@@ -683,7 +683,7 @@ def render_review_config() -> None:
     with left:
         cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
         cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
-        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 90)))
+        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 10)))
         cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
         cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
         cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 80)))
@@ -695,13 +695,20 @@ def render_review_config() -> None:
         )
         cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
         cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
-        cfg["rate_limit_backoff_seconds"] = st.number_input("限流退避秒数", min_value=1, value=int(cfg.get("rate_limit_backoff_seconds", 300)), step=30)
+        retry_backoff = cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900])
+        if isinstance(retry_backoff, list):
+            retry_backoff_text = ",".join(str(int(x) if float(x).is_integer() else x) for x in retry_backoff)
+        else:
+            retry_backoff_text = str(retry_backoff)
+        retry_text = st.text_input("错误退避序列", value=retry_backoff_text, help="逗号分隔秒数，用于 429、容量不足、Premature close、超时等错误。")
+        cfg["retry_backoff_seconds"] = [float(x.strip()) for x in retry_text.split(",") if x.strip()]
+        cfg["retry_jitter_ratio"] = st.number_input("退避 jitter 比例", min_value=0.0, max_value=1.0, value=float(cfg.get("retry_jitter_ratio", 0.2)), step=0.05)
         cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
         cfg["fallback_to_single_on_batch_error"] = st.toggle(
             "批量失败后降级逐只复评",
             value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
         )
-        cfg["stop_on_rate_limit"] = st.toggle("命中限流后停止", value=bool(cfg.get("stop_on_rate_limit", True)))
+        cfg["stop_on_rate_limit"] = st.toggle("重试耗尽后命中限流则停止", value=bool(cfg.get("stop_on_rate_limit", False)))
 
     with st.expander("路径配置"):
         p1, p2 = st.columns(2)
@@ -714,7 +721,7 @@ def render_review_config() -> None:
             cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
 
     st.markdown(
-        "<div class='panel-note'>batch_size 默认 90；脚本会按 1,048,576 tokens 的 90% 预算结合图片尺寸动态切批。</div>",
+        "<div class='panel-note'>batch_size 默认 10；遇到 429、容量不足、Premature close 或超时会按退避序列重试，并写入 checkpoint。</div>",
         unsafe_allow_html=True,
     )
     st.session_state.review_cfg = cfg

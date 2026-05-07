@@ -73,15 +73,17 @@ prompt_path: agent/prompt.md
 gemini_bin: gemini
 model: "gemini-3.1-pro-preview"
 request_delay: 10
-batch_size: 90
+batch_size: 10
 fallback_to_single_on_batch_error: true
+retry_backoff_seconds: [30, 90, 180, 480, 900]
+retry_jitter_ratio: 0.2
 skip_existing: true
 suggest_min_score: 4.0
 timeout_seconds: 900
 output_format: json
 max_requests_per_run: 50
 daily_request_budget: 80
-stop_on_rate_limit: true
+stop_on_rate_limit: false
 rate_limit_backoff_seconds: 300
 usage_file: data/review/.gemini_cli_usage.json
 ```
@@ -92,25 +94,27 @@ usage_file: data/review/.gemini_cli_usage.json
 - `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
 - `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
-- `batch_size`：单次 CLI 请求最多提交几张图，默认 90，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
-- `fallback_to_single_on_batch_error`：批量 JSON 解析失败时，自动降级为逐只复评。
-- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=90`
-  时，当前 2800×1400 图表约每批覆盖 90 支股票。
+- `batch_size`：单次 CLI 请求最多提交几张图，默认 10，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
+- `fallback_to_single_on_batch_error`：批量 JSON 解析失败、超时或流式连接中断时，自动拆批并最终降级为逐只复评。
+- `retry_backoff_seconds`：遇到 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、超时等错误时的退避序列。
+- `retry_jitter_ratio`：在退避秒数上增加随机抖动，避免固定节奏连续撞服务端容量。
+- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；如果降级逐只复评，需要同步提高该值或分多次断点续跑。
 - `daily_request_budget`：项目侧每日调用预算，避免撞到订阅账号日限额。
-- `stop_on_rate_limit`：遇到限流或额度错误时停止，保留已完成结果。
+- `stop_on_rate_limit`：重试耗尽后遇到限流或额度错误是否立即停止；默认 false，优先跳过失败股票并继续处理后续候选。
 
 ### 额度与限速
 
 Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量图表复评必须按“少量、限速、可续跑”的方式设计：
 
 - 默认按上下文上限 1,048,576 tokens 的 90% 控制单批。
-- 当前项目导出的 2800×1400 图片估算约 32 个 tile、约 9,280 图像 tokens；加上输出预算后默认约 90 张/批。
+- 当前项目导出的 2800×1400 图片估算约 32 个 tile、约 9,280 图像 tokens；90 张理论接近 90% 上下文预算，但实际会触发较大的 SSE 请求体，默认改为 10 张/批。
 - 每次 CLI 调用后 sleep `request_delay` 秒。
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。
-- 如果 stdout/stderr 或退出码显示 rate limit、quota、too many requests 等错误，立即停止或长时间退避，不连续重试。
+- 如果 stdout/stderr 或退出码显示 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、`ECONNRESET`、超时等错误，按 `retry_backoff_seconds` 加 jitter 重试，并写入 `gemini_cli_review_checkpoint.json`。
 - `skip_existing: true` 时优先复用已有 `{code}.json`，支持隔天继续跑。
-- 批量返回解析失败时，默认降级为逐只复评，避免整批结果丢失。
+- 批量重试耗尽后先拆半继续；小批仍失败时再逐只复评，避免一开始就把整批拆成单股请求。
+- 每次 CLI 调用前打印实际执行命令和 `--model`，避免与 `/model` 交互状态混淆。
 
 ### 2. 新增 GeminiCliReviewer
 
@@ -260,7 +264,7 @@ python run_all.py --skip-review
 2. 新增 `agent/gemini_cli_review.py`。
 3. `run_all.py` 默认调用 Gemini CLI 复评。
 4. 保留 `--reviewer gemini-api` 兼容旧 API Key 模式。
-5. 增加 5 图批处理、批量失败单股降级、单次运行上限、每日预算、限流识别、断点续跑和超时清理。
+5. 增加 10 图批处理、批量失败退避重试、拆批降级、单股重试、单次运行上限、每日预算、限流识别、checkpoint 和超时清理。
 
 后续如果需要重新启用 Digital Oracle，应作为 Gemini CLI 复评之后的独立可选步骤
 接入，避免侵入现有初选、图表导出和复评步骤。

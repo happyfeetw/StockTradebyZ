@@ -20,12 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
+import shlex
 import shutil
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -47,7 +49,7 @@ IMAGE_TILE_SIZE = 384
 ESTIMATED_TOKENS_PER_TILE = 290
 ESTIMATED_OUTPUT_TOKENS_PER_STOCK = 800
 ESTIMATED_PROMPT_TOKEN_RESERVE = 20_000
-DEFAULT_BATCH_SIZE = 90
+DEFAULT_BATCH_SIZE = 10
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -61,10 +63,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "request_delay": 10,
     "batch_size": DEFAULT_BATCH_SIZE,
     "fallback_to_single_on_batch_error": True,
+    "retry_backoff_seconds": [30, 90, 180, 480, 900],
+    "retry_jitter_ratio": 0.2,
     "max_requests_per_run": 50,
     "daily_request_budget": 80,
     "usage_file": "data/review/.gemini_cli_usage.json",
-    "stop_on_rate_limit": True,
+    "stop_on_rate_limit": False,
     "rate_limit_backoff_seconds": 300,
     "skip_existing": True,
     "suggest_min_score": 4.0,
@@ -80,6 +84,22 @@ RATE_LIMIT_MARKERS = (
     "exceeded",
     "per minute",
     "daily limit",
+    "no capacity available",
+    "capacity available",
+    "resource_exhausted",
+)
+
+TRANSIENT_ERROR_MARKERS = (
+    "premature close",
+    "err_stream_premature_close",
+    "econnreset",
+    "etimedout",
+    "socket disconnected",
+    "socket hang up",
+    "tls connection",
+    "timed out",
+    "timeout",
+    "network",
 )
 
 CREDENTIAL_ERROR_MARKERS = (
@@ -121,6 +141,19 @@ def _is_rate_limit_text(text: str) -> bool:
 def _is_credential_error_text(text: str) -> bool:
     lower = text.lower()
     return any(marker in lower for marker in CREDENTIAL_ERROR_MARKERS)
+
+
+def _is_transient_error_text(text: str) -> bool:
+    lower = text.lower()
+    return any(marker in lower for marker in TRANSIENT_ERROR_MARKERS) or _is_rate_limit_text(text)
+
+
+def _optional_float_list(value: Any) -> list[float]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [float(item.strip()) for item in value.split(",") if item.strip()]
+    return [float(item) for item in value]
 
 
 def _find_text_payload(value: Any) -> str | None:
@@ -215,6 +248,8 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["daily_request_budget"] = _optional_int(cfg.get("daily_request_budget"))
     cfg["timeout_seconds"] = int(cfg.get("timeout_seconds", 900))
     cfg["rate_limit_backoff_seconds"] = int(cfg.get("rate_limit_backoff_seconds", 300))
+    cfg["retry_backoff_seconds"] = _optional_float_list(cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900]))
+    cfg["retry_jitter_ratio"] = float(cfg.get("retry_jitter_ratio", 0.2))
     cfg["request_delay"] = float(cfg.get("request_delay", 10))
     cfg["batch_size"] = int(cfg.get("batch_size", DEFAULT_BATCH_SIZE))
     if cfg["batch_size"] < 1 or cfg["batch_size"] > MAX_BATCH_SIZE:
@@ -275,6 +310,7 @@ class GeminiCliReviewer(BaseReviewer):
         self.gemini_bin = str(config.get("gemini_bin", "gemini"))
         self.max_requests_per_run: int | None = config.get("max_requests_per_run")
         self.requests_this_run = 0
+        self.checkpoint_path: Path | None = None
         self.usage = DailyUsageTracker(
             path=Path(config["usage_file"]),
             budget=config.get("daily_request_budget"),
@@ -386,6 +422,9 @@ class GeminiCliReviewer(BaseReviewer):
         return stdout or "", stderr or ""
 
     def _run_cli_command(self, cmd: list[str], env: dict[str, str], prompt_text: str) -> subprocess.CompletedProcess[str]:
+        model = str(self.config.get("model", "") or "").strip() or "(Gemini CLI default)"
+        print(f"[Command] Gemini CLI 实际命令: {shlex.join(cmd)}")
+        print(f"[INFO] Gemini CLI model: {model}")
         popen_kwargs: dict[str, Any] = {
             "cwd": str(_ROOT),
             "stdin": subprocess.PIPE,
@@ -525,6 +564,68 @@ class GeminiCliReviewer(BaseReviewer):
         with open(item["out_file"], "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
+    def _write_checkpoint(
+        self,
+        *,
+        status: str,
+        codes: list[str] | None = None,
+        message: str = "",
+        attempt: int | None = None,
+        next_delay: float | None = None,
+    ) -> None:
+        if self.checkpoint_path is None:
+            return
+        payload = {
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "status": status,
+            "codes": codes or [],
+            "message": message[:1200],
+            "attempt": attempt,
+            "next_delay_seconds": next_delay,
+            "requests_this_run": self.requests_this_run,
+            "daily_usage_count": self.usage.count,
+        }
+        tmp = self.checkpoint_path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self.checkpoint_path)
+
+    def _retry_delays(self) -> list[float]:
+        return [float(item) for item in self.config.get("retry_backoff_seconds", [])]
+
+    def _jittered_delay(self, base_delay: float) -> float:
+        jitter_ratio = max(0.0, float(self.config.get("retry_jitter_ratio", 0.2)))
+        if base_delay <= 0 or jitter_ratio == 0:
+            return base_delay
+        low = max(0.0, base_delay * (1 - jitter_ratio))
+        high = base_delay * (1 + jitter_ratio)
+        return round(random.uniform(low, high), 1)
+
+    def _sleep_before_retry(
+        self,
+        seconds: float,
+        message: str,
+        *,
+        codes: list[str] | None = None,
+        attempt: int | None = None,
+    ) -> None:
+        self._write_checkpoint(
+            status="retry_wait",
+            codes=codes,
+            message=message,
+            attempt=attempt,
+            next_delay=seconds,
+        )
+        if seconds <= 0:
+            print(message)
+            return
+        print(f"{message}，{seconds} 秒后重试。")
+        time.sleep(seconds)
+
+    @staticmethod
+    def _codes(items: list[dict[str, Any]]) -> list[str]:
+        return [str(item["code"]) for item in items]
+
     def _review_single_items(
         self,
         items: list[dict[str, Any]],
@@ -534,40 +635,73 @@ class GeminiCliReviewer(BaseReviewer):
         failed_codes: list[str] = []
         stop_reason = ""
 
-        for offset, item in enumerate(items):
-            ok, reason = self._can_start_request()
-            if not ok:
-                stop_reason = reason
-                print(f"[STOP] {reason}")
-                break
+        request_delay = self.config.get("request_delay", 10)
+        retry_delays = self._retry_delays()
 
+        for offset, item in enumerate(items):
             code = item["code"]
-            print(f"[{item['index']}/{total_candidates}] {code} — Gemini CLI 正在分析 ...", end=" ", flush=True)
-            try:
-                result = self.review_stock(code=code, day_chart=item["day_chart"], prompt=self.prompt)
-                self._write_stock_result(item, result)
-                all_results.append(result)
-                print(f"完成 — {self._format_result_status(result)}")
-            except GeminiCliRateLimitError as exc:
-                failed_codes.append(code)
-                print(f"限流/额度错误 — {str(exc)[:500]}")
-                if self.config.get("stop_on_rate_limit", True):
-                    stop_reason = "Gemini CLI 命中限流或额度限制"
+            attempt = 0
+
+            while True:
+                ok, reason = self._can_start_request()
+                if not ok:
+                    stop_reason = reason
+                    print(f"[STOP] {reason}")
                     break
-                backoff = self.config.get("rate_limit_backoff_seconds", 300)
-                print(f"[INFO] 退避 {backoff} 秒后继续。")
-                time.sleep(backoff)
-            except GeminiCliCredentialError as exc:
-                failed_codes.append(code)
-                stop_reason = str(exc)
-                print(f"凭证错误 — {stop_reason}")
+
+                print(f"[{item['index']}/{total_candidates}] {code} — Gemini CLI 正在分析 ...", end=" ", flush=True)
+                try:
+                    result = self.review_stock(code=code, day_chart=item["day_chart"], prompt=self.prompt)
+                    self._write_stock_result(item, result)
+                    all_results.append(result)
+                    print(f"完成 — {self._format_result_status(result)}")
+                    self._write_checkpoint(status="stock_done", codes=[code], message=self._format_result_status(result))
+                    break
+                except GeminiCliRateLimitError as exc:
+                    print(f"限流/容量错误 — {str(exc)[:500]}")
+                    if attempt < len(retry_delays):
+                        delay = self._jittered_delay(retry_delays[attempt])
+                        attempt += 1
+                        self._sleep_before_retry(
+                            delay,
+                            f"[INFO] {code} 命中限流/容量不足，重试 {attempt}/{len(retry_delays)}",
+                            codes=[code],
+                            attempt=attempt,
+                        )
+                        continue
+                    failed_codes.append(code)
+                    if self.config.get("stop_on_rate_limit", True):
+                        stop_reason = "Gemini CLI 命中限流或额度限制"
+                    else:
+                        print(f"[WARN] {code} 达到限流重试上限，跳过该股并继续。")
+                    break
+                except GeminiCliCredentialError as exc:
+                    failed_codes.append(code)
+                    stop_reason = str(exc)
+                    print(f"凭证错误 — {stop_reason}")
+                    break
+                except Exception as exc:
+                    message = str(exc)
+                    if _is_transient_error_text(message) and attempt < len(retry_delays):
+                        delay = self._jittered_delay(retry_delays[attempt])
+                        attempt += 1
+                        print(f"失败 — {exc}")
+                        self._sleep_before_retry(
+                            delay,
+                            f"[INFO] {code} 瞬时错误，重试 {attempt}/{len(retry_delays)}",
+                            codes=[code],
+                            attempt=attempt,
+                        )
+                        continue
+                    print(f"失败 — {exc}")
+                    failed_codes.append(code)
+                    break
+
+            if stop_reason:
                 break
-            except Exception as exc:
-                print(f"失败 — {exc}")
-                failed_codes.append(code)
 
             if offset < len(items) - 1:
-                time.sleep(self.config.get("request_delay", 10))
+                time.sleep(request_delay)
 
         return all_results, failed_codes, stop_reason
 
@@ -581,52 +715,90 @@ class GeminiCliReviewer(BaseReviewer):
         if len(items) == 1 or self.config.get("batch_size", 1) == 1:
             return self._review_single_items(items, total_candidates)
 
-        ok, reason = self._can_start_request()
-        if not ok:
-            print(f"[STOP] {reason}")
-            return [], [], reason
-
         start_index = items[0]["index"]
         end_index = items[-1]["index"]
-        codes = [item["code"] for item in items]
-        print(
-            f"[{start_index}-{end_index}/{total_candidates}] "
-            f"{','.join(codes)} — Gemini CLI 批量分析 {len(items)} 张图 ...",
-            end=" ",
-            flush=True,
-        )
+        codes = self._codes(items)
+        retry_delays = self._retry_delays()
 
-        try:
-            results = self.review_batch(items=items, prompt=self.prompt)
-            for item, result in zip(items, results):
-                self._write_stock_result(item, result)
-            print("完成")
-            for result in results:
-                print(f"    {result['code']} — {self._format_result_status(result)}")
-            return results, [], ""
-        except GeminiCliRateLimitError as exc:
-            print(f"限流/额度错误 — {str(exc)[:500]}")
-            if self.config.get("stop_on_rate_limit", True):
-                return [], codes, "Gemini CLI 命中限流或额度限制"
-            backoff = self.config.get("rate_limit_backoff_seconds", 300)
-            print(f"[INFO] 退避 {backoff} 秒后继续。")
-            time.sleep(backoff)
+        for attempt in range(len(retry_delays) + 1):
+            ok, reason = self._can_start_request()
+            if not ok:
+                print(f"[STOP] {reason}")
+                return [], [], reason
+
+            action = "批量分析" if attempt == 0 else f"批量重试 {attempt}/{len(retry_delays)}"
+            print(
+                f"[{start_index}-{end_index}/{total_candidates}] "
+                f"{','.join(codes)} — Gemini CLI {action} {len(items)} 张图 ...",
+                end=" ",
+                flush=True,
+            )
+
+            try:
+                results = self.review_batch(items=items, prompt=self.prompt)
+                for item, result in zip(items, results):
+                    self._write_stock_result(item, result)
+                print("完成")
+                for result in results:
+                    print(f"    {result['code']} — {self._format_result_status(result)}")
+                self._write_checkpoint(status="batch_done", codes=codes, message=f"批量完成 {len(items)} 张图")
+                return results, [], ""
+            except GeminiCliRateLimitError as exc:
+                print(f"限流/容量错误 — {str(exc)[:500]}")
+                if attempt < len(retry_delays):
+                    delay = self._jittered_delay(retry_delays[attempt])
+                    self._sleep_before_retry(
+                        delay,
+                        f"[INFO] 本批命中限流/容量不足，重试 {attempt + 1}/{len(retry_delays)}",
+                        codes=codes,
+                        attempt=attempt + 1,
+                    )
+                    continue
+                if self.config.get("stop_on_rate_limit", True) and not self.config.get(
+                    "fallback_to_single_on_batch_error", True
+                ):
+                    return [], codes, "Gemini CLI 命中限流或额度限制"
+                break
+            except GeminiCliCredentialError as exc:
+                reason = str(exc)
+                print(f"凭证错误 — {reason}")
+                return [], codes, reason
+            except Exception as exc:
+                print(f"批量失败 — {exc}")
+                if _is_transient_error_text(str(exc)) and attempt < len(retry_delays):
+                    delay = self._jittered_delay(retry_delays[attempt])
+                    self._sleep_before_retry(
+                        delay,
+                        f"[INFO] 本批瞬时错误，重试 {attempt + 1}/{len(retry_delays)}",
+                        codes=codes,
+                        attempt=attempt + 1,
+                    )
+                    continue
+                break
+
+        if not self.config.get("fallback_to_single_on_batch_error", True):
             return [], codes, ""
-        except GeminiCliCredentialError as exc:
-            reason = str(exc)
-            print(f"凭证错误 — {reason}")
-            return [], codes, reason
-        except Exception as exc:
-            print(f"批量失败 — {exc}")
-            if not self.config.get("fallback_to_single_on_batch_error", True):
-                return [], codes, ""
-            delay = self.config.get("request_delay", 10)
+
+        delay = self.config.get("request_delay", 10)
+        if len(items) > 2:
+            mid = len(items) // 2
             if delay:
-                print(f"[INFO] 批量失败，{delay} 秒后降级为逐只复评。")
+                print(f"[INFO] 批量失败，{delay} 秒后拆分为 {mid}+{len(items) - mid} 继续。")
                 time.sleep(delay)
             else:
-                print("[INFO] 批量失败，降级为逐只复评。")
-            return self._review_single_items(items, total_candidates)
+                print(f"[INFO] 批量失败，拆分为 {mid}+{len(items) - mid} 继续。")
+            left_results, left_failed, left_reason = self._review_batch_items(items[:mid], total_candidates)
+            if left_reason:
+                return left_results, left_failed + self._codes(items[mid:]), left_reason
+            right_results, right_failed, right_reason = self._review_batch_items(items[mid:], total_candidates)
+            return left_results + right_results, left_failed + right_failed, right_reason
+
+        if delay:
+            print(f"[INFO] 小批量仍失败，{delay} 秒后降级为逐只复评。")
+            time.sleep(delay)
+        else:
+            print("[INFO] 小批量仍失败，降级为逐只复评。")
+        return self._review_single_items(items, total_candidates)
 
     def run(self):
         candidates_data = self.load_candidates(Path(self.config["candidates"]))
@@ -648,6 +820,8 @@ class GeminiCliReviewer(BaseReviewer):
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_path = out_dir / "gemini_cli_review_checkpoint.json"
+        self._write_checkpoint(status="started", message=f"pick_date={pick_date}, candidates={len(candidates)}")
 
         all_results: list[dict] = []
         failed_codes: list[str] = []
@@ -665,6 +839,7 @@ class GeminiCliReviewer(BaseReviewer):
                 if result.get("reviewer") == "gemini-cli":
                     print(f"[{i}/{len(candidates)}] {code} — 已存在，跳过。")
                     all_results.append(result)
+                    self._write_checkpoint(status="skip_existing", codes=[code], message="已存在 gemini-cli 结果")
                     continue
                 print(f"[{i}/{len(candidates)}] {code} — 已有非 gemini-cli 结果，重新复评。")
 
@@ -740,6 +915,11 @@ class GeminiCliReviewer(BaseReviewer):
             print(f"[WARN] 未处理股票：{failed_codes}")
         if stop_reason:
             print(f"[WARN] 提前停止：{stop_reason}")
+        self._write_checkpoint(
+            status="finished",
+            codes=failed_codes,
+            message=f"success={len(all_results)}, failed_or_skipped={len(failed_codes)}, stop_reason={stop_reason}",
+        )
 
         if not all_results:
             print("[ERROR] 没有可用的评分结果，跳过汇总。")

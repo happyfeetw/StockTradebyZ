@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+from PIL import Image
 
 from base_reviewer import BaseReviewer
 
@@ -40,6 +41,13 @@ GEMINI_CLI_IMAGE_LIMIT = 3000
 GEMINI_CLI_BATCH_TARGET_RATIO = 0.70
 MAX_BATCH_SIZE = int(GEMINI_CLI_IMAGE_LIMIT * GEMINI_CLI_BATCH_TARGET_RATIO)
 MAX_IMAGE_BYTES = 7 * 1024 * 1024
+GEMINI_CONTEXT_LIMIT_TOKENS = 1_048_576
+MAX_CONTEXT_TOKENS = int(GEMINI_CONTEXT_LIMIT_TOKENS * GEMINI_CLI_BATCH_TARGET_RATIO)
+IMAGE_TILE_SIZE = 384
+ESTIMATED_TOKENS_PER_TILE = 290
+ESTIMATED_OUTPUT_TOKENS_PER_STOCK = 800
+ESTIMATED_PROMPT_TOKEN_RESERVE = 20_000
+DEFAULT_BATCH_SIZE = 220
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -51,7 +59,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_format": "json",
     "timeout_seconds": 900,
     "request_delay": 10,
-    "batch_size": MAX_BATCH_SIZE,
+    "batch_size": DEFAULT_BATCH_SIZE,
     "fallback_to_single_on_batch_error": True,
     "max_requests_per_run": 50,
     "daily_request_budget": 80,
@@ -208,7 +216,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["timeout_seconds"] = int(cfg.get("timeout_seconds", 900))
     cfg["rate_limit_backoff_seconds"] = int(cfg.get("rate_limit_backoff_seconds", 300))
     cfg["request_delay"] = float(cfg.get("request_delay", 10))
-    cfg["batch_size"] = int(cfg.get("batch_size", MAX_BATCH_SIZE))
+    cfg["batch_size"] = int(cfg.get("batch_size", DEFAULT_BATCH_SIZE))
     if cfg["batch_size"] < 1 or cfg["batch_size"] > MAX_BATCH_SIZE:
         raise ValueError(f"batch_size 必须在 1 到 {MAX_BATCH_SIZE} 之间")
 
@@ -218,6 +226,13 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["output_format"] = output_format
 
     return cfg
+
+
+def estimate_image_tokens(path: Path) -> int:
+    with Image.open(path) as img:
+        width, height = img.size
+    tiles = max(1, ((width + IMAGE_TILE_SIZE - 1) // IMAGE_TILE_SIZE) * ((height + IMAGE_TILE_SIZE - 1) // IMAGE_TILE_SIZE))
+    return int(tiles * ESTIMATED_TOKENS_PER_TILE)
 
 
 class DailyUsageTracker:
@@ -625,6 +640,11 @@ class GeminiCliReviewer(BaseReviewer):
             f"今日剩余 {self.usage.remaining() if self.usage.remaining() is not None else '不限'} 次，"
             f"每批最多 {batch_size} 张图"
         )
+        print(
+            "[INFO] 上下文预算："
+            f"按 {GEMINI_CONTEXT_LIMIT_TOKENS:,} tokens 的 {int(GEMINI_CLI_BATCH_TARGET_RATIO * 100)}% "
+            f"估算切批，单批目标不超过 {MAX_CONTEXT_TOKENS:,} tokens"
+        )
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -633,6 +653,7 @@ class GeminiCliReviewer(BaseReviewer):
         failed_codes: list[str] = []
         stop_reason = ""
         review_batch: list[dict[str, Any]] = []
+        review_batch_estimated_tokens = ESTIMATED_PROMPT_TOKEN_RESERVE
 
         for i, candidate in enumerate(candidates, 1):
             code: str = candidate["code"]
@@ -652,6 +673,32 @@ class GeminiCliReviewer(BaseReviewer):
                 print(f"[{i}/{len(candidates)}] {code} — 缺少日线图，跳过。")
                 failed_codes.append(code)
                 continue
+            try:
+                item_estimated_tokens = estimate_image_tokens(day_chart) + ESTIMATED_OUTPUT_TOKENS_PER_STOCK
+            except Exception as exc:
+                print(f"[{i}/{len(candidates)}] {code} — 图片 token 估算失败，跳过：{exc}")
+                failed_codes.append(code)
+                continue
+
+            if review_batch and review_batch_estimated_tokens + item_estimated_tokens > MAX_CONTEXT_TOKENS:
+                print(
+                    f"[INFO] 当前批次估算 {review_batch_estimated_tokens:,} tokens，"
+                    "达到 70% 上下文预算，提前提交。"
+                )
+                results, failed, reason = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                review_batch_estimated_tokens = ESTIMATED_PROMPT_TOKEN_RESERVE
+                if reason:
+                    stop_reason = reason
+                    break
+                ok, next_reason = self._can_start_request()
+                if not ok:
+                    stop_reason = next_reason
+                    print(f"[STOP] {next_reason}")
+                    break
+                time.sleep(self.config.get("request_delay", 10))
 
             review_batch.append(
                 {
@@ -661,6 +708,7 @@ class GeminiCliReviewer(BaseReviewer):
                     "out_file": out_file,
                 }
             )
+            review_batch_estimated_tokens += item_estimated_tokens
             if len(review_batch) < batch_size:
                 continue
 
@@ -668,6 +716,7 @@ class GeminiCliReviewer(BaseReviewer):
             all_results.extend(results)
             failed_codes.extend(failed)
             review_batch = []
+            review_batch_estimated_tokens = ESTIMATED_PROMPT_TOKEN_RESERVE
             if reason:
                 stop_reason = reason
                 break

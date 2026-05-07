@@ -656,7 +656,7 @@ def render_review_config() -> None:
     with left:
         cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
         cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
-        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2100, value=int(cfg.get("batch_size", 2100)))
+        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2100, value=int(cfg.get("batch_size", 220)))
         cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
         cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
         cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 80)))
@@ -687,7 +687,7 @@ def render_review_config() -> None:
             cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
 
     st.markdown(
-        "<div class='panel-note'>batch_size 最高 2100（官方 3000 张上限的 70%）；每日预算仍按 Gemini CLI 请求次数记录。配置会随运行快照保存。</div>",
+        "<div class='panel-note'>batch_size 默认 220；脚本还会按 1,048,576 tokens 的 70% 预算结合图片尺寸动态切批。</div>",
         unsafe_allow_html=True,
     )
     st.session_state.review_cfg = cfg

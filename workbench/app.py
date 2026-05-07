@@ -23,6 +23,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
+HISTORY_DIR = ROOT / "data" / "history"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 
 sys.path.insert(0, str(ROOT))
@@ -89,6 +90,28 @@ def latest_suggestion() -> dict[str, Any]:
     if not pick_date:
         return {}
     return load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
+
+
+def history_index() -> dict[str, Any]:
+    return load_json(HISTORY_DIR / "index.json")
+
+
+def history_dates() -> list[str]:
+    dates = [str(item.get("date")) for item in history_index().get("dates", []) if item.get("date")]
+    if dates:
+        return dates
+    if not HISTORY_DIR.exists():
+        return []
+    return sorted([p.name for p in HISTORY_DIR.iterdir() if p.is_dir()], reverse=True)
+
+
+def load_history_results(pick_date: str, strategy: str = "all") -> dict[str, Any]:
+    safe_strategy = strategy if strategy else "all"
+    return load_json(HISTORY_DIR / pick_date / f"{safe_strategy}.json")
+
+
+def load_history_summary(pick_date: str) -> dict[str, Any]:
+    return load_json(HISTORY_DIR / pick_date / "summary.json")
 
 
 def csv_count(path: Path) -> int:
@@ -242,6 +265,7 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     fetch_cfg = str(run_dir / "fetch_kline.yaml")
     rules_cfg = str(run_dir / "rules_preselect.yaml")
     review_cfg = str(run_dir / "gemini_cli_review.yaml")
+    run_id = run_dir.name
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
     if clean_text(run_cfg.get("pick_date")):
@@ -257,11 +281,13 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
         "跳过抓取": [
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
         "初选+导出图表": [
             ("量化初选", preselect_cmd),
@@ -278,6 +304,7 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
         ],
         "只跑复评": [
             ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
     }
     return plans[run_mode]
@@ -746,6 +773,114 @@ def render_result_center() -> None:
     st.dataframe(df, width="stretch", hide_index=True)
 
 
+def history_rows(pick_date: str, strategy: str) -> list[dict[str, Any]]:
+    payload = load_history_results(pick_date, "all")
+    rows = payload.get("results", [])
+    if strategy != "全部":
+        rows = [row for row in rows if str(row.get("strategy") or "") == strategy]
+    return rows
+
+
+def history_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    table: list[dict[str, Any]] = []
+    for row in rows:
+        review = row.get("review") or {}
+        close = row.get("close")
+        brick_growth = row.get("brick_growth")
+        total_score = review.get("total_score")
+        table.append(
+            {
+                "排名": row.get("rank"),
+                "代码": row.get("code") or "",
+                "策略": row.get("strategy") or "",
+                "状态": row.get("status") or "",
+                "收盘价": float(close) if close is not None else None,
+                "brick_growth": float(brick_growth) if brick_growth is not None else None,
+                "结论": review.get("verdict") or "",
+                "总分": float(total_score) if total_score is not None else None,
+                "信号": review.get("signal_type") or "",
+                "评论": review.get("comment") or "",
+            }
+        )
+    return table
+
+
+def render_history_metrics(summary: dict[str, Any]) -> None:
+    strategy_counts = summary.get("strategy_counts", {})
+    b1_count = strategy_counts.get("b1", {}).get("total", 0)
+    brick_count = strategy_counts.get("brick", {}).get("total", 0)
+    st.markdown(
+        f"""
+        <div class="metric-row">
+          <div class="metric-card"><div class="metric-label">归档日期</div><div class="metric-value">{summary.get("date", "无")}</div></div>
+          <div class="metric-card"><div class="metric-label">候选 / 已复评</div><div class="metric-value">{summary.get("candidate_count", 0)} / {summary.get("reviewed_count", 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">推荐数量</div><div class="metric-value">{summary.get("recommended_count", 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">B1 / 砖型图</div><div class="metric-value">{b1_count} / {brick_count}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_history_center() -> None:
+    st.title("历史结果")
+    dates = history_dates()
+    if not dates:
+        st.warning("还没有历史归档。完整流程或只跑复评成功后，会自动生成 data/history。")
+        st.caption("也可以手动执行：python -m pipeline.archive_results")
+        return
+
+    h1, h2 = st.columns([0.28, 0.22])
+    with h1:
+        selected_date = st.selectbox("归档日期", dates)
+    all_payload = load_history_results(selected_date, "all")
+    all_rows = all_payload.get("results", [])
+    strategies = sorted({str(row.get("strategy") or "") for row in all_rows if row.get("strategy")})
+    with h2:
+        selected_strategy = st.selectbox("策略", ["全部"] + strategies)
+
+    summary = load_history_summary(selected_date)
+    if summary:
+        render_history_metrics(summary)
+        st.caption(f"关联运行：{summary.get('run_id') or '无'} · 归档时间：{summary.get('archived_at') or '未知'}")
+
+    rows = history_rows(selected_date, selected_strategy)
+    if not rows:
+        st.info("当前筛选条件下没有结果。")
+        return
+
+    table_df = pd.DataFrame(history_table_rows(rows))
+    st.dataframe(table_df, width="stretch", hide_index=True)
+
+    codes = [str(row.get("code")) for row in rows if row.get("code")]
+    selected_code = st.selectbox("查看单票详情", codes)
+    selected_row = next((row for row in rows if str(row.get("code")) == selected_code), {})
+    if not selected_row:
+        return
+
+    left, right = st.columns([0.46, 0.54], gap="large")
+    review = selected_row.get("review") or {}
+    with left:
+        st.subheader(f"{selected_code} · {selected_row.get('strategy', '')}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("状态", selected_row.get("status", ""))
+        c2.metric("总分", review.get("total_score", ""))
+        c3.metric("排名", selected_row.get("rank") or "-")
+        chart_path = Path(str(selected_row.get("chart") or ""))
+        if chart_path.exists():
+            st.image(str(chart_path), caption=chart_path.name, width="stretch")
+        else:
+            st.info("未找到归档关联图表。")
+    with right:
+        st.subheader("复评内容")
+        if review:
+            st.write(review.get("comment", ""))
+            with st.expander("原始复评 JSON", expanded=False):
+                st.json(review)
+        else:
+            st.info("这只股票暂无复评结果。")
+
+
 def _load_raw(code: str) -> pd.DataFrame:
     csv = ROOT / "data" / "raw" / f"{code}.csv"
     if not csv.exists():
@@ -800,7 +935,7 @@ def main() -> None:
         st.caption("本地选股工作台")
         page = st.radio(
             "导航",
-            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "单票复盘"],
+            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "历史结果", "单票复盘"],
             label_visibility="collapsed",
         )
 
@@ -815,6 +950,8 @@ def main() -> None:
         render_review_config()
     elif page == "结果中心":
         render_result_center()
+    elif page == "历史结果":
+        render_history_center()
     else:
         render_stock_view()
 

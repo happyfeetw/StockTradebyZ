@@ -70,12 +70,23 @@ RATE_LIMIT_MARKERS = (
     "daily limit",
 )
 
+CREDENTIAL_ERROR_MARKERS = (
+    "oauth_creds.json",
+    ".gemini",
+    "eperm",
+    "operation not permitted",
+)
+
 
 class GeminiCliError(RuntimeError):
     pass
 
 
 class GeminiCliRateLimitError(GeminiCliError):
+    pass
+
+
+class GeminiCliCredentialError(GeminiCliError):
     pass
 
 
@@ -93,6 +104,11 @@ def _optional_int(value: Any) -> int | None:
 def _is_rate_limit_text(text: str) -> bool:
     lower = text.lower()
     return any(marker in lower for marker in RATE_LIMIT_MARKERS)
+
+
+def _is_credential_error_text(text: str) -> bool:
+    lower = text.lower()
+    return any(marker in lower for marker in CREDENTIAL_ERROR_MARKERS)
 
 
 def _find_text_payload(value: Any) -> str | None:
@@ -364,6 +380,11 @@ class GeminiCliReviewer(BaseReviewer):
         except subprocess.TimeoutExpired as exc:
             stdout, stderr = self._terminate_cli_process(proc)
             detail = f"{stdout}\n{stderr}".strip()
+            if _is_credential_error_text(detail):
+                raise GeminiCliCredentialError(
+                    "Gemini CLI 凭证不可访问：无法打开 ~/.gemini/oauth_creds.json。"
+                    "请从普通终端启动 workbench，或让当前运行环境具备 ~/.gemini 读写权限。"
+                ) from exc
             suffix = f": {detail[:500]}" if detail else ""
             raise GeminiCliError(f"Gemini CLI 超时（{timeout} 秒）{suffix}") from exc
 
@@ -398,6 +419,11 @@ class GeminiCliReviewer(BaseReviewer):
 
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
+            if _is_credential_error_text(combined_output):
+                raise GeminiCliCredentialError(
+                    "Gemini CLI 凭证不可访问：无法打开 ~/.gemini/oauth_creds.json。"
+                    "请从普通终端启动 workbench，或让当前运行环境具备 ~/.gemini 读写权限。"
+                )
             if _is_rate_limit_text(combined_output):
                 raise GeminiCliRateLimitError(combined_output)
             raise GeminiCliError(f"Gemini CLI 退出码 {result.returncode}: {combined_output[:1200]}")
@@ -434,6 +460,11 @@ class GeminiCliReviewer(BaseReviewer):
 
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
+            if _is_credential_error_text(combined_output):
+                raise GeminiCliCredentialError(
+                    "Gemini CLI 凭证不可访问：无法打开 ~/.gemini/oauth_creds.json。"
+                    "请从普通终端启动 workbench，或让当前运行环境具备 ~/.gemini 读写权限。"
+                )
             if _is_rate_limit_text(combined_output):
                 raise GeminiCliRateLimitError(combined_output)
             raise GeminiCliError(f"Gemini CLI 退出码 {result.returncode}: {combined_output[:1200]}")
@@ -502,6 +533,11 @@ class GeminiCliReviewer(BaseReviewer):
                 backoff = self.config.get("rate_limit_backoff_seconds", 300)
                 print(f"[INFO] 退避 {backoff} 秒后继续。")
                 time.sleep(backoff)
+            except GeminiCliCredentialError as exc:
+                failed_codes.append(code)
+                stop_reason = str(exc)
+                print(f"凭证错误 — {stop_reason}")
+                break
             except Exception as exc:
                 print(f"失败 — {exc}")
                 failed_codes.append(code)
@@ -552,6 +588,10 @@ class GeminiCliReviewer(BaseReviewer):
             print(f"[INFO] 退避 {backoff} 秒后继续。")
             time.sleep(backoff)
             return [], codes, ""
+        except GeminiCliCredentialError as exc:
+            reason = str(exc)
+            print(f"凭证错误 — {reason}")
+            return [], codes, reason
         except Exception as exc:
             print(f"批量失败 — {exc}")
             if not self.config.get("fallback_to_single_on_batch_error", True):

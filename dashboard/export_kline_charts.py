@@ -71,7 +71,7 @@ def _export_fig(fig, out_path: Path, width: int, height: int) -> None:
         format="jpg",
         width=width,
         height=height,
-        scale=2,        # 2× 分辨率，适合屏幕阅读
+        scale=1,
     )
 
 
@@ -203,10 +203,10 @@ CONFIG = {
     "out_dir":    str(_ROOT / "data" / "kline"),
     "bars":       120,   # 日线显示 K 线数量（0 = 全部）
     "weekly_bars": 60,   # 周线显示 K 线数量（0 = 全部）
-    "day_width":  1400,
-    "day_height": 700,
-    "week_width": 1400,
-    "week_height": 700,
+    "day_width":  2800,
+    "day_height": 1400,
+    "week_width": 2800,
+    "week_height": 1400,
     "engine": "pillow",  # pillow 不启动浏览器；plotly 需要 Chrome/Kaleido
     "limit": 0,
 }

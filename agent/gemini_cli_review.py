@@ -38,7 +38,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_cli_review.yaml"
 _TMP_ASSET_DIR = _ROOT / ".gemini_cli_tmp"
 GEMINI_CLI_IMAGE_LIMIT = 3000
-GEMINI_CLI_BATCH_TARGET_RATIO = 0.70
+GEMINI_CLI_BATCH_TARGET_RATIO = 0.90
 MAX_BATCH_SIZE = int(GEMINI_CLI_IMAGE_LIMIT * GEMINI_CLI_BATCH_TARGET_RATIO)
 MAX_IMAGE_BYTES = 7 * 1024 * 1024
 GEMINI_CONTEXT_LIMIT_TOKENS = 1_048_576
@@ -47,7 +47,7 @@ IMAGE_TILE_SIZE = 384
 ESTIMATED_TOKENS_PER_TILE = 290
 ESTIMATED_OUTPUT_TOKENS_PER_STOCK = 800
 ESTIMATED_PROMPT_TOKEN_RESERVE = 20_000
-DEFAULT_BATCH_SIZE = 220
+DEFAULT_BATCH_SIZE = 90
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -683,7 +683,7 @@ class GeminiCliReviewer(BaseReviewer):
             if review_batch and review_batch_estimated_tokens + item_estimated_tokens > MAX_CONTEXT_TOKENS:
                 print(
                     f"[INFO] 当前批次估算 {review_batch_estimated_tokens:,} tokens，"
-                    "达到 70% 上下文预算，提前提交。"
+                    f"达到 {int(GEMINI_CLI_BATCH_TARGET_RATIO * 100)}% 上下文预算，提前提交。"
                 )
                 results, failed, reason = self._review_batch_items(review_batch, len(candidates))
                 all_results.extend(results)

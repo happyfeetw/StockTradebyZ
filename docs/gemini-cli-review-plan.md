@@ -73,7 +73,7 @@ prompt_path: agent/prompt.md
 gemini_bin: gemini
 model: "gemini-3.1-pro-preview"
 request_delay: 10
-batch_size: 220
+batch_size: 90
 fallback_to_single_on_batch_error: true
 skip_existing: true
 suggest_min_score: 4.0
@@ -92,10 +92,10 @@ usage_file: data/review/.gemini_cli_usage.json
 - `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
 - `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
-- `batch_size`：单次 CLI 请求最多提交几张图，默认 220，上限仍为 2100，并会按实际图片尺寸和上下文预算动态切批。
+- `batch_size`：单次 CLI 请求最多提交几张图，默认 90，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
 - `fallback_to_single_on_batch_error`：批量 JSON 解析失败时，自动降级为逐只复评。
-- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=220`
-  时，当前 1400×700 图表约每批覆盖 220 支股票；旧 2800×1400 图表会自动切到约 70 支/批。
+- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=90`
+  时，当前 2800×1400 图表约每批覆盖 90 支股票。
 - `daily_request_budget`：项目侧每日调用预算，避免撞到订阅账号日限额。
 - `stop_on_rate_limit`：遇到限流或额度错误时停止，保留已完成结果。
 
@@ -103,8 +103,8 @@ usage_file: data/review/.gemini_cli_usage.json
 
 Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量图表复评必须按“少量、限速、可续跑”的方式设计：
 
-- 默认按上下文上限 1,048,576 tokens 的 70% 控制单批。
-- 当前项目新导出的 1400×700 图片估算约 8 个 tile、约 2,300 图像 tokens；加上输出预算后默认约 220 张/批。
+- 默认按上下文上限 1,048,576 tokens 的 90% 控制单批。
+- 当前项目导出的 2800×1400 图片估算约 32 个 tile、约 9,280 图像 tokens；加上输出预算后默认约 90 张/批。
 - 每次 CLI 调用后 sleep `request_delay` 秒。
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。

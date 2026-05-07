@@ -176,6 +176,9 @@ def _filter_by_boards_stocklist(df: pd.DataFrame, exclude_boards: set[str]) -> p
         mask &= ~((ts.str.endswith(".SH")) & num.str.startswith(("688",)))
     if "bj" in exclude_boards:
         mask &= ~((ts.str.endswith(".BJ")) | num.str.startswith(("4", "8")))
+    if "st" in exclude_boards and "name" in df.columns:
+        name = df["name"].astype(str).str.upper()
+        mask &= ~name.str.contains("ST", na=False)
 
     return df[mask].copy()
 

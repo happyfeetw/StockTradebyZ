@@ -113,7 +113,7 @@ python -m pipeline.fetch_kline
 
 - start、end：抓取区间
 - stocklist：股票池文件
-- exclude_boards：排除板块（gem、star、bj）
+- exclude_boards：排除板块/股票类型（gem、star、bj、st）
 - out：输出目录（默认 data/raw）
 - workers：并发线程数
 

@@ -533,9 +533,9 @@ def render_data_config() -> None:
     with c5:
         fetch_cfg["exclude_boards"] = st.multiselect(
             "排除板块",
-            ["gem", "star", "bj"],
-            default=[x for x in fetch_cfg.get("exclude_boards", []) if x in {"gem", "star", "bj"}],
-            help="gem=创业板，star=科创板，bj=北交所",
+            ["gem", "star", "bj", "st"],
+            default=[x for x in fetch_cfg.get("exclude_boards", []) if x in {"gem", "star", "bj", "st"}],
+            help="gem=创业板，star=科创板，bj=北交所，st=ST/*ST 股票",
         )
         fetch_cfg["log"] = st.text_input("抓取日志文件", value=str(fetch_cfg.get("log", "")), placeholder="留空=按日期写入 data/logs")
 

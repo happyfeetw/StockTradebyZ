@@ -701,16 +701,19 @@ def result_rows() -> list[dict[str, Any]]:
     review_dir = ROOT / "data" / "review" / str(candidates_data.get("pick_date", ""))
     for code, candidate in candidates.items():
         review = load_json(review_dir / f"{code}.json")
+        close = candidate.get("close")
+        brick_growth = candidate.get("brick_growth")
+        total_score = review.get("total_score")
         rows.append(
             {
                 "代码": code,
-                "策略": candidate.get("strategy", ""),
-                "收盘价": candidate.get("close", ""),
-                "brick_growth": candidate.get("brick_growth", ""),
-                "结论": review.get("verdict", ""),
-                "总分": review.get("total_score", ""),
-                "信号": review.get("signal_type", ""),
-                "评论": review.get("comment", ""),
+                "策略": candidate.get("strategy") or "",
+                "收盘价": float(close) if close is not None else None,
+                "brick_growth": float(brick_growth) if brick_growth is not None else None,
+                "结论": review.get("verdict") or "",
+                "总分": float(total_score) if total_score is not None else None,
+                "信号": review.get("signal_type") or "",
+                "评论": review.get("comment") or "",
             }
         )
     recommendation_codes = {item.get("code") for item in suggestion.get("recommendations", [])}

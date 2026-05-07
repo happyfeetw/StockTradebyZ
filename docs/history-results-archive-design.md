@@ -95,6 +95,25 @@ python -m pipeline.archive_results
 python -m pipeline.archive_results --date 2026-05-06
 ```
 
+## 同日多策略运行
+
+如果同一天先跑 `B1`，再跑 `brick`，后一次初选不能覆盖前一次策略结果。
+
+workbench 执行初选时会调用：
+
+```bash
+python -m pipeline.cli preselect --merge-same-date
+```
+
+这个参数的语义是：
+
+- 同一 `pick_date` 下，按策略合并 `data/candidates/candidates_{date}.json` 和 `candidates_latest.json`。
+- 重跑某个策略时，替换该策略旧结果。
+- 保留当天其他策略已经产生的候选。
+- 如果一次运行启用 `B1 + 砖型图`，会同时替换这两个策略的旧结果。
+
+这样复评、结果中心和历史归档仍然读取同一个候选契约文件，但文件内容会保留当天已跑过的各策略最终结果。
+
 ## UI
 
 workbench 新增 `历史结果` 页面。

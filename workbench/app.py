@@ -268,6 +268,7 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     run_id = run_dir.name
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
+    preselect_cmd += ["--merge-same-date"]
     if clean_text(run_cfg.get("pick_date")):
         preselect_cmd += ["--date", clean_text(run_cfg.get("pick_date"))]
     if clean_text(run_cfg.get("end_date")):
@@ -730,10 +731,12 @@ def render_review_config() -> None:
 def result_rows() -> list[dict[str, Any]]:
     candidates_data = load_candidates()
     suggestion = latest_suggestion()
-    candidates = {item.get("code"): item for item in candidates_data.get("candidates", [])}
     rows: list[dict[str, Any]] = []
     review_dir = ROOT / "data" / "review" / str(candidates_data.get("pick_date", ""))
-    for code, candidate in candidates.items():
+    for candidate in candidates_data.get("candidates", []):
+        code = str(candidate.get("code") or "")
+        if not code:
+            continue
         review = load_json(review_dir / f"{code}.json")
         close = candidate.get("close")
         brick_growth = candidate.get("brick_growth")

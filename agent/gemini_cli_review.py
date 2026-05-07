@@ -43,7 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_dir": "data/review",
     "prompt_path": "agent/prompt.md",
     "gemini_bin": "gemini",
-    "model": "",
+    "model": "gemini-3.1-pro-preview",
     "output_format": "json",
     "timeout_seconds": 180,
     "request_delay": 10,

@@ -71,7 +71,7 @@ output_dir: data/review
 prompt_path: agent/prompt.md
 
 gemini_bin: gemini
-model: ""
+model: "gemini-3.1-pro-preview"
 request_delay: 10
 batch_size: 5
 fallback_to_single_on_batch_error: true
@@ -89,7 +89,7 @@ usage_file: data/review/.gemini_cli_usage.json
 说明：
 
 - `gemini_bin`：Gemini CLI 可执行文件名或绝对路径。
-- `model`：可为空，使用 CLI 当前默认模型；如果 CLI 支持 `--model`，再传入指定模型。
+- `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
 - `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
 - `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限固定为 5。

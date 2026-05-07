@@ -16,8 +16,8 @@ prompt_path: agent/prompt.md
 # Gemini CLI 可执行文件名或绝对路径
 gemini_bin: gemini
 
-# 留空表示使用 Gemini CLI 当前默认模型
-model: ""
+# Gemini CLI 复评默认模型
+model: "gemini-3.1-pro-preview"
 
 # CLI 输出格式：text 或 json
 output_format: json

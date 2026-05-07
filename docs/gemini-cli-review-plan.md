@@ -73,11 +73,11 @@ prompt_path: agent/prompt.md
 gemini_bin: gemini
 model: "gemini-3.1-pro-preview"
 request_delay: 10
-batch_size: 5
+batch_size: 2100
 fallback_to_single_on_batch_error: true
 skip_existing: true
 suggest_min_score: 4.0
-timeout_seconds: 180
+timeout_seconds: 900
 output_format: json
 max_requests_per_run: 50
 daily_request_budget: 80
@@ -92,10 +92,10 @@ usage_file: data/review/.gemini_cli_usage.json
 - `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
 - `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
-- `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限固定为 5。
+- `batch_size`：单次 CLI 请求最多提交几张图，默认 2100，上限固定为 2100（3000 张上限的 70%）。
 - `fallback_to_single_on_batch_error`：批量 JSON 解析失败时，自动降级为逐只复评。
-- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=5`
-  时，1 次请求最多覆盖 5 支股票。
+- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；`batch_size=2100`
+  时，1 次请求最多覆盖 2100 支股票。
 - `daily_request_budget`：项目侧每日调用预算，避免撞到订阅账号日限额。
 - `stop_on_rate_limit`：遇到限流或额度错误时停止，保留已完成结果。
 
@@ -103,8 +103,8 @@ usage_file: data/review/.gemini_cli_usage.json
 
 Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量图表复评必须按“少量、限速、可续跑”的方式设计：
 
-- 默认不一次性打满全部候选。
-- 默认每次 CLI 请求提交最多 5 张图，降低每分钟请求次数。
+- 默认不超过官方单次图片数量上限的 70%。
+- 默认每次 CLI 请求最多提交 2100 张图（官方 3000 张上限的 70%），以减少 CLI 调用次数。
 - 每次 CLI 调用后 sleep `request_delay` 秒。
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。

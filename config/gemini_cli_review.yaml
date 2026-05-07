@@ -23,19 +23,19 @@ model: "gemini-3.1-pro-preview"
 output_format: json
 
 # 单次 CLI 调用超时时间（秒）
-timeout_seconds: 180
+timeout_seconds: 900
 
 # 相邻 CLI 调用间隔（秒），用于降低分钟级限流风险
 request_delay: 10
 
-# 单次 Gemini CLI 请求最多提交几张图；为降低串图/漏评风险，上限固定为 5
-batch_size: 5
+# 单次 Gemini CLI 请求最多提交几张图；3000 张官方上限的 70% = 2100
+batch_size: 2100
 
 # 批量返回解析失败时，是否自动降级为逐只复评
 fallback_to_single_on_batch_error: true
 
 # 单次运行最多新发起多少次 Gemini CLI 请求；null 表示不限制
-# 注意：batch_size=5 时，1 次请求最多会复评 5 支股票
+# 注意：batch_size=2100 时，1 次请求最多会复评 2100 支股票
 max_requests_per_run: 50
 
 # 项目侧每日请求预算；null 表示不限制

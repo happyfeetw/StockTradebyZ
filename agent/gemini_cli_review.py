@@ -36,6 +36,10 @@ from base_reviewer import BaseReviewer
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_cli_review.yaml"
 _TMP_ASSET_DIR = _ROOT / ".gemini_cli_tmp"
+GEMINI_CLI_IMAGE_LIMIT = 3000
+GEMINI_CLI_BATCH_TARGET_RATIO = 0.70
+MAX_BATCH_SIZE = int(GEMINI_CLI_IMAGE_LIMIT * GEMINI_CLI_BATCH_TARGET_RATIO)
+MAX_IMAGE_BYTES = 7 * 1024 * 1024
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -45,9 +49,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gemini_bin": "gemini",
     "model": "gemini-3.1-pro-preview",
     "output_format": "json",
-    "timeout_seconds": 180,
+    "timeout_seconds": 900,
     "request_delay": 10,
-    "batch_size": 5,
+    "batch_size": MAX_BATCH_SIZE,
     "fallback_to_single_on_batch_error": True,
     "max_requests_per_run": 50,
     "daily_request_budget": 80,
@@ -201,12 +205,12 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["usage_file"] = _resolve_cfg_path(cfg["usage_file"])
     cfg["max_requests_per_run"] = _optional_int(cfg.get("max_requests_per_run"))
     cfg["daily_request_budget"] = _optional_int(cfg.get("daily_request_budget"))
-    cfg["timeout_seconds"] = int(cfg.get("timeout_seconds", 180))
+    cfg["timeout_seconds"] = int(cfg.get("timeout_seconds", 900))
     cfg["rate_limit_backoff_seconds"] = int(cfg.get("rate_limit_backoff_seconds", 300))
     cfg["request_delay"] = float(cfg.get("request_delay", 10))
-    cfg["batch_size"] = int(cfg.get("batch_size", 5))
-    if cfg["batch_size"] < 1 or cfg["batch_size"] > 5:
-        raise ValueError("batch_size 必须在 1 到 5 之间")
+    cfg["batch_size"] = int(cfg.get("batch_size", MAX_BATCH_SIZE))
+    if cfg["batch_size"] < 1 or cfg["batch_size"] > MAX_BATCH_SIZE:
+        raise ValueError(f"batch_size 必须在 1 到 {MAX_BATCH_SIZE} 之间")
 
     output_format = str(cfg.get("output_format", "json")).strip().lower()
     if output_format not in {"text", "json"}:
@@ -282,6 +286,11 @@ class GeminiCliReviewer(BaseReviewer):
         return [str(candidate.get("code", "")) for candidate in candidates if candidate.get("code")]
 
     def _copy_chart_for_cli(self, source: Path, code: str) -> tuple[Path, str]:
+        image_size = source.stat().st_size
+        if image_size > MAX_IMAGE_BYTES:
+            raise GeminiCliError(
+                f"{code} 图片超过 Gemini CLI 单图大小限制 7MB：{image_size / 1024 / 1024:.2f}MB"
+            )
         suffix = source.suffix.lower() or ".jpg"
         _TMP_ASSET_DIR.mkdir(parents=True, exist_ok=True)
         target = _TMP_ASSET_DIR / f"{code}_day{suffix}"
@@ -322,7 +331,7 @@ class GeminiCliReviewer(BaseReviewer):
         )
         return "\n".join(lines)
 
-    def _build_command(self, prompt_text: str) -> list[str]:
+    def _build_command(self) -> list[str]:
         cmd = [
             self.gemini_bin,
             "--skip-trust",
@@ -331,7 +340,7 @@ class GeminiCliReviewer(BaseReviewer):
             "--output-format",
             self.config.get("output_format", "json"),
             "--prompt",
-            prompt_text,
+            "",
         ]
         model = str(self.config.get("model", "") or "").strip()
         if model:
@@ -361,7 +370,7 @@ class GeminiCliReviewer(BaseReviewer):
             stdout, stderr = proc.communicate(timeout=5)
         return stdout or "", stderr or ""
 
-    def _run_cli_command(self, cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    def _run_cli_command(self, cmd: list[str], env: dict[str, str], prompt_text: str) -> subprocess.CompletedProcess[str]:
         popen_kwargs: dict[str, Any] = {
             "cwd": str(_ROOT),
             "stdin": subprocess.PIPE,
@@ -374,9 +383,9 @@ class GeminiCliReviewer(BaseReviewer):
             popen_kwargs["start_new_session"] = True
 
         proc = subprocess.Popen(cmd, **popen_kwargs)
-        timeout = self.config.get("timeout_seconds", 180)
+        timeout = self.config.get("timeout_seconds", 900)
         try:
-            stdout, stderr = proc.communicate(input="", timeout=timeout)
+            stdout, stderr = proc.communicate(input=prompt_text, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             stdout, stderr = self._terminate_cli_process(proc)
             detail = f"{stdout}\n{stderr}".strip()
@@ -395,22 +404,22 @@ class GeminiCliReviewer(BaseReviewer):
             stderr=stderr or "",
         )
 
-    def _consume_cli_request(self, cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    def _consume_cli_request(self, cmd: list[str], env: dict[str, str], prompt_text: str) -> subprocess.CompletedProcess[str]:
         ok, reason = self._can_start_request()
         if not ok:
             raise GeminiCliError(reason)
         self.requests_this_run += 1
         self.usage.consume()
-        return self._run_cli_command(cmd, env)
+        return self._run_cli_command(cmd, env, prompt_text)
 
     def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
         tmp_chart, chart_ref = self._copy_chart_for_cli(day_chart, code)
         prompt_text = self._build_prompt(code=code, chart_ref=chart_ref, prompt=prompt)
-        cmd = self._build_command(prompt_text)
+        cmd = self._build_command()
         env = {**os.environ, "NO_COLOR": "1"}
 
         try:
-            result = self._consume_cli_request(cmd, env)
+            result = self._consume_cli_request(cmd, env, prompt_text)
         finally:
             try:
                 tmp_chart.unlink()
@@ -446,11 +455,11 @@ class GeminiCliReviewer(BaseReviewer):
             prompt_items.append({"code": item["code"], "chart_ref": chart_ref})
 
         prompt_text = self._build_batch_prompt(items=prompt_items, prompt=prompt)
-        cmd = self._build_command(prompt_text)
+        cmd = self._build_command()
         env = {**os.environ, "NO_COLOR": "1"}
 
         try:
-            result = self._consume_cli_request(cmd, env)
+            result = self._consume_cli_request(cmd, env, prompt_text)
         finally:
             for tmp_chart in tmp_charts:
                 try:

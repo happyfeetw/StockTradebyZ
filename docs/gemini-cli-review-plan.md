@@ -80,7 +80,7 @@ retry_jitter_ratio: 0.2
 skip_existing: true
 suggest_min_score: 4.0
 timeout_seconds: 900
-idle_timeout_seconds: 180
+idle_timeout_seconds: 0
 output_format: stream-json
 save_raw_cli_io: true
 raw_log_dir: ""
@@ -97,7 +97,7 @@ usage_file: data/review/.gemini_cli_usage.json
 - `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
 - `output_format`：默认使用 `stream-json`，方便确认 CLI 已经开始响应，同时脚本仍只解析模型正文。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
-- `idle_timeout_seconds`：防止 CLI 进程还活着但长时间没有 stdout/stderr 输出；默认 180 秒。
+- `idle_timeout_seconds`：空闲超时；默认 0 表示关闭，只保留 `timeout_seconds` 总超时。
 - `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
 - `save_raw_cli_io`/`raw_log_dir`：保存每次 CLI 调用的 prompt、stdout、stderr、meta；`raw_log_dir` 留空时写入 `data/review/{pick_date}/gemini_cli_runs`。
 - `fallback_to_single_on_batch_error`：批量 JSON 解析失败、超时或流式连接中断时，自动拆批并最终降级为逐只复评。
@@ -117,7 +117,7 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。
 - 如果 stdout/stderr 或退出码显示 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、`ECONNRESET`、超时等错误，按 `retry_backoff_seconds` 加 jitter 重试，并写入 `gemini_cli_review_checkpoint.json`。
-- 如果 CLI 长时间没有任何 stdout/stderr，按 `idle_timeout_seconds` 触发空闲超时，避免等满 900 秒才失败。
+- 默认不启用空闲超时，只保留 `timeout_seconds=900` 总超时，避免误杀已进入模型处理但暂时无流式输出的请求。
 - `skip_existing: true` 时优先复用已有 `{code}.json`，支持隔天继续跑。
 - 批量重试耗尽后先拆半继续；小批仍失败时再逐只复评，避免一开始就把整批拆成单股请求。
 - 每次 CLI 调用前打印实际执行命令、`--model`、`cwd` 和 raw log 路径，避免与 `/model` 交互状态混淆。

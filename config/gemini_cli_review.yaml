@@ -25,8 +25,8 @@ output_format: stream-json
 # 单次 CLI 调用超时时间（秒）
 timeout_seconds: 900
 
-# 单次 CLI 调用空闲超时时间（秒）：超过该时间没有 stdout/stderr 输出即中止
-idle_timeout_seconds: 180
+# 单次 CLI 调用空闲超时时间（秒）；0 表示关闭，仅保留 timeout_seconds 总超时
+idle_timeout_seconds: 0
 
 # 相邻 CLI 调用间隔（秒），用于降低分钟级限流风险
 request_delay: 10

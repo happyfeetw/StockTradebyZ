@@ -183,7 +183,7 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 - model：模型名称
 - output_format：CLI 输出格式，默认 stream-json
 - request_delay：调用间隔（防限流）
-- idle_timeout_seconds：CLI 无 stdout/stderr 输出时的空闲超时
+- idle_timeout_seconds：CLI 无 stdout/stderr 输出时的空闲超时，默认 0 关闭，仅保留 900 秒总超时
 - batch_size：每次 Gemini CLI 请求最多提交几张图，默认 5
 - fallback_to_single_on_batch_error：批量 JSON 解析失败时是否自动降级逐只复评
 - save_raw_cli_io / raw_log_dir：保存每次 CLI 调用的原始 prompt、stdout、stderr 和 meta

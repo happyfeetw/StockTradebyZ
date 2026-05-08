@@ -700,7 +700,7 @@ def render_review_config() -> None:
         cfg["idle_timeout_seconds"] = st.number_input(
             "空闲超时秒数",
             min_value=0,
-            value=int(cfg.get("idle_timeout_seconds", 180) or 0),
+            value=int(cfg.get("idle_timeout_seconds", 0) or 0),
             step=30,
             help="超过该时间没有 stdout/stderr 输出即中止；0 表示关闭空闲超时。",
         )

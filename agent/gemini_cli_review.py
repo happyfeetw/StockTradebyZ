@@ -61,7 +61,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gemini-3.1-pro-preview",
     "output_format": "stream-json",
     "timeout_seconds": 900,
-    "idle_timeout_seconds": 180,
+    "idle_timeout_seconds": 0,
     "request_delay": 10,
     "batch_size": DEFAULT_BATCH_SIZE,
     "save_raw_cli_io": True,

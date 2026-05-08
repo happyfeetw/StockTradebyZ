@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import logging
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -23,6 +24,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from Selector import AnySelector
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -125,6 +128,7 @@ class MarketDataPreparer:
         n_turnover_days: int = 20,
         selector: Optional[AnySelector] = None,
         n_jobs: Optional[int] = None,
+        executor: str = "process",
     ) -> None:
         self.start_date      = start_date
         self.end_date        = end_date
@@ -132,6 +136,40 @@ class MarketDataPreparer:
         self.n_turnover_days = int(n_turnover_days)
         self.selector        = selector
         self.n_jobs          = n_jobs
+        self.executor        = executor
+
+    def _executor_class(self):
+        if str(self.executor).lower() in {"thread", "threads", "threadpool"}:
+            return ThreadPoolExecutor, "thread"
+        return ProcessPoolExecutor, "process"
+
+    def _prepare_tasks(
+        self,
+        tasks: list[tuple],
+        *,
+        desc: str,
+        allow_process_fallback: bool = True,
+    ) -> Dict[str, pd.DataFrame]:
+        prepared: Dict[str, pd.DataFrame] = {}
+        Executor, executor_name = self._executor_class()
+        try:
+            with Executor(max_workers=self.n_jobs) as ex:
+                futures = {ex.submit(_prepare_worker, args): args[0] for args in tasks}
+                for fut in tqdm(as_completed(futures), total=len(futures), desc=f"{desc} ({executor_name})", ncols=80):
+                    code, df_out = fut.result()
+                    if df_out is not None:
+                        prepared[code] = df_out
+        except PermissionError as exc:
+            if Executor is not ProcessPoolExecutor or not allow_process_fallback:
+                raise
+            logger.warning("进程池初始化失败，自动降级为线程池：%s", exc)
+            with ThreadPoolExecutor(max_workers=self.n_jobs) as ex:
+                futures = {ex.submit(_prepare_worker, args): args[0] for args in tasks}
+                for fut in tqdm(as_completed(futures), total=len(futures), desc=f"{desc} (thread fallback)", ncols=80):
+                    code, df_out = fut.result()
+                    if df_out is not None:
+                        prepared[code] = df_out
+        return prepared
 
     def prepare(self, data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """完整预处理：turnover_n + selector.prepare_df()，多进程并行。"""
@@ -140,15 +178,7 @@ class MarketDataPreparer:
              self.warmup_bars, self.n_turnover_days, self.selector)
             for code, df in data.items()
         ]
-        prepared: Dict[str, pd.DataFrame] = {}
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(_prepare_worker, args): args[0] for args in tasks}
-            for fut in tqdm(as_completed(futures), total=len(futures),
-                            desc="准备数据 (mp)", ncols=80):
-                code, df_out = fut.result()
-                if df_out is not None:
-                    prepared[code] = df_out
-        return prepared
+        return self._prepare_tasks(tasks, desc="准备数据")
 
     def prepare_base_only(
         self, data: Dict[str, pd.DataFrame]
@@ -162,15 +192,7 @@ class MarketDataPreparer:
              self.warmup_bars, self.n_turnover_days, None)
             for code, df in data.items()
         ]
-        prepared: Dict[str, pd.DataFrame] = {}
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(_prepare_worker, args): args[0] for args in tasks}
-            for fut in tqdm(as_completed(futures), total=len(futures),
-                            desc="基础数据准备 (mp)", ncols=80):
-                code, df_out = fut.result()
-                if df_out is not None:
-                    prepared[code] = df_out
-        return prepared
+        return self._prepare_tasks(tasks, desc="基础数据准备")
 
     def apply_selector_features(
         self,

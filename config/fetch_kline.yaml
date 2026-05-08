@@ -13,9 +13,10 @@ stocklist: "./pipeline/stocklist.csv"
 #   gem  — 创业板（300/301 开头，后缀 .SZ）
 #   star — 科创板（688 开头，后缀 .SH）
 #   bj   — 北交所（4/8 开头，后缀 .BJ）
+#   st   — ST/*ST 股票
 # 如需全部保留，设为空列表 []
 exclude_boards:
-  - gem
+  - st
   - star
   - bj
 
@@ -23,4 +24,4 @@ exclude_boards:
 out: "./data/raw"
 
 # 并发下载线程数
-workers: 8
+workers: 4

@@ -83,6 +83,7 @@ def cmd_preselect(args: argparse.Namespace) -> None:
     paths = save_candidates(
         run,
         candidates_dir=resolved_output_dir,
+        merge_same_date=bool(args.merge_same_date),
     )
 
     logger.info("===== 初选完成 =====")
@@ -120,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end-date", dest="end_date", default=None,
                    help="数据截断日期（回测用）")
     p.add_argument("--output", default=None, help="候选输出目录（默认 data/candidates/）")
+    p.add_argument(
+        "--merge-same-date",
+        action="store_true",
+        help="同一 pick_date 下按策略合并候选；重跑同策略会替换该策略，保留其他策略",
+    )
     p.add_argument("--log-dir", dest="log_dir", default=None,
                    help="流水日志目录（默认 data/logs/）")
 

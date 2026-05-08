@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+if [ -n "${TS_TOKEN:-}" ] && [ -z "${TUSHARE_TOKEN:-}" ]; then
+  export TUSHARE_TOKEN="$TS_TOKEN"
+fi
+
+if [ -z "${TUSHARE_TOKEN:-}" ] && command -v zsh >/dev/null 2>&1; then
+  ZSH_TUSHARE_TOKEN="$(zsh -ic 'print -r -- ${TUSHARE_TOKEN:-${TS_TOKEN:-}}' 2>/dev/null || true)"
+  if [ -n "$ZSH_TUSHARE_TOKEN" ]; then
+    export TUSHARE_TOKEN="$ZSH_TUSHARE_TOKEN"
+  fi
+fi
+
+if [ ! -x ".venv/bin/streamlit" ]; then
+  echo "Missing .venv/bin/streamlit. Run: .venv/bin/pip install -r requirements.txt" >&2
+  exit 1
+fi
+
+exec .venv/bin/streamlit run workbench/app.py \
+  --server.port 8601 \
+  --server.headless true \
+  --theme.base light \
+  --theme.backgroundColor '#f7f8fa' \
+  --theme.secondaryBackgroundColor '#ffffff' \
+  --theme.textColor '#20252b' \
+  --theme.primaryColor '#1f6feb'

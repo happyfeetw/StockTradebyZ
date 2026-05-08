@@ -299,6 +299,8 @@ def run_preselect(
     top_m = int(g.get("top_m", 20))
     n_turnover_days = int(g.get("n_turnover_days", 43))
     min_bars_buffer = int(g.get("min_bars_buffer", 10))
+    n_jobs = g.get("n_jobs")
+    prepare_executor = str(g.get("prepare_executor", "process"))
 
     # 1) 加载原始数据
     raw_data = load_raw_data(_data_dir, end_date=end_date)
@@ -312,6 +314,8 @@ def run_preselect(
         warmup_bars=warmup,
         n_turnover_days=n_turnover_days,
         selector=None,
+        n_jobs=int(n_jobs) if n_jobs is not None else None,
+        executor=prepare_executor,
     )
     prepared = preparer.prepare(raw_data)
 

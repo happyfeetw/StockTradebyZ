@@ -1,0 +1,266 @@
+/* Local stock workbench styles. */
+
+:root {
+  --workbench-bg: #f7f8fa;
+  --workbench-panel: #ffffff;
+  --workbench-sidebar: #eef1f4;
+  --workbench-border: #dce1e6;
+  --workbench-text: #20252b;
+  --workbench-muted: #69717d;
+  --workbench-primary: #1f6feb;
+  --workbench-success: #1f8f5f;
+  --workbench-warning: #a66f00;
+  --workbench-danger: #c93c37;
+}
+
+.stApp {
+  background: var(--workbench-bg);
+  color: var(--workbench-text);
+}
+
+.stApp,
+.stApp * {
+  color-scheme: light;
+}
+
+section[data-testid="stSidebar"] {
+  background: var(--workbench-sidebar);
+  border-right: 1px solid var(--workbench-border);
+}
+
+section[data-testid="stSidebar"] > div {
+  background: var(--workbench-sidebar);
+}
+
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div {
+  color: var(--workbench-text);
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+  color: var(--workbench-primary);
+}
+
+.block-container {
+  max-width: 1480px;
+  padding-top: 1.25rem;
+  padding-bottom: 2rem;
+}
+
+.stApp header,
+.stApp [data-testid="stHeader"],
+.stApp [data-testid="stToolbar"],
+.stApp [data-testid="stDecoration"],
+.stApp [data-testid="stStatusWidget"] {
+  display: none;
+}
+
+.stApp iframe[title="streamlit_navigation_bar"] {
+  display: none;
+}
+
+.stApp h1,
+.stApp h2,
+.stApp h3,
+.stApp h4,
+.stApp h5,
+.stApp h6,
+.stApp p,
+.stApp label,
+.stApp span,
+.stApp div {
+  color: var(--workbench-text);
+}
+
+.stApp [data-testid="stSelectbox"] div,
+.stApp [data-testid="stNumberInput"] div,
+.stApp [data-testid="stTextInput"] div,
+.stApp [data-testid="stDataFrame"] div {
+  color: var(--workbench-text);
+}
+
+.stApp [data-baseweb="select"] > div,
+.stApp [data-baseweb="input"] > div,
+.stApp input,
+.stApp textarea {
+  background: #ffffff;
+  border-color: var(--workbench-border);
+  color: var(--workbench-text);
+}
+
+.stApp [data-baseweb="select"] svg {
+  color: var(--workbench-muted);
+  fill: var(--workbench-muted);
+}
+
+.stApp [role="listbox"],
+.stApp [data-baseweb="popover"] > div {
+  background: #ffffff;
+  color: var(--workbench-text);
+}
+
+.stApp button[kind="primary"],
+.stApp div[data-testid="stButton"] button[kind="primary"] {
+  background: var(--workbench-primary);
+  border-color: var(--workbench-primary);
+  color: #ffffff;
+}
+
+.stApp div[data-testid="stButton"] button {
+  border-radius: 6px;
+}
+
+.stApp div[data-testid="stButton"] button p,
+.stApp div[data-testid="stButton"] button span {
+  color: inherit;
+}
+
+.workbench-status {
+  align-items: center;
+  background: var(--workbench-panel);
+  border: 1px solid var(--workbench-border);
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+}
+
+.status-item {
+  align-items: center;
+  color: var(--workbench-muted);
+  display: inline-flex;
+  font-size: 13px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.status-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+
+.status-dot.ok {
+  background: var(--workbench-success);
+}
+
+.status-dot.warn {
+  background: var(--workbench-warning);
+}
+
+.status-dot.err {
+  background: var(--workbench-danger);
+}
+
+.metric-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.metric-card {
+  background: var(--workbench-panel);
+  border: 1px solid var(--workbench-border);
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.metric-label {
+  color: var(--workbench-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  color: var(--workbench-text);
+  font-size: 22px;
+  font-weight: 650;
+}
+
+.panel-note {
+  color: var(--workbench-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.log-box {
+  background: #1f242c;
+  border: 1px solid #111820;
+  border-radius: 6px;
+  color: #d8dee9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 420px;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
+.stApp .log-box,
+.stApp .log-box *,
+.stApp div.log-box,
+.stApp div.log-box * {
+  color: #d8dee9;
+}
+
+.run-plan {
+  background: var(--workbench-panel);
+  border: 1px solid var(--workbench-border);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+
+.tag {
+  border-radius: 4px;
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.tag.pass {
+  background: #d9f0e2;
+  color: #116149;
+}
+
+.tag.watch {
+  background: #fff0c2;
+  color: #765400;
+}
+
+.tag.fail {
+  background: #f9d6d5;
+  color: #8a2520;
+}
+
+.tag.b1 {
+  background: #dbe9ff;
+  color: #174a96;
+}
+
+.tag.brick {
+  background: #e5e9ef;
+  color: #39424e;
+}
+
+@media (max-width: 980px) {
+  .metric-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .metric-row {
+    grid-template-columns: 1fr;
+  }
+}

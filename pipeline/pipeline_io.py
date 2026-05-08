@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Union
 
-from schemas import CandidateRun
+from schemas import Candidate, CandidateRun
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,67 @@ def _atomic_write(path: Path, content: str) -> None:
     logger.debug("写入完成: %s", path)
 
 
+def _load_run(path: Path) -> CandidateRun | None:
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return CandidateRun.from_dict(data)
+
+
+def _candidate_key(candidate: Candidate) -> tuple[str, str]:
+    return candidate.code, candidate.strategy
+
+
+def merge_same_date_by_strategy(existing: CandidateRun | None, incoming: CandidateRun) -> CandidateRun:
+    """
+    Merge same-date candidate snapshots by strategy.
+
+    Re-running a strategy should replace that strategy's stale rows, while
+    preserving rows from other strategies selected earlier on the same pick date.
+    """
+    if existing is None or existing.pick_date != incoming.pick_date:
+        return incoming
+
+    incoming_strategies = {candidate.strategy for candidate in incoming.candidates}
+    kept = [
+        candidate
+        for candidate in existing.candidates
+        if candidate.strategy not in incoming_strategies
+    ]
+    merged: list[Candidate] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in [*kept, *incoming.candidates]:
+        key = _candidate_key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(candidate)
+
+    meta = {
+        **existing.meta,
+        **incoming.meta,
+        "merge_same_date": True,
+        "merged_strategies": sorted({candidate.strategy for candidate in merged}),
+        "replaced_strategies": sorted(incoming_strategies),
+        "previous_total": len(existing.candidates),
+        "incoming_total": len(incoming.candidates),
+        "merged_total": len(merged),
+    }
+    return CandidateRun(
+        run_date=incoming.run_date,
+        pick_date=incoming.pick_date,
+        candidates=merged,
+        meta=meta,
+    )
+
+
 def save_candidates(
     run: CandidateRun,
     *,
     candidates_dir: Union[str, Path, None] = None,
     write_dated: bool = True,
     write_latest: bool = True,
+    merge_same_date: bool = False,
 ) -> dict[str, Path]:
     """
     将 CandidateRun 序列化为 JSON，写入磁盘。
@@ -58,6 +113,7 @@ def save_candidates(
     candidates_dir  : 输出目录，默认 data/candidates/
     write_dated     : 是否写 candidates_YYYY-MM-DD.json
     write_latest    : 是否覆盖 candidates_latest.json
+    merge_same_date : 是否按同一 pick_date 的策略维度合并旧结果
 
     返回
     ----
@@ -65,6 +121,19 @@ def save_candidates(
     """
     out_dir = _resolve_path(candidates_dir) if candidates_dir else _DEFAULT_CANDIDATES_DIR
     _ensure_dir(out_dir)
+
+    if merge_same_date:
+        dated_path = out_dir / f"candidates_{run.pick_date}.json"
+        existing = _load_run(dated_path)
+        merged_run = merge_same_date_by_strategy(existing, run)
+        if merged_run is not run:
+            logger.info(
+                "同日期候选按策略合并: 原 %d，只替换策略 %s，新合计 %d",
+                len(existing.candidates) if existing else 0,
+                ",".join(merged_run.meta.get("replaced_strategies", [])),
+                len(merged_run.candidates),
+            )
+        run = merged_run
 
     payload = json.dumps(run.to_dict(), ensure_ascii=False, indent=2)
     written: dict[str, Path] = {}

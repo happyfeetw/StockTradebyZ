@@ -6,13 +6,15 @@ run_all.py
   步骤 1  pipeline/fetch_kline.py   — 拉取最新 K 线数据
   步骤 2  pipeline/cli.py preselect — 量化初选，生成候选列表
   步骤 3  dashboard/export_kline_charts.py — 导出候选股 K 线图
-  步骤 4  agent/gemini_review.py    — Gemini 图表分析评分
+  步骤 4  agent/gemini_cli_review.py — Gemini CLI 图表分析评分
   步骤 5  打印推荐购买的股票
 
 用法：
     python run_all.py
     python run_all.py --skip-fetch     # 跳过行情下载（已有最新数据时）
     python run_all.py --start-from 3   # 从第 3 步开始（跳过前两步）
+    python run_all.py --reviewer gemini-api
+    python run_all.py --skip-review
 """
 from __future__ import annotations
 
@@ -63,10 +65,17 @@ def _print_recommendations() -> None:
     recommendations: list[dict] = suggestion.get("recommendations", [])
     min_score: float = suggestion.get("min_score_threshold", 0)
     total: int = suggestion.get("total_reviewed", 0)
+    reviewer: str = suggestion.get("reviewer", "gemini-api")
+    review_complete: bool = suggestion.get("review_complete", True)
 
     print(f"\n{'='*60}")
     print(f"  选股日期：{pick_date}")
+    print(f"  评审方式：{reviewer}")
     print(f"  评审总数：{total} 只   推荐门槛：score ≥ {min_score}")
+    if not review_complete:
+        pending = suggestion.get("pending", [])
+        stop_reason = suggestion.get("stop_reason", "")
+        print(f"  状态：未完整复评   待处理：{len(pending)} 只   原因：{stop_reason or '部分股票未处理'}")
     print(f"{'='*60}")
 
     if not recommendations:
@@ -99,6 +108,17 @@ def main() -> None:
         "--start-from", type=int, default=1, metavar="N",
         help="从第 N 步开始执行（1~4），跳过前面的步骤",
     )
+    parser.add_argument(
+        "--reviewer",
+        choices=("gemini-cli", "gemini-api"),
+        default="gemini-cli",
+        help="第 4 步复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY",
+    )
+    parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help="跳过步骤 4（Gemini 复评），直接打印已有 suggestion.json",
+    )
     args = parser.parse_args()
 
     start = args.start_from
@@ -128,11 +148,18 @@ def main() -> None:
         )
 
     # ── 步骤 4：Gemini 图表分析 ──────────────────────────────────────
-    if start <= 4:
-        _run(
-            "4/4  Gemini 图表分析（gemini_review）",
-            [PYTHON, str(ROOT / "agent" / "gemini_review.py")],
+    if start <= 4 and not args.skip_review:
+        reviewer_script = (
+            ROOT / "agent" / "gemini_cli_review.py"
+            if args.reviewer == "gemini-cli"
+            else ROOT / "agent" / "gemini_review.py"
         )
+        _run(
+            f"4/4  Gemini 图表分析（{args.reviewer}）",
+            [PYTHON, str(reviewer_script)],
+        )
+    elif args.skip_review:
+        print("\n[INFO] 已跳过 Gemini 复评步骤。")
 
     # ── 步骤 5：打印推荐结果 ─────────────────────────────────────────
     print(f"\n{'='*60}")

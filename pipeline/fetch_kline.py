@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import logging
 import random
@@ -175,6 +176,9 @@ def _filter_by_boards_stocklist(df: pd.DataFrame, exclude_boards: set[str]) -> p
         mask &= ~((ts.str.endswith(".SH")) & num.str.startswith(("688",)))
     if "bj" in exclude_boards:
         mask &= ~((ts.str.endswith(".BJ")) | num.str.startswith(("4", "8")))
+    if "st" in exclude_boards and "name" in df.columns:
+        name = df["name"].astype(str).str.upper()
+        mask &= ~name.str.contains("ST", na=False)
 
     return df[mask].copy()
 
@@ -232,9 +236,9 @@ def _load_config(config_path: Path = _CONFIG_PATH) -> dict:
 
 
 # --------------------------- 主入口 --------------------------- #
-def main(log_path: Optional[Path] = None):
+def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
     # ---------- 读取 YAML 配置 ---------- #
-    cfg = _load_config()
+    cfg = _load_config(Path(config_path) if config_path else _CONFIG_PATH)
 
     # ---------- 日志路径（优先参数，其次 YAML，最后默认值） ---------- #
     if log_path is None:
@@ -246,12 +250,13 @@ def main(log_path: Optional[Path] = None):
     # ---------- Tushare Token ---------- #
     os.environ["NO_PROXY"] = "api.waditu.com,.waditu.com,waditu.com"
     os.environ["no_proxy"] = os.environ["NO_PROXY"]
-    ts_token = os.environ.get("TUSHARE_TOKEN")
+    ts_token = (os.environ.get("TUSHARE_TOKEN") or "").strip()
     if not ts_token:
         raise ValueError("请先设置环境变量 TUSHARE_TOKEN，例如：export TUSHARE_TOKEN=你的token")
-    ts.set_token(ts_token)
     global pro
-    pro = ts.pro_api()
+    # 直接向 pro_api 传 token，避免 ts.set_token() 写入 ~/tk.csv。
+    # 工作台/沙箱环境通常不应写用户 home 目录。
+    pro = ts.pro_api(ts_token)
 
     # ---------- 日期解析 ---------- #
     raw_start = str(cfg.get("start", "20190101"))
@@ -294,5 +299,16 @@ def main(log_path: Optional[Path] = None):
 
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="拉取 A 股日线 K 线数据")
+    parser.add_argument("--config", default=None, help="fetch_kline.yaml 路径")
+    parser.add_argument("--log", default=None, help="日志文件路径，覆盖配置文件 log")
+    return parser
+
+
 if __name__ == "__main__":
-    main()
+    args = build_parser().parse_args()
+    main(
+        config_path=Path(args.config) if args.config else None,
+        log_path=Path(args.log) if args.log else None,
+    )

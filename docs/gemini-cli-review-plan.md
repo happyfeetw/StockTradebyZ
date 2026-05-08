@@ -73,14 +73,17 @@ prompt_path: agent/prompt.md
 gemini_bin: gemini
 model: "gemini-3.1-pro-preview"
 request_delay: 10
-batch_size: 10
+batch_size: 5
 fallback_to_single_on_batch_error: true
 retry_backoff_seconds: [30, 90, 180, 480, 900]
 retry_jitter_ratio: 0.2
 skip_existing: true
 suggest_min_score: 4.0
 timeout_seconds: 900
-output_format: json
+idle_timeout_seconds: 180
+output_format: stream-json
+save_raw_cli_io: true
+raw_log_dir: ""
 max_requests_per_run: 50
 daily_request_budget: 80
 stop_on_rate_limit: false
@@ -92,9 +95,11 @@ usage_file: data/review/.gemini_cli_usage.json
 
 - `gemini_bin`：Gemini CLI 可执行文件名或绝对路径。
 - `model`：默认 `gemini-3.1-pro-preview`；可置空以使用 CLI 当前默认模型。
-- `output_format`：优先使用 CLI 的 JSON 输出模式，方便稳定解析。
+- `output_format`：默认使用 `stream-json`，方便确认 CLI 已经开始响应，同时脚本仍只解析模型正文。
 - `timeout_seconds`：防止单次 CLI 调用长时间卡住。
-- `batch_size`：单次 CLI 请求最多提交几张图，默认 10，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
+- `idle_timeout_seconds`：防止 CLI 进程还活着但长时间没有 stdout/stderr 输出；默认 180 秒。
+- `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
+- `save_raw_cli_io`/`raw_log_dir`：保存每次 CLI 调用的 prompt、stdout、stderr、meta；`raw_log_dir` 留空时写入 `data/review/{pick_date}/gemini_cli_runs`。
 - `fallback_to_single_on_batch_error`：批量 JSON 解析失败、超时或流式连接中断时，自动拆批并最终降级为逐只复评。
 - `retry_backoff_seconds`：遇到 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、超时等错误时的退避序列。
 - `retry_jitter_ratio`：在退避秒数上增加随机抖动，避免固定节奏连续撞服务端容量。
@@ -107,14 +112,16 @@ usage_file: data/review/.gemini_cli_usage.json
 Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量图表复评必须按“少量、限速、可续跑”的方式设计：
 
 - 默认按上下文上限 1,048,576 tokens 的 90% 控制单批。
-- 当前项目导出的 2800×1400 图片估算约 32 个 tile、约 9,280 图像 tokens；90 张理论接近 90% 上下文预算，但实际会触发较大的 SSE 请求体，默认改为 10 张/批。
+- 当前项目导出的 2800×1400 图片估算约 32 个 tile、约 9,280 图像 tokens；90 张理论接近 90% 上下文预算，但实际会触发较大的 SSE 请求体，默认改为 5 张/批。
 - 每次 CLI 调用后 sleep `request_delay` 秒。
 - 本地维护每日使用计数，例如 `data/review/.gemini_cli_usage.json`。
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。
 - 如果 stdout/stderr 或退出码显示 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、`ECONNRESET`、超时等错误，按 `retry_backoff_seconds` 加 jitter 重试，并写入 `gemini_cli_review_checkpoint.json`。
+- 如果 CLI 长时间没有任何 stdout/stderr，按 `idle_timeout_seconds` 触发空闲超时，避免等满 900 秒才失败。
 - `skip_existing: true` 时优先复用已有 `{code}.json`，支持隔天继续跑。
 - 批量重试耗尽后先拆半继续；小批仍失败时再逐只复评，避免一开始就把整批拆成单股请求。
-- 每次 CLI 调用前打印实际执行命令和 `--model`，避免与 `/model` 交互状态混淆。
+- 每次 CLI 调用前打印实际执行命令、`--model`、`cwd` 和 raw log 路径，避免与 `/model` 交互状态混淆。
+- 主日志只保留状态摘要和少量 stderr 预览；完整原始流进入 raw log 目录，不影响 Workbench 其他运行日志的阅读。
 
 ### 2. 新增 GeminiCliReviewer
 
@@ -129,9 +136,8 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
   - 本地图片的 `@file` 引用。
   - 单股强制返回 JSON 对象，批量强制返回 JSON 数组。
 - Python 只读取 CLI stdout，不允许 Gemini CLI 写入结果文件。
-- 由于 `data/` 在仓库中被 gitignore，脚本会把待分析图表临时复制到
-  `.gemini_cli_tmp/`，再用 `@.gemini_cli_tmp/{code}_day.jpg` 传给 CLI；
-  调用结束后删除临时图表。
+- 脚本会直接把 Gemini CLI 的 `cwd` 切到 `data/kline/{pick_date}` 图片目录，再使用
+  `@{code}_day.jpg` 引用图片，不再复制到 `.gemini_cli_tmp/`。
 - 批量模式要求 Gemini CLI 返回与输入股票顺序一致的 JSON 数组；脚本会校验
   `code` 顺序和数组长度，再拆分写入单股 `{code}.json`。
 
@@ -141,7 +147,7 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
 gemini \
   --skip-trust \
   --approval-mode plan \
-  --output-format json \
+  --output-format stream-json \
   --prompt "<完整复评提示词，包含 @file 图表引用>"
 ```
 
@@ -152,7 +158,7 @@ gemini \
   --model "<model>" \
   --skip-trust \
   --approval-mode plan \
-  --output-format json \
+  --output-format stream-json \
   --prompt "<完整复评提示词，包含 @file 图表引用>"
 ```
 
@@ -165,18 +171,20 @@ Gemini CLI 的 stdout 可能有两层 JSON：
 
 解析顺序：
 
-1. 尝试把 stdout 解析为 CLI 外层 JSON。
-2. 如果存在 `response` 或类似文本字段，取该字段。
-3. 否则直接把 stdout 当作模型正文。
-4. 调用 `BaseReviewer.extract_json()` 提取评分 JSON。
-5. 补充 `code` 字段。
+1. `stream-json` 模式按行解析事件，拼接 `text`/`content`/`delta` 等文本片段。
+2. `json` 模式尝试把 stdout 解析为 CLI 外层 JSON。
+3. 如果存在 `response` 或类似文本字段，取该字段。
+4. 否则直接把 stdout 当作模型正文。
+5. 调用 `BaseReviewer.extract_json()` 提取评分 JSON。
+6. 补充 `code` 字段。
 
 ### 4. 图片输入验证
 
 正式改造前需要先做最小探针，确认 Gemini CLI 在 headless 模式下能读取本地图片：
 
 ```bash
-gemini --output-format json --prompt "请读取这张图片并用一句话描述：@.gemini_cli_tmp/600000_day.jpg"
+cd data/kline/2026-05-08
+gemini --output-format stream-json --prompt "请读取这张图片并用一句话描述：@600000_day.jpg"
 ```
 
 验收标准：

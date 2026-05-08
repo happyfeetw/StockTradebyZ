@@ -684,17 +684,26 @@ def render_review_config() -> None:
     with left:
         cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
         cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
-        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 10)))
+        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 5)))
         cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
         cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
         cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 80)))
     with right:
+        output_format_options = ["stream-json", "json", "text"]
+        current_output_format = str(cfg.get("output_format", "stream-json"))
         cfg["output_format"] = st.selectbox(
             "CLI 输出格式",
-            ["json", "text"],
-            index=0 if str(cfg.get("output_format", "json")) == "json" else 1,
+            output_format_options,
+            index=output_format_options.index(current_output_format) if current_output_format in output_format_options else 0,
         )
         cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
+        cfg["idle_timeout_seconds"] = st.number_input(
+            "空闲超时秒数",
+            min_value=0,
+            value=int(cfg.get("idle_timeout_seconds", 180) or 0),
+            step=30,
+            help="超过该时间没有 stdout/stderr 输出即中止；0 表示关闭空闲超时。",
+        )
         cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
         retry_backoff = cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900])
         if isinstance(retry_backoff, list):
@@ -705,6 +714,7 @@ def render_review_config() -> None:
         cfg["retry_backoff_seconds"] = [float(x.strip()) for x in retry_text.split(",") if x.strip()]
         cfg["retry_jitter_ratio"] = st.number_input("退避 jitter 比例", min_value=0.0, max_value=1.0, value=float(cfg.get("retry_jitter_ratio", 0.2)), step=0.05)
         cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
+        cfg["save_raw_cli_io"] = st.toggle("保存 CLI 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
         cfg["fallback_to_single_on_batch_error"] = st.toggle(
             "批量失败后降级逐只复评",
             value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
@@ -720,9 +730,10 @@ def render_review_config() -> None:
         with p2:
             cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review")))
             cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
+            cfg["raw_log_dir"] = st.text_input("CLI 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 data/review/{pick_date}/gemini_cli_runs。")
 
     st.markdown(
-        "<div class='panel-note'>batch_size 默认 10；遇到 429、容量不足、Premature close 或超时会按退避序列重试，并写入 checkpoint。</div>",
+        "<div class='panel-note'>batch_size 默认 5；Gemini CLI 会在图片目录运行并引用本地 @图片文件；stream-json 原始输出会写入单独 raw log 目录，主运行日志只显示摘要。</div>",
         unsafe_allow_html=True,
     )
     st.session_state.review_cfg = cfg

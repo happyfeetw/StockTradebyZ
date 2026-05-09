@@ -227,6 +227,15 @@ def _unwrap_stream_json_output(stdout: str) -> str:
             event = json.loads(stripped)
         except json.JSONDecodeError:
             continue
+        if isinstance(event, dict):
+            role = event.get("role")
+            if role and role != "assistant":
+                continue
+            if role == "assistant":
+                payloads.extend(_collect_stream_text_payloads(event.get("content")))
+                continue
+            if event.get("type") in {"init", "result"}:
+                continue
         payloads.extend(_collect_stream_text_payloads(event))
 
     if not payloads:

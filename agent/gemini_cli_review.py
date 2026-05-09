@@ -20,12 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import random
 import signal
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -38,7 +40,6 @@ from base_reviewer import BaseReviewer
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_cli_review.yaml"
-_TMP_ASSET_DIR = _ROOT / ".gemini_cli_tmp"
 GEMINI_CLI_IMAGE_LIMIT = 3000
 GEMINI_CLI_BATCH_TARGET_RATIO = 0.90
 MAX_BATCH_SIZE = int(GEMINI_CLI_IMAGE_LIMIT * GEMINI_CLI_BATCH_TARGET_RATIO)
@@ -49,7 +50,7 @@ IMAGE_TILE_SIZE = 384
 ESTIMATED_TOKENS_PER_TILE = 290
 ESTIMATED_OUTPUT_TOKENS_PER_STOCK = 800
 ESTIMATED_PROMPT_TOKEN_RESERVE = 20_000
-DEFAULT_BATCH_SIZE = 10
+DEFAULT_BATCH_SIZE = 5
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -58,10 +59,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "prompt_path": "agent/prompt.md",
     "gemini_bin": "gemini",
     "model": "gemini-3.1-pro-preview",
-    "output_format": "json",
+    "output_format": "stream-json",
     "timeout_seconds": 900,
+    "idle_timeout_seconds": 0,
     "request_delay": 10,
     "batch_size": DEFAULT_BATCH_SIZE,
+    "save_raw_cli_io": True,
+    "raw_log_dir": "",
     "fallback_to_single_on_batch_error": True,
     "retry_backoff_seconds": [30, 90, 180, 480, 900],
     "retry_jitter_ratio": 0.2,
@@ -180,6 +184,29 @@ def _find_text_payload(value: Any) -> str | None:
     return None
 
 
+def _collect_stream_text_payloads(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        payloads: list[str] = []
+        for item in value:
+            payloads.extend(_collect_stream_text_payloads(item))
+        return payloads
+    if isinstance(value, dict):
+        payloads: list[str] = []
+        text_keys = ("response", "text", "content", "delta", "value", "output", "result", "message")
+        for key in text_keys:
+            if key in value:
+                payloads.extend(_collect_stream_text_payloads(value[key]))
+        for key, item in value.items():
+            if key in text_keys or key in {"type", "role", "index", "id"}:
+                continue
+            if isinstance(item, (dict, list)):
+                payloads.extend(_collect_stream_text_payloads(item))
+        return payloads
+    return []
+
+
 def _strip_json_fence(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -189,10 +216,50 @@ def _strip_json_fence(text: str) -> str:
     return stripped
 
 
-def _unwrap_cli_output(stdout: str) -> str:
+def _unwrap_stream_json_output(stdout: str) -> str:
+    text = stdout.strip()
+    payloads: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            role = event.get("role")
+            if role and role != "assistant":
+                continue
+            if role == "assistant":
+                payloads.extend(_collect_stream_text_payloads(event.get("content")))
+                continue
+            if event.get("type") in {"init", "result"}:
+                continue
+        payloads.extend(_collect_stream_text_payloads(event))
+
+    if not payloads:
+        return _unwrap_cli_output(stdout, "json")
+
+    joined = "".join(payloads).strip()
+    if joined:
+        return joined
+
+    for payload in reversed(payloads):
+        if payload.strip():
+            return payload.strip()
+    raise GeminiCliError(f"无法从 Gemini CLI stream-json 输出中找到模型正文：{text[:500]}")
+
+
+def _unwrap_cli_output(stdout: str, output_format: str = "json") -> str:
     text = stdout.strip()
     if not text:
         raise GeminiCliError("Gemini CLI 返回空 stdout")
+
+    if output_format == "stream-json":
+        return _unwrap_stream_json_output(text)
+    if output_format == "text":
+        return text
 
     try:
         parsed = json.loads(text)
@@ -247,6 +314,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["max_requests_per_run"] = _optional_int(cfg.get("max_requests_per_run"))
     cfg["daily_request_budget"] = _optional_int(cfg.get("daily_request_budget"))
     cfg["timeout_seconds"] = int(cfg.get("timeout_seconds", 900))
+    cfg["idle_timeout_seconds"] = _optional_int(cfg.get("idle_timeout_seconds"))
     cfg["rate_limit_backoff_seconds"] = int(cfg.get("rate_limit_backoff_seconds", 300))
     cfg["retry_backoff_seconds"] = _optional_float_list(cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900]))
     cfg["retry_jitter_ratio"] = float(cfg.get("retry_jitter_ratio", 0.2))
@@ -256,9 +324,12 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
         raise ValueError(f"batch_size 必须在 1 到 {MAX_BATCH_SIZE} 之间")
 
     output_format = str(cfg.get("output_format", "json")).strip().lower()
-    if output_format not in {"text", "json"}:
-        raise ValueError("output_format 只能是 text 或 json")
+    if output_format not in {"text", "json", "stream-json"}:
+        raise ValueError("output_format 只能是 text、json 或 stream-json")
     cfg["output_format"] = output_format
+    cfg["save_raw_cli_io"] = bool(cfg.get("save_raw_cli_io", True))
+    raw_log_dir = str(cfg.get("raw_log_dir", "") or "").strip()
+    cfg["raw_log_dir"] = _resolve_cfg_path(raw_log_dir) if raw_log_dir else None
 
     return cfg
 
@@ -311,6 +382,8 @@ class GeminiCliReviewer(BaseReviewer):
         self.max_requests_per_run: int | None = config.get("max_requests_per_run")
         self.requests_this_run = 0
         self.checkpoint_path: Path | None = None
+        self.raw_log_root: Path | None = None
+        self.cli_call_index = 0
         self.usage = DailyUsageTracker(
             path=Path(config["usage_file"]),
             budget=config.get("daily_request_budget"),
@@ -336,18 +409,46 @@ class GeminiCliReviewer(BaseReviewer):
     def _iter_pending_codes(candidates: Iterable[dict]) -> list[str]:
         return [str(candidate.get("code", "")) for candidate in candidates if candidate.get("code")]
 
-    def _copy_chart_for_cli(self, source: Path, code: str) -> tuple[Path, str]:
+    def _validate_chart_for_cli(self, source: Path, code: str) -> None:
         image_size = source.stat().st_size
         if image_size > MAX_IMAGE_BYTES:
             raise GeminiCliError(
                 f"{code} 图片超过 Gemini CLI 单图大小限制 7MB：{image_size / 1024 / 1024:.2f}MB"
             )
-        suffix = source.suffix.lower() or ".jpg"
-        _TMP_ASSET_DIR.mkdir(parents=True, exist_ok=True)
-        target = _TMP_ASSET_DIR / f"{code}_day{suffix}"
-        shutil.copy2(source, target)
-        rel = target.relative_to(_ROOT).as_posix()
-        return target, f"@{rel}"
+
+    @staticmethod
+    def _chart_ref_for_cli(source: Path, cwd: Path) -> str:
+        try:
+            rel = source.resolve().relative_to(cwd.resolve())
+            return f"@{rel.as_posix()}"
+        except ValueError:
+            return f"@{source.resolve().as_posix()}"
+
+    @staticmethod
+    def _safe_log_name(codes: list[str]) -> str:
+        if not codes:
+            return "unknown"
+        if len(codes) == 1:
+            raw = codes[0]
+        else:
+            raw = f"{codes[0]}-{codes[-1]}_{len(codes)}"
+        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw)[:80]
+
+    def _next_raw_call_dir(self, codes: list[str]) -> Path | None:
+        if not self.config.get("save_raw_cli_io", True) or self.raw_log_root is None:
+            return None
+        self.cli_call_index += 1
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        call_dir = self.raw_log_root / f"{timestamp}_{self.cli_call_index:04d}_{self._safe_log_name(codes)}"
+        call_dir.mkdir(parents=True, exist_ok=True)
+        return call_dir
+
+    @staticmethod
+    def _write_raw_meta(raw_dir: Path | None, payload: dict[str, Any]) -> None:
+        if raw_dir is None:
+            return
+        with open(raw_dir / "meta.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def _build_prompt(self, *, code: str, chart_ref: str, prompt: str) -> str:
         return (
@@ -421,12 +522,56 @@ class GeminiCliReviewer(BaseReviewer):
             stdout, stderr = proc.communicate(timeout=5)
         return stdout or "", stderr or ""
 
-    def _run_cli_command(self, cmd: list[str], env: dict[str, str], prompt_text: str) -> subprocess.CompletedProcess[str]:
+    def _run_cli_command(
+        self,
+        cmd: list[str],
+        env: dict[str, str],
+        prompt_text: str,
+        *,
+        cwd: Path,
+        codes: list[str],
+        image_paths: list[Path],
+    ) -> subprocess.CompletedProcess[str]:
         model = str(self.config.get("model", "") or "").strip() or "(Gemini CLI default)"
+        raw_dir = self._next_raw_call_dir(codes)
         print(f"[Command] Gemini CLI 实际命令: {shlex.join(cmd)}")
         print(f"[INFO] Gemini CLI model: {model}")
+        print(f"[INFO] Gemini CLI cwd: {cwd}")
+        if raw_dir is not None:
+            print(f"[INFO] Gemini CLI raw log: {raw_dir}")
+
+        started_at = datetime.now()
+        started_monotonic = time.monotonic()
+        first_output_after: float | None = None
+        last_output_at = started_monotonic
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        timeout_seconds = int(self.config.get("timeout_seconds", 900))
+        idle_timeout_seconds = self.config.get("idle_timeout_seconds")
+        stderr_preview_count = 0
+        output_notice_printed = False
+
+        if raw_dir is not None:
+            with open(raw_dir / "prompt.txt", "w", encoding="utf-8") as f:
+                f.write(prompt_text)
+            self._write_raw_meta(
+                raw_dir,
+                {
+                    "status": "running",
+                    "started_at": started_at.isoformat(timespec="seconds"),
+                    "command": cmd,
+                    "model": model,
+                    "cwd": str(cwd),
+                    "codes": codes,
+                    "image_paths": [str(path) for path in image_paths],
+                    "output_format": self.config.get("output_format", "json"),
+                    "timeout_seconds": timeout_seconds,
+                    "idle_timeout_seconds": idle_timeout_seconds,
+                },
+            )
+
         popen_kwargs: dict[str, Any] = {
-            "cwd": str(_ROOT),
+            "cwd": str(cwd),
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
@@ -437,19 +582,146 @@ class GeminiCliReviewer(BaseReviewer):
             popen_kwargs["start_new_session"] = True
 
         proc = subprocess.Popen(cmd, **popen_kwargs)
-        timeout = self.config.get("timeout_seconds", 900)
+        event_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
+
+        def reader(name: str, pipe: Any) -> None:
+            try:
+                for line in iter(pipe.readline, ""):
+                    event_queue.put((name, line))
+            finally:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+                event_queue.put((name, None))
+
+        stdout_thread = threading.Thread(target=reader, args=("stdout", proc.stdout), daemon=True)
+        stderr_thread = threading.Thread(target=reader, args=("stderr", proc.stderr), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        assert proc.stdin is not None
         try:
-            stdout, stderr = proc.communicate(input=prompt_text, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            stdout, stderr = self._terminate_cli_process(proc)
+            proc.stdin.write(prompt_text)
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+
+        stdout_file = open(raw_dir / "stdout.jsonl", "w", encoding="utf-8") if raw_dir is not None else None
+        stderr_file = open(raw_dir / "stderr.log", "w", encoding="utf-8") if raw_dir is not None else None
+        timed_out_reason = ""
+        ended_streams = 0
+        try:
+            while ended_streams < 2:
+                now = time.monotonic()
+                if now - started_monotonic > timeout_seconds:
+                    timed_out_reason = f"Gemini CLI 超时（{timeout_seconds} 秒）"
+                    break
+                if idle_timeout_seconds and now - last_output_at > float(idle_timeout_seconds):
+                    timed_out_reason = f"Gemini CLI 空闲超时（{idle_timeout_seconds} 秒无输出）"
+                    break
+
+                try:
+                    stream_name, line = event_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                if line is None:
+                    ended_streams += 1
+                    continue
+
+                now = time.monotonic()
+                last_output_at = now
+                if first_output_after is None:
+                    first_output_after = round(now - started_monotonic, 3)
+                if not output_notice_printed:
+                    target = f"，原始输出见 {raw_dir}" if raw_dir is not None else ""
+                    print(f"[INFO] Gemini CLI 已收到 {stream_name} 输出{target}")
+                    output_notice_printed = True
+
+                if stream_name == "stdout":
+                    stdout_parts.append(line)
+                    if stdout_file is not None:
+                        stdout_file.write(line)
+                        stdout_file.flush()
+                else:
+                    stderr_parts.append(line)
+                    if stderr_file is not None:
+                        stderr_file.write(line)
+                        stderr_file.flush()
+                    if stderr_preview_count < 8:
+                        print(f"[Gemini STDERR] {line.rstrip()[:500]}")
+                        stderr_preview_count += 1
+                    elif stderr_preview_count == 8:
+                        print("[Gemini STDERR] 后续 stderr 已写入 raw log，主日志不再展开。")
+                        stderr_preview_count += 1
+        finally:
+            if stdout_file is not None:
+                stdout_file.close()
+            if stderr_file is not None:
+                stderr_file.close()
+
+        if timed_out_reason:
+            self._send_process_signal(proc, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._send_process_signal(proc, signal.SIGKILL)
+                proc.wait(timeout=5)
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            stdout = "".join(stdout_parts)
+            stderr = "".join(stderr_parts)
             detail = f"{stdout}\n{stderr}".strip()
+            self._write_raw_meta(
+                raw_dir,
+                {
+                    "status": "timeout",
+                    "started_at": started_at.isoformat(timespec="seconds"),
+                    "ended_at": datetime.now().isoformat(timespec="seconds"),
+                    "elapsed_seconds": round(time.monotonic() - started_monotonic, 3),
+                    "command": cmd,
+                    "model": model,
+                    "cwd": str(cwd),
+                    "codes": codes,
+                    "image_paths": [str(path) for path in image_paths],
+                    "exit_code": proc.returncode,
+                    "first_output_after_seconds": first_output_after,
+                    "last_output_after_seconds": round(last_output_at - started_monotonic, 3),
+                    "timeout_reason": timed_out_reason,
+                },
+            )
             if _is_credential_error_text(detail):
                 raise GeminiCliCredentialError(
                     "Gemini CLI 凭证不可访问：无法打开 ~/.gemini/oauth_creds.json。"
                     "请从普通终端启动 workbench，或让当前运行环境具备 ~/.gemini 读写权限。"
-                ) from exc
+                )
             suffix = f": {detail[:500]}" if detail else ""
-            raise GeminiCliError(f"Gemini CLI 超时（{timeout} 秒）{suffix}") from exc
+            raise GeminiCliError(f"{timed_out_reason}{suffix}")
+
+        proc.wait()
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        stdout = "".join(stdout_parts)
+        stderr = "".join(stderr_parts)
+        self._write_raw_meta(
+            raw_dir,
+            {
+                "status": "finished",
+                "started_at": started_at.isoformat(timespec="seconds"),
+                "ended_at": datetime.now().isoformat(timespec="seconds"),
+                "elapsed_seconds": round(time.monotonic() - started_monotonic, 3),
+                "command": cmd,
+                "model": model,
+                "cwd": str(cwd),
+                "codes": codes,
+                "image_paths": [str(path) for path in image_paths],
+                "output_format": self.config.get("output_format", "json"),
+                "exit_code": proc.returncode,
+                "first_output_after_seconds": first_output_after,
+                "last_output_after_seconds": round(last_output_at - started_monotonic, 3),
+            },
+        )
 
         return subprocess.CompletedProcess(
             args=cmd,
@@ -458,27 +730,39 @@ class GeminiCliReviewer(BaseReviewer):
             stderr=stderr or "",
         )
 
-    def _consume_cli_request(self, cmd: list[str], env: dict[str, str], prompt_text: str) -> subprocess.CompletedProcess[str]:
+    def _consume_cli_request(
+        self,
+        cmd: list[str],
+        env: dict[str, str],
+        prompt_text: str,
+        *,
+        cwd: Path,
+        codes: list[str],
+        image_paths: list[Path],
+    ) -> subprocess.CompletedProcess[str]:
         ok, reason = self._can_start_request()
         if not ok:
             raise GeminiCliError(reason)
         self.requests_this_run += 1
         self.usage.consume()
-        return self._run_cli_command(cmd, env, prompt_text)
+        return self._run_cli_command(cmd, env, prompt_text, cwd=cwd, codes=codes, image_paths=image_paths)
 
     def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
-        tmp_chart, chart_ref = self._copy_chart_for_cli(day_chart, code)
+        self._validate_chart_for_cli(day_chart, code)
+        cwd = day_chart.parent
+        chart_ref = self._chart_ref_for_cli(day_chart, cwd)
         prompt_text = self._build_prompt(code=code, chart_ref=chart_ref, prompt=prompt)
         cmd = self._build_command()
         env = {**os.environ, "NO_COLOR": "1"}
 
-        try:
-            result = self._consume_cli_request(cmd, env, prompt_text)
-        finally:
-            try:
-                tmp_chart.unlink()
-            except FileNotFoundError:
-                pass
+        result = self._consume_cli_request(
+            cmd,
+            env,
+            prompt_text,
+            cwd=cwd,
+            codes=[code],
+            image_paths=[day_chart],
+        )
 
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
@@ -491,7 +775,7 @@ class GeminiCliReviewer(BaseReviewer):
                 raise GeminiCliRateLimitError(combined_output)
             raise GeminiCliError(f"Gemini CLI 退出码 {result.returncode}: {combined_output[:1200]}")
 
-        response_text = _unwrap_cli_output(result.stdout)
+        response_text = _unwrap_cli_output(result.stdout, str(self.config.get("output_format", "json")))
         if _is_rate_limit_text(response_text):
             raise GeminiCliRateLimitError(response_text)
 
@@ -501,25 +785,28 @@ class GeminiCliReviewer(BaseReviewer):
         return parsed
 
     def review_batch(self, items: list[dict[str, Any]], prompt: str) -> list[dict[str, Any]]:
-        tmp_charts: list[Path] = []
         prompt_items: list[dict[str, Any]] = []
+        image_paths: list[Path] = []
+        cwd = Path(items[0]["day_chart"]).parent
         for item in items:
-            tmp_chart, chart_ref = self._copy_chart_for_cli(item["day_chart"], item["code"])
-            tmp_charts.append(tmp_chart)
+            day_chart = Path(item["day_chart"])
+            self._validate_chart_for_cli(day_chart, item["code"])
+            chart_ref = self._chart_ref_for_cli(day_chart, cwd)
+            image_paths.append(day_chart)
             prompt_items.append({"code": item["code"], "chart_ref": chart_ref})
 
         prompt_text = self._build_batch_prompt(items=prompt_items, prompt=prompt)
         cmd = self._build_command()
         env = {**os.environ, "NO_COLOR": "1"}
 
-        try:
-            result = self._consume_cli_request(cmd, env, prompt_text)
-        finally:
-            for tmp_chart in tmp_charts:
-                try:
-                    tmp_chart.unlink()
-                except FileNotFoundError:
-                    pass
+        result = self._consume_cli_request(
+            cmd,
+            env,
+            prompt_text,
+            cwd=cwd,
+            codes=[str(item["code"]) for item in items],
+            image_paths=image_paths,
+        )
 
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
@@ -532,7 +819,7 @@ class GeminiCliReviewer(BaseReviewer):
                 raise GeminiCliRateLimitError(combined_output)
             raise GeminiCliError(f"Gemini CLI 退出码 {result.returncode}: {combined_output[:1200]}")
 
-        response_text = _unwrap_cli_output(result.stdout)
+        response_text = _unwrap_cli_output(result.stdout, str(self.config.get("output_format", "json")))
         if _is_rate_limit_text(response_text):
             raise GeminiCliRateLimitError(response_text)
 
@@ -821,6 +1108,16 @@ class GeminiCliReviewer(BaseReviewer):
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_path = out_dir / "gemini_cli_review_checkpoint.json"
+        raw_log_dir = self.config.get("raw_log_dir")
+        self.raw_log_root = Path(raw_log_dir) if raw_log_dir else out_dir / "gemini_cli_runs"
+        if self.config.get("save_raw_cli_io", True):
+            self.raw_log_root.mkdir(parents=True, exist_ok=True)
+            print(f"[INFO] Gemini CLI raw logs: {self.raw_log_root}")
+        else:
+            self.raw_log_root = None
+        idle_timeout_seconds = self.config.get("idle_timeout_seconds")
+        if idle_timeout_seconds:
+            print(f"[INFO] Gemini CLI idle timeout: {idle_timeout_seconds} 秒无 stdout/stderr 输出即中止")
         self._write_checkpoint(status="started", message=f"pick_date={pick_date}, candidates={len(candidates)}")
 
         all_results: list[dict] = []

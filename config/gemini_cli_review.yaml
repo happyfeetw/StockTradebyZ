@@ -19,17 +19,26 @@ gemini_bin: gemini
 # Gemini CLI 复评默认模型
 model: "gemini-3.1-pro-preview"
 
-# CLI 输出格式：text 或 json
-output_format: json
+# CLI 输出格式：stream-json、json 或 text
+output_format: stream-json
 
 # 单次 CLI 调用超时时间（秒）
 timeout_seconds: 900
+
+# 单次 CLI 调用空闲超时时间（秒）；0 表示关闭，仅保留 timeout_seconds 总超时
+idle_timeout_seconds: 0
 
 # 相邻 CLI 调用间隔（秒），用于降低分钟级限流风险
 request_delay: 10
 
 # 单次 Gemini CLI 请求最多提交几张图；会再按上下文 token 预算动态切批
-batch_size: 10
+batch_size: 5
+
+# 保存每次 CLI 调用的原始 prompt/stdout/stderr/meta，便于诊断卡顿与超时
+save_raw_cli_io: true
+
+# 原始调用日志目录；留空时使用 data/review/{pick_date}/gemini_cli_runs
+raw_log_dir: ""
 
 # 批量返回解析失败、超时或流式连接中断时，是否自动拆批并最终降级逐只复评
 fallback_to_single_on_batch_error: true

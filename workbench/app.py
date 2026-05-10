@@ -67,6 +67,7 @@ def default_run_cfg() -> dict[str, Any]:
         "pick_date": "",
         "end_date": "",
         "preselect_log_dir": "./data/logs",
+        "reviewer": "gemini-cli",
     }
 
 
@@ -120,12 +121,14 @@ def csv_count(path: Path) -> int:
 
 def environment_status() -> list[tuple[str, str, str]]:
     token = os.environ.get("TUSHARE_TOKEN") or os.environ.get("TS_TOKEN")
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
     raw_dir = ROOT / "data" / "raw"
     candidates = load_candidates()
     suggestion = latest_suggestion()
     return [
         ("Tushare", "ok" if token else "err", "已配置" if token else "未配置"),
         ("Gemini CLI", "ok" if shutil.which("gemini") else "warn", "已安装" if shutil.which("gemini") else "未找到"),
+        ("Gemini API", "ok" if gemini_api_key else "warn", "已配置" if gemini_api_key else "未配置"),
         ("原始数据", "ok" if csv_count(raw_dir) else "warn", f"{csv_count(raw_dir)} 个 CSV"),
         ("最新候选", "ok" if candidates else "warn", candidates.get("pick_date", "无")),
         ("复评汇总", "ok" if suggestion else "warn", "已生成" if suggestion else "无"),
@@ -149,6 +152,8 @@ def ensure_session_state() -> None:
         st.session_state.rules_cfg = load_yaml(ROOT / "config" / "rules_preselect.yaml")
     if "review_cfg" not in st.session_state:
         st.session_state.review_cfg = load_yaml(ROOT / "config" / "gemini_cli_review.yaml")
+    if "api_review_cfg" not in st.session_state:
+        st.session_state.api_review_cfg = load_yaml(ROOT / "config" / "gemini_review.yaml")
     if "run_cfg" not in st.session_state:
         st.session_state.run_cfg = default_run_cfg()
     apply_workbench_defaults()
@@ -239,16 +244,20 @@ def create_run_snapshot(run_mode: str) -> Path:
     write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
+    write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
+    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
         run_dir / "run_config.json",
         {
             "run_id": run_id,
             "created_at": dt.datetime.now().isoformat(timespec="seconds"),
             "run_mode": run_mode,
+            "reviewer": reviewer,
             "fetch_config": str(run_dir / "fetch_kline.yaml"),
             "rules_config": str(run_dir / "rules_preselect.yaml"),
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
+            "gemini_api_config": str(run_dir / "gemini_review.yaml"),
             "run_options": str(run_dir / "run_options.json"),
             "commands": [
                 {"name": name, "cmd": cmd}
@@ -264,9 +273,16 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     python = sys.executable
     fetch_cfg = str(run_dir / "fetch_kline.yaml")
     rules_cfg = str(run_dir / "rules_preselect.yaml")
-    review_cfg = str(run_dir / "gemini_cli_review.yaml")
     run_id = run_dir.name
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
+    reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
+    if reviewer == "gemini-api":
+        review_step = ("Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")])
+    else:
+        review_step = (
+            "Gemini CLI 复评",
+            [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")],
+        )
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
     preselect_cmd += ["--merge-same-date"]
     if clean_text(run_cfg.get("pick_date")):
@@ -281,13 +297,13 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             ("拉取 K 线数据", [python, "-m", "pipeline.fetch_kline", "--config", fetch_cfg]),
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
-            ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            review_step,
             ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
         "跳过抓取": [
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
-            ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            review_step,
             ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
         "初选+导出图表": [
@@ -304,7 +320,7 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
         ],
         "只跑复评": [
-            ("Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", review_cfg]),
+            review_step,
             ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
         ],
     }
@@ -678,7 +694,61 @@ def render_strategy_config() -> None:
 
 
 def render_review_config() -> None:
-    st.title("Gemini CLI 复评配置")
+    st.title("复评配置")
+    run_cfg = st.session_state.run_cfg
+    reviewer_options = {
+        "gemini-cli": "Gemini CLI（本机登录）",
+        "gemini-api": "Gemini API Key",
+    }
+    current_reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
+    if current_reviewer not in reviewer_options:
+        current_reviewer = "gemini-cli"
+    selected_reviewer_label = st.radio(
+        "复评方式",
+        list(reviewer_options.values()),
+        index=list(reviewer_options).index(current_reviewer),
+        horizontal=True,
+    )
+    reviewer = next(key for key, label in reviewer_options.items() if label == selected_reviewer_label)
+    run_cfg["reviewer"] = reviewer
+    st.session_state.run_cfg = run_cfg
+
+    if reviewer == "gemini-api":
+        cfg = st.session_state.api_review_cfg
+        left, right = st.columns(2, gap="large")
+        with left:
+            cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "gemini-3.1-pro-preview")))
+            cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 5)), step=1.0)
+            cfg["suggest_min_score"] = st.number_input(
+                "推荐分数门槛",
+                min_value=0.0,
+                max_value=5.0,
+                value=float(cfg.get("suggest_min_score", 4.0)),
+                step=0.1,
+            )
+            cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", False)))
+        with right:
+            if os.environ.get("GEMINI_API_KEY"):
+                st.success("GEMINI_API_KEY 已配置")
+            else:
+                st.warning("GEMINI_API_KEY 未配置，运行 API Key 复评会失败。")
+
+        with st.expander("路径配置"):
+            p1, p2 = st.columns(2)
+            with p1:
+                cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
+                cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
+                cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
+            with p2:
+                cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review")))
+
+        st.markdown(
+            "<div class='panel-note'>API Key 模式调用 <code>agent/gemini_review.py</code>，密钥只从环境变量 <code>GEMINI_API_KEY</code> 读取，不写入运行快照。</div>",
+            unsafe_allow_html=True,
+        )
+        st.session_state.api_review_cfg = cfg
+        return
+
     cfg = st.session_state.review_cfg
     left, right = st.columns(2, gap="large")
     with left:

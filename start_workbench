@@ -14,6 +14,13 @@ if [ -z "${TUSHARE_TOKEN:-}" ] && command -v zsh >/dev/null 2>&1; then
   fi
 fi
 
+if [ -z "${GEMINI_API_KEY:-}" ] && command -v zsh >/dev/null 2>&1; then
+  ZSH_GEMINI_API_KEY="$(zsh -ic 'print -r -- ${GEMINI_API_KEY:-}' 2>/dev/null || true)"
+  if [ -n "$ZSH_GEMINI_API_KEY" ]; then
+    export GEMINI_API_KEY="$ZSH_GEMINI_API_KEY"
+  fi
+fi
+
 if [ ! -x ".venv/bin/streamlit" ]; then
   echo "Missing .venv/bin/streamlit. Run: .venv/bin/pip install -r requirements.txt" >&2
   exit 1

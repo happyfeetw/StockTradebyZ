@@ -913,6 +913,8 @@ def render_result_center() -> None:
         df = df[df["结论"] == verdict]
     if rec_only:
         df = df[df["推荐"] == "是"]
+    df = df.reset_index(drop=True)
+    df.insert(0, "序号", range(1, len(df) + 1))
     st.dataframe(df, width="stretch", hide_index=True)
 
 

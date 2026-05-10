@@ -840,6 +840,53 @@ def result_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def strategy_summary_rows_from_result_df(df: pd.DataFrame) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if df.empty or "策略" not in df:
+        return rows
+    for strategy, group in df.groupby("策略", dropna=False):
+        strategy_name = str(strategy or "unknown")
+        reviewed_count = int((group["结论"].fillna("") != "").sum())
+        recommended_count = int((group["推荐"] == "是").sum())
+        total_count = int(len(group))
+        rows.append(
+            {
+                "策略": strategy_name,
+                "候选": total_count,
+                "已复评": reviewed_count,
+                "推荐": recommended_count,
+                "待处理": total_count - reviewed_count,
+            }
+        )
+    return sorted(rows, key=lambda item: item["策略"])
+
+
+def strategy_summary_rows_from_counts(strategy_counts: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for strategy, counts in sorted(strategy_counts.items()):
+        if not isinstance(counts, dict):
+            continue
+        total_count = int(counts.get("total", 0))
+        recommended_count = int(counts.get("recommended", 0))
+        if "pending" in counts or "excluded" in counts:
+            reviewed_count = int(counts.get("reviewed", 0))
+            pending_count = int(counts.get("pending", max(total_count - reviewed_count, 0)))
+        else:
+            non_recommended_reviewed = int(counts.get("reviewed", 0))
+            reviewed_count = recommended_count + non_recommended_reviewed
+            pending_count = int(counts.get("unreviewed", max(total_count - reviewed_count, 0)))
+        rows.append(
+            {
+                "策略": str(strategy or "unknown"),
+                "候选": total_count,
+                "已复评": reviewed_count,
+                "推荐": recommended_count,
+                "待处理": pending_count,
+            }
+        )
+    return rows
+
+
 def render_result_center() -> None:
     st.title("结果中心")
     render_metrics()
@@ -848,6 +895,11 @@ def render_result_center() -> None:
         st.warning("还没有候选结果。请先运行初选。")
         return
     df = pd.DataFrame(rows)
+    summary_rows = strategy_summary_rows_from_result_df(df)
+    if summary_rows:
+        st.subheader("按策略汇总")
+        st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
+
     f1, f2, f3 = st.columns(3)
     with f1:
         strategy = st.selectbox("策略筛选", ["全部"] + sorted([x for x in df["策略"].dropna().unique() if x]))
@@ -861,6 +913,8 @@ def render_result_center() -> None:
         df = df[df["结论"] == verdict]
     if rec_only:
         df = df[df["推荐"] == "是"]
+    df = df.reset_index(drop=True)
+    df.insert(0, "序号", range(1, len(df) + 1))
     st.dataframe(df, width="stretch", hide_index=True)
 
 
@@ -898,19 +952,23 @@ def history_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def render_history_metrics(summary: dict[str, Any]) -> None:
     strategy_counts = summary.get("strategy_counts", {})
-    b1_count = strategy_counts.get("b1", {}).get("total", 0)
-    brick_count = strategy_counts.get("brick", {}).get("total", 0)
+    b1_rec_count = strategy_counts.get("b1", {}).get("recommended", 0)
+    brick_rec_count = strategy_counts.get("brick", {}).get("recommended", 0)
     st.markdown(
         f"""
         <div class="metric-row">
           <div class="metric-card"><div class="metric-label">归档日期</div><div class="metric-value">{summary.get("date", "无")}</div></div>
           <div class="metric-card"><div class="metric-label">候选 / 已复评</div><div class="metric-value">{summary.get("candidate_count", 0)} / {summary.get("reviewed_count", 0)}</div></div>
           <div class="metric-card"><div class="metric-label">推荐数量</div><div class="metric-value">{summary.get("recommended_count", 0)}</div></div>
-          <div class="metric-card"><div class="metric-label">B1 / 砖型图</div><div class="metric-value">{b1_count} / {brick_count}</div></div>
+          <div class="metric-card"><div class="metric-label">B1 / 砖型图推荐</div><div class="metric-value">{b1_rec_count} / {brick_rec_count}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    summary_rows = strategy_summary_rows_from_counts(strategy_counts)
+    if summary_rows:
+        st.subheader("按策略汇总")
+        st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
 
 
 def render_history_center() -> None:

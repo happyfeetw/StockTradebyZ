@@ -939,6 +939,7 @@ class GeminiCliReviewer(BaseReviewer):
                 print(f"[{item['index']}/{total_candidates}] {code} — Gemini CLI 正在分析 ...", end=" ", flush=True)
                 try:
                     result = self.review_stock(code=code, day_chart=item["day_chart"], prompt=self.prompt)
+                    result["strategy"] = item.get("strategy") or result.get("strategy", "")
                     self._write_stock_result(item, result)
                     all_results.append(result)
                     print(f"完成 — {self._format_result_status(result)}")
@@ -1024,6 +1025,7 @@ class GeminiCliReviewer(BaseReviewer):
             try:
                 results = self.review_batch(items=items, prompt=self.prompt)
                 for item, result in zip(items, results):
+                    result["strategy"] = item.get("strategy") or result.get("strategy", "")
                     self._write_stock_result(item, result)
                 print("完成")
                 for result in results:
@@ -1176,6 +1178,7 @@ class GeminiCliReviewer(BaseReviewer):
                 {
                     "index": i,
                     "code": code,
+                    "strategy": candidate.get("strategy") or "",
                     "day_chart": day_chart,
                     "out_file": out_file,
                 }
@@ -1227,6 +1230,7 @@ class GeminiCliReviewer(BaseReviewer):
             pick_date=pick_date,
             all_results=all_results,
             min_score=min_score,
+            candidates=candidates,
         )
         reviewed_codes = {str(item.get("code")) for item in all_results}
         pending_codes = [code for code in self._iter_pending_codes(candidates) if code not in reviewed_codes]
@@ -1246,6 +1250,8 @@ class GeminiCliReviewer(BaseReviewer):
             json.dump(suggestion, f, ensure_ascii=False, indent=2)
         print(f"[INFO] 汇总推荐已写入: {suggestion_file}")
         print(f"       推荐股票数（score≥{min_score}）: {len(suggestion['recommendations'])}")
+        for strategy, counts in sorted(suggestion.get("strategy_counts", {}).items()):
+            print(f"       {strategy}: 推荐 {counts.get('recommended', 0)} / 候选 {counts.get('total', 0)}")
 
         print("\n✅ 全部完成。")
         print(f"   输出目录: {out_dir}")

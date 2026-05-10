@@ -55,9 +55,43 @@ class BaseReviewer:
         """子类需实现此方法，调用具体的 LLM 进行打分，并返回 JSON 解析字典。"""
         raise NotImplementedError("子类必须实现 review_stock 方法")
 
-    def generate_suggestion(self, pick_date: str, all_results: List[dict], min_score: float) -> dict:
+    def generate_suggestion(
+        self,
+        pick_date: str,
+        all_results: List[dict],
+        min_score: float,
+        candidates: List[dict] | None = None,
+    ) -> dict:
+        candidates = candidates or []
+        code_to_strategy = {
+            str(candidate.get("code")): str(candidate.get("strategy") or "")
+            for candidate in candidates
+            if candidate.get("code")
+        }
+        result_by_code = {str(result.get("code")): result for result in all_results if result.get("code")}
         passed = [r for r in all_results if r.get("total_score", 0) >= min_score]
         excluded = [r["code"] for r in all_results if r.get("total_score", 0) < min_score]
+
+        strategy_counts: dict[str, dict[str, int]] = {}
+        for candidate in candidates:
+            code = str(candidate.get("code") or "")
+            if not code:
+                continue
+            strategy = str(candidate.get("strategy") or "unknown")
+            counts = strategy_counts.setdefault(
+                strategy,
+                {"total": 0, "reviewed": 0, "recommended": 0, "excluded": 0, "pending": 0},
+            )
+            counts["total"] += 1
+            result = result_by_code.get(code)
+            if not result:
+                counts["pending"] += 1
+                continue
+            counts["reviewed"] += 1
+            if result.get("total_score", 0) >= min_score:
+                counts["recommended"] += 1
+            else:
+                counts["excluded"] += 1
 
         passed.sort(key=lambda r: r.get("total_score", 0), reverse=True)
 
@@ -65,6 +99,7 @@ class BaseReviewer:
             {
                 "rank": i + 1,
                 "code": r["code"],
+                "strategy": r.get("strategy") or code_to_strategy.get(str(r.get("code")), ""),
                 "verdict": r.get("verdict", ""),
                 "total_score": r.get("total_score", 0),
                 "signal_type": r.get("signal_type", ""),
@@ -79,6 +114,7 @@ class BaseReviewer:
             "total_reviewed": len(all_results),
             "recommendations": recommendations,
             "excluded": excluded,
+            "strategy_counts": strategy_counts,
         }
 
     def run(self):
@@ -118,6 +154,7 @@ class BaseReviewer:
                     day_chart=day_chart,
                     prompt=self.prompt,
                 )
+                result["strategy"] = candidate.get("strategy") or result.get("strategy", "")
                 with open(out_file, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 all_results.append(result)
@@ -145,12 +182,15 @@ class BaseReviewer:
             pick_date=pick_date,
             all_results=all_results,
             min_score=min_score,
+            candidates=candidates,
         )
         suggestion_file = out_dir / "suggestion.json"
         with open(suggestion_file, "w", encoding="utf-8") as f:
             json.dump(suggestion, f, ensure_ascii=False, indent=2)
         print(f"[INFO] 汇总推荐已写入: {suggestion_file}")
         print(f"       推荐股票数（score≥{min_score}）: {len(suggestion['recommendations'])}")
+        for strategy, counts in sorted(suggestion.get("strategy_counts", {}).items()):
+            print(f"       {strategy}: 推荐 {counts.get('recommended', 0)} / 候选 {counts.get('total', 0)}")
 
         print("\n✅ 全部完成。")
         print(f"   输出目录: {out_dir}")

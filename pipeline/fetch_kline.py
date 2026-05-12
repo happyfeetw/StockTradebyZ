@@ -163,6 +163,38 @@ def validate(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("数据包含未来日期，可能抓取错误！")
     return df
 
+
+def _latest_date_from_df(df: pd.DataFrame) -> Optional[str]:
+    if df is None or df.empty or "date" not in df.columns:
+        return None
+    latest = pd.to_datetime(df["date"], errors="coerce").max()
+    if pd.isna(latest):
+        return None
+    return latest.strftime("%Y-%m-%d")
+
+
+def _latest_date_from_csv_dir(out_dir: Path) -> Optional[str]:
+    latest: Optional[str] = None
+    for path in out_dir.glob("*.csv"):
+        try:
+            last_line = ""
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        last_line = line.strip()
+            if not last_line or last_line.startswith("date,"):
+                continue
+            date_text = last_line.split(",", 1)[0]
+            parsed = pd.to_datetime(date_text, errors="coerce")
+            if pd.isna(parsed):
+                continue
+            normalized = parsed.strftime("%Y-%m-%d")
+            if latest is None or normalized > latest:
+                latest = normalized
+        except OSError as exc:
+            logger.debug("读取本地 CSV 最新日期失败 %s: %s", path, exc)
+    return latest
+
 # --------------------------- 读取 stocklist.csv & 过滤板块 --------------------------- #
 
 def _filter_by_boards_stocklist(df: pd.DataFrame, exclude_boards: set[str]) -> pd.DataFrame:
@@ -198,7 +230,7 @@ def fetch_one(
     start: str,
     end: str,
     out_dir: Path,
-):
+) -> Optional[str]:
     csv_path = out_dir / f"{code}.csv"
 
     for attempt in range(1, 4):
@@ -208,8 +240,9 @@ def fetch_one(
                 logger.debug("%s 无数据，生成空表。", code)
                 new_df = pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
             new_df = validate(new_df)
+            latest_date = _latest_date_from_df(new_df)
             new_df.to_csv(csv_path, index=False)  # 直接覆盖保存
-            break
+            return latest_date
         except Exception as e:
             if _looks_like_ip_ban(e):
                 logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
@@ -219,7 +252,8 @@ def fetch_one(
                 logger.info(f"{code} 第 {attempt} 次抓取失败，{silent_seconds} 秒后重试：{e}")
                 time.sleep(silent_seconds)
     else:
-        logger.error("%s 三次抓取均失败，已跳过！", code)       
+        logger.error("%s 三次抓取均失败，已跳过！", code)
+    return None
 
 
 
@@ -283,6 +317,7 @@ def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
 
     # ---------- 多线程抓取（全量覆盖） ---------- #
     workers = int(cfg.get("workers", 8))
+    tushare_latest_dates: list[str] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(
@@ -294,9 +329,22 @@ def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
             )
             for code in codes
         ]
-        for _ in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
-            pass
+        for future in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
+            try:
+                latest_date = future.result()
+                if latest_date:
+                    tushare_latest_dates.append(latest_date)
+            except Exception as exc:
+                logger.error("抓取任务异常：%s", exc)
 
+    tushare_latest = max(tushare_latest_dates) if tushare_latest_dates else "无"
+    local_latest = _latest_date_from_csv_dir(out_dir) or "无"
+    logger.info(
+        "日期状态：当前日期:%s | Tushare数据最新日期:%s | 本地数据最新日期:%s",
+        dt.date.today().isoformat(),
+        tushare_latest,
+        local_latest,
+    )
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
 
 def build_parser() -> argparse.ArgumentParser:

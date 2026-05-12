@@ -64,7 +64,7 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 def default_run_cfg() -> dict[str, Any]:
     return {
-        "pick_date": "",
+        "pick_date": dt.date.today().isoformat(),
         "end_date": "",
         "preselect_log_dir": "./data/logs",
         "reviewer": "gemini-cli",
@@ -235,6 +235,29 @@ def make_run_id() -> str:
 
 def clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def parse_date_or_today(value: Any) -> dt.date:
+    text = clean_text(value)
+    if not text:
+        return dt.date.today()
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        return dt.date.today()
+
+
+def date_input_iso(
+    label: str,
+    value: Any,
+    *,
+    key: str | None = None,
+    help: str | None = None,
+) -> str:
+    selected = st.date_input(label, value=parse_date_or_today(value), key=key, help=help)
+    if isinstance(selected, tuple):
+        selected = selected[0] if selected else dt.date.today()
+    return selected.isoformat()
 
 
 def create_run_snapshot(run_mode: str) -> Path:
@@ -484,10 +507,10 @@ def render_run_center() -> None:
         with st.expander("本次运行参数", expanded=True):
             c1, c2 = st.columns(2)
             with c1:
-                run_cfg["pick_date"] = st.text_input(
+                run_cfg["pick_date"] = date_input_iso(
                     "选股基准日期",
                     value=clean_text(run_cfg.get("pick_date")),
-                    placeholder="留空=最新交易日；例 2026-04-28",
+                    help="默认今天；如果当天原始数据不存在，初选会使用不晚于该日期的最新可用交易日。",
                 )
             with c2:
                 run_cfg["end_date"] = st.text_input(
@@ -561,11 +584,11 @@ def render_data_config() -> None:
     d1, d2 = st.columns(2)
     with d1:
         g["data_dir"] = st.text_input("初选 CSV 数据目录", value=str(g.get("data_dir", "./data/raw")))
-        run_cfg["pick_date"] = st.text_input(
+        run_cfg["pick_date"] = date_input_iso(
             "选股基准日期",
             value=clean_text(run_cfg.get("pick_date")),
-            placeholder="留空=最新交易日；例 2026-04-28",
             key="data_pick_date",
+            help="默认今天；如果当天原始数据不存在，初选会使用不晚于该日期的最新可用交易日。",
         )
     with d2:
         g["output_dir"] = st.text_input("候选结果输出目录", value=str(g.get("output_dir", "./data/candidates")))

@@ -471,6 +471,24 @@ def render_metrics() -> None:
     )
 
 
+def render_result_metrics(pick_date: str, rows: list[dict[str, Any]]) -> None:
+    candidate_count = len(rows)
+    reviewed = sum(1 for row in rows if clean_text(row.get("结论")))
+    recommendations = sum(1 for row in rows if row.get("推荐") == "是")
+    pending = max(candidate_count - reviewed, 0)
+    st.markdown(
+        f"""
+        <div class="metric-row">
+          <div class="metric-card"><div class="metric-label">当前选股日期</div><div class="metric-value">{pick_date}</div></div>
+          <div class="metric-card"><div class="metric-label">候选数量</div><div class="metric-value">{candidate_count}</div></div>
+          <div class="metric-card"><div class="metric-label">已复评</div><div class="metric-value">{reviewed}</div></div>
+          <div class="metric-card"><div class="metric-label">推荐 / 待处理</div><div class="metric-value">{recommendations} / {pending}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.fragment(run_every=1.0)
 def render_run_log_panel(run_dir_str: str) -> None:
     run_dir = Path(run_dir_str) if run_dir_str else None
@@ -780,7 +798,7 @@ def render_review_config() -> None:
         cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 5)))
         cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
         cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
-        cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 80)))
+        cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 2000)))
     with right:
         output_format_options = ["stream-json", "json", "text"]
         current_output_format = str(cfg.get("output_format", "stream-json"))
@@ -863,6 +881,131 @@ def result_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def result_rows_from_history(pick_date: str) -> list[dict[str, Any]]:
+    payload = load_history_results(pick_date, "all")
+    rows: list[dict[str, Any]] = []
+    for row in payload.get("results", []):
+        code = str(row.get("code") or "")
+        if not code:
+            continue
+        review = row.get("review") or {}
+        close = row.get("close")
+        brick_growth = row.get("brick_growth")
+        total_score = review.get("total_score")
+        rows.append(
+            {
+                "代码": code,
+                "策略": row.get("strategy") or "",
+                "收盘价": float(close) if close is not None else None,
+                "brick_growth": float(brick_growth) if brick_growth is not None else None,
+                "结论": review.get("verdict") or "",
+                "总分": float(total_score) if total_score is not None else None,
+                "信号": review.get("signal_type") or "",
+                "评论": review.get("comment") or "",
+                "推荐": "是" if row.get("status") == "recommended" else "否",
+            }
+        )
+    return rows
+
+
+def result_center_dates() -> list[str]:
+    dates = set(history_dates())
+    latest = latest_pick_date()
+    if latest:
+        dates.add(latest)
+    return sorted(dates, reverse=True)
+
+
+def result_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
+    history_payload = load_history_results(pick_date, "all")
+    if history_payload:
+        return result_rows_from_history(pick_date)
+    if pick_date == latest_pick_date():
+        return result_rows()
+    return []
+
+
+def qfq_return_since(code: str, start_date: str) -> dict[str, Any]:
+    path = ROOT / "data" / "raw" / f"{code}.csv"
+    if not path.exists():
+        return {"error": f"未找到 {path}"}
+    df = pd.read_csv(path)
+    if df.empty or "date" not in df or "close" not in df:
+        return {"error": "本地 K 线缺少 date/close 列"}
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+    if df.empty:
+        return {"error": "本地 K 线无有效数据"}
+
+    start_ts = pd.to_datetime(start_date)
+    future_rows = df[df["date"] >= start_ts]
+    if future_rows.empty:
+        return {"error": f"没有不早于 {start_date} 的本地 K 线"}
+    start_row = future_rows.iloc[0]
+    latest_row = df.iloc[-1]
+    start_close = float(start_row["close"])
+    latest_close = float(latest_row["close"])
+    if start_close <= 0:
+        return {"error": "起算收盘价无效"}
+    return_pct = (latest_close / start_close - 1.0) * 100.0
+    return {
+        "start_date": pd.Timestamp(start_row["date"]).strftime("%Y-%m-%d"),
+        "latest_date": pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d"),
+        "start_close": start_close,
+        "latest_close": latest_close,
+        "return_pct": return_pct,
+    }
+
+
+def render_return_action_table(df: pd.DataFrame, pick_date: str) -> None:
+    if df.empty:
+        return
+    st.subheader("涨跌幅计算")
+    st.caption("按本地前复权日线收盘价计算：起算交易日收盘价 → 最新交易日收盘价。")
+
+    page_size = 25
+    total_pages = max((len(df) - 1) // page_size + 1, 1)
+    if total_pages > 1:
+        page = st.number_input("页码", min_value=1, max_value=total_pages, value=1, step=1)
+    else:
+        page = 1
+    start = (int(page) - 1) * page_size
+    page_df = df.iloc[start : start + page_size]
+
+    header_cols = st.columns([0.08, 0.14, 0.12, 0.12, 0.10, 0.12, 0.32])
+    for col, text in zip(header_cols, ["序号", "代码", "策略", "收盘价", "总分", "推荐", "涨跌幅"], strict=True):
+        col.caption(text)
+
+    state_key = "result_return_calc"
+    st.session_state.setdefault(state_key, {})
+    calc_state: dict[str, Any] = st.session_state[state_key]
+
+    for idx, row in page_df.iterrows():
+        row_key = f"{pick_date}:{row['代码']}:{row.get('策略', '')}:{idx}"
+        cols = st.columns([0.08, 0.14, 0.12, 0.12, 0.10, 0.12, 0.32])
+        cols[0].write(row.get("序号", idx + 1))
+        cols[1].write(row["代码"])
+        cols[2].write(row.get("策略", ""))
+        close = row.get("收盘价")
+        cols[3].write(f"{close:.2f}" if isinstance(close, (int, float)) else "")
+        score = row.get("总分")
+        cols[4].write(f"{score:.1f}" if isinstance(score, (int, float)) else "")
+        cols[5].write(row.get("推荐", ""))
+        if cols[6].button("计算", key=f"calc_return_{row_key}"):
+            calc_state[row_key] = qfq_return_since(str(row["代码"]), pick_date)
+        result = calc_state.get(row_key)
+        if result:
+            if result.get("error"):
+                cols[6].error(result["error"])
+            else:
+                cols[6].write(
+                    f"{result['return_pct']:.2f}% "
+                    f"({result['start_date']} {result['start_close']:.2f} → "
+                    f"{result['latest_date']} {result['latest_close']:.2f})"
+                )
+
+
 def strategy_summary_rows_from_result_df(df: pd.DataFrame) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if df.empty or "策略" not in df:
@@ -912,11 +1055,17 @@ def strategy_summary_rows_from_counts(strategy_counts: dict[str, Any]) -> list[d
 
 def render_result_center() -> None:
     st.title("结果中心")
-    render_metrics()
-    rows = result_rows()
-    if not rows:
+    dates = result_center_dates()
+    if not dates:
         st.warning("还没有候选结果。请先运行初选。")
         return
+
+    selected_date = st.selectbox("选股日期", dates)
+    rows = result_rows_for_date(selected_date)
+    if not rows:
+        st.warning("当前日期没有候选结果。")
+        return
+    render_result_metrics(selected_date, rows)
     df = pd.DataFrame(rows)
     summary_rows = strategy_summary_rows_from_result_df(df)
     if summary_rows:
@@ -938,7 +1087,9 @@ def render_result_center() -> None:
         df = df[df["推荐"] == "是"]
     df = df.reset_index(drop=True)
     df.insert(0, "序号", range(1, len(df) + 1))
+    st.caption(f"当前筛选结果：{len(df)} 条")
     st.dataframe(df, width="stretch", hide_index=True)
+    render_return_action_table(df, selected_date)
 
 
 def history_rows(pick_date: str, strategy: str) -> list[dict[str, Any]]:

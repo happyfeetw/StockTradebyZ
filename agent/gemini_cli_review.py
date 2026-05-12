@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "retry_backoff_seconds": [30, 90, 180, 480, 900],
     "retry_jitter_ratio": 0.2,
     "max_requests_per_run": 50,
-    "daily_request_budget": 80,
+    "daily_request_budget": 2000,
     "usage_file": "data/review/.gemini_cli_usage.json",
     "stop_on_rate_limit": False,
     "rate_limit_backoff_seconds": 300,

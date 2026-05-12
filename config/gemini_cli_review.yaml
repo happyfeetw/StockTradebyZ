@@ -59,7 +59,7 @@ retry_jitter_ratio: 0.2
 max_requests_per_run: 50
 
 # 项目侧每日请求预算；null 表示不限制
-daily_request_budget: 80
+daily_request_budget: 2000
 
 # 每日使用计数文件
 usage_file: data/review/.gemini_cli_usage.json

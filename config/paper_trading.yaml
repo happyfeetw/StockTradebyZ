@@ -1,0 +1,26 @@
+# paper_trading.yaml
+# 本地模拟交易配置。仅用于 data/trading 下的模拟账户，不会触发真实交易。
+
+initial_cash: 20000
+max_positions: 5
+max_new_buys_per_day: 2
+target_position_weight: 0.2
+min_hold_days: 3
+max_hold_days: 20
+stop_loss_pct: 0.08
+take_profit_pct: 0.18
+buy_slippage_pct: 0.001
+sell_slippage_pct: 0.001
+commission_rate: 0.0003
+min_commission: 5
+stamp_tax_rate: 0.0005
+suggest_min_score: 4.0
+auto_confirm_generated_plan: false
+auto_execute_confirmed_plan: false
+skip_today_signal_before_refresh_time: true
+signal_refresh_after_time: "16:00"
+trade_calendar_provider: tushare
+trade_calendar_path: data/trading/trading_calendar.json
+trade_calendar_lookahead_days: 120
+trade_calendar_raw_sample_files: 120
+trading_dir: data/trading

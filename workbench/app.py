@@ -7,6 +7,7 @@ or import dashboard/app.py.
 from __future__ import annotations
 
 import datetime as dt
+import importlib
 import json
 import os
 import signal
@@ -30,6 +31,19 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
 from dashboard.components.charts import make_daily_chart, make_weekly_chart  # noqa: E402
+from paper_trading.core import (  # noqa: E402
+    complete_history_result,
+    execute_plan,
+    generate_plan,
+    plan_files,
+    plan_path,
+    portfolio_value,
+    save_snapshot,
+    trading_config,
+    trading_dir,
+    update_plan_status,
+)
+import paper_trading.core as paper_trading_core  # noqa: E402
 
 
 def _read_text(path: Path) -> str:
@@ -154,6 +168,8 @@ def ensure_session_state() -> None:
         st.session_state.review_cfg = load_yaml(ROOT / "config" / "gemini_cli_review.yaml")
     if "api_review_cfg" not in st.session_state:
         st.session_state.api_review_cfg = load_yaml(ROOT / "config" / "gemini_review.yaml")
+    if "trading_cfg" not in st.session_state:
+        st.session_state.trading_cfg = trading_config(ROOT / "config" / "paper_trading.yaml")
     if "run_cfg" not in st.session_state:
         st.session_state.run_cfg = default_run_cfg()
     apply_workbench_defaults()
@@ -203,6 +219,20 @@ def is_run_active(run_dir: Path | None = None) -> bool:
     if state.get("status") != "running":
         return False
     return is_pid_running(int(state.get("runner_pid") or 0))
+
+
+def active_run_dir() -> Path | None:
+    for run_dir in list_run_dirs():
+        if is_run_active(run_dir):
+            return run_dir
+    return None
+
+
+def active_run_label(run_dir: Path | None) -> str:
+    if run_dir is None:
+        return ""
+    state = run_state(run_dir)
+    return str(state.get("owner_label") or state.get("owner") or "运行任务")
 
 
 def display_run_status(run_dir: Path | None) -> str:
@@ -260,7 +290,7 @@ def date_input_iso(
     return selected.isoformat()
 
 
-def create_run_snapshot(run_mode: str) -> Path:
+def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label: str = "运行中心") -> Path:
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -276,6 +306,8 @@ def create_run_snapshot(run_mode: str) -> Path:
             "run_id": run_id,
             "created_at": dt.datetime.now().isoformat(timespec="seconds"),
             "run_mode": run_mode,
+            "owner": owner,
+            "owner_label": owner_label,
             "reviewer": reviewer,
             "fetch_config": str(run_dir / "fetch_kline.yaml"),
             "rules_config": str(run_dir / "rules_preselect.yaml"),
@@ -286,6 +318,40 @@ def create_run_snapshot(run_mode: str) -> Path:
                 {"name": name, "cmd": cmd}
                 for name, cmd in command_plan(run_mode, run_dir)
             ],
+        },
+    )
+    st.session_state.last_run_dir = str(run_dir)
+    return run_dir
+
+
+def create_paper_run_snapshot() -> Path:
+    run_id = make_run_id()
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
+    write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
+    write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
+    write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
+    write_yaml(run_dir / "paper_trading.yaml", st.session_state.trading_cfg)
+    write_json(run_dir / "run_options.json", st.session_state.run_cfg)
+    command = [sys.executable, "-m", "paper_trading.daily_flow", "--run-dir", str(run_dir)]
+    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
+    write_json(
+        run_dir / "run_config.json",
+        {
+            "run_id": run_id,
+            "created_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "run_mode": "模拟交易每日流程",
+            "owner": "paper_trading",
+            "owner_label": "模拟交易",
+            "reviewer": reviewer,
+            "fetch_config": str(run_dir / "fetch_kline.yaml"),
+            "rules_config": str(run_dir / "rules_preselect.yaml"),
+            "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
+            "gemini_api_config": str(run_dir / "gemini_review.yaml"),
+            "paper_trading_config": str(run_dir / "paper_trading.yaml"),
+            "run_options": str(run_dir / "run_options.json"),
+            "commands": [{"name": "模拟交易每日流程", "cmd": command}],
         },
     )
     st.session_state.last_run_dir = str(run_dir)
@@ -351,15 +417,17 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
 
 
 def start_background_run(run_mode: str) -> Path:
-    current_run = latest_run_dir()
-    if current_run and is_run_active(current_run):
-        raise RuntimeError(f"已有任务正在运行：{current_run}")
+    running = active_run_dir()
+    if running:
+        raise RuntimeError(f"已有{active_run_label(running)}任务正在运行：{running}")
 
     run_dir = create_run_snapshot(run_mode)
     write_json(
         run_dir / "run_state.json",
         {
             "status": "starting",
+            "owner": "run_center",
+            "owner_label": "运行中心",
             "run_dir": str(run_dir),
             "started_at": dt.datetime.now().isoformat(timespec="seconds"),
         },
@@ -376,6 +444,46 @@ def start_background_run(run_mode: str) -> Path:
         run_dir / "run_state.json",
         {
             "status": "running",
+            "owner": "run_center",
+            "owner_label": "运行中心",
+            "runner_pid": proc.pid,
+            "run_dir": str(run_dir),
+            "started_at": dt.datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    return run_dir
+
+
+def start_paper_trading_run() -> Path:
+    running = active_run_dir()
+    if running:
+        raise RuntimeError(f"已有{active_run_label(running)}任务正在运行：{running}")
+
+    run_dir = create_paper_run_snapshot()
+    write_json(
+        run_dir / "run_state.json",
+        {
+            "status": "starting",
+            "owner": "paper_trading",
+            "owner_label": "模拟交易",
+            "run_dir": str(run_dir),
+            "started_at": dt.datetime.now().isoformat(timespec="seconds"),
+        },
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "workbench.runner", str(run_dir)],
+        cwd=str(ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=resolved_env(),
+        start_new_session=True,
+    )
+    write_json(
+        run_dir / "run_state.json",
+        {
+            "status": "running",
+            "owner": "paper_trading",
+            "owner_label": "模拟交易",
             "runner_pid": proc.pid,
             "run_dir": str(run_dir),
             "started_at": dt.datetime.now().isoformat(timespec="seconds"),
@@ -451,6 +559,100 @@ def escape_log(lines: list[str] | str) -> str:
     )
 
 
+def render_log_console(log_text: str, *, storage_key: str) -> None:
+    escaped_key = json.dumps(storage_key)
+    st.iframe(
+        f"""
+        <style>
+        :root {{
+          color-scheme: light;
+        }}
+        body {{
+          background: transparent;
+          margin: 0;
+        }}
+        .log-box {{
+          background: #1f242c;
+          border: 1px solid #111820;
+          border-radius: 6px;
+          box-sizing: border-box;
+          color: #d8dee9;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 12px;
+          height: 420px;
+          line-height: 1.45;
+          overflow: auto;
+          padding: 14px;
+          white-space: pre-wrap;
+          width: 100%;
+        }}
+        </style>
+        <div id="workbench-log-console" class="log-box">{escape_log(log_text)}</div>
+        <script>
+        (() => {{
+          const box = document.getElementById("workbench-log-console");
+          const storageKey = "workbench-log-scroll:" + {escaped_key};
+          const thresholdPx = 24;
+          let restoring = true;
+
+          const readState = () => {{
+            try {{
+              return JSON.parse(window.sessionStorage.getItem(storageKey) || "{{}}");
+            }} catch {{
+              return {{}};
+            }}
+          }};
+
+          const writeState = (state) => {{
+            try {{
+              window.sessionStorage.setItem(storageKey, JSON.stringify(state));
+            }} catch {{}}
+          }};
+
+          const maxScrollTop = () =>
+            Math.max(0, box.scrollHeight - box.clientHeight);
+
+          const isAtBottom = () =>
+            maxScrollTop() - box.scrollTop <= thresholdPx;
+
+          const persistCurrentState = () => {{
+            writeState({{
+              sticky: isAtBottom(),
+              scrollTop: box.scrollTop,
+            }});
+          }};
+
+          box.addEventListener("scroll", () => {{
+            if (!restoring) {{
+              persistCurrentState();
+            }}
+          }}, {{ passive: true }});
+
+          const restoreScrollPosition = () => {{
+            const state = readState();
+            if (state.sticky === false && Number.isFinite(state.scrollTop)) {{
+              box.scrollTop = Math.min(Math.max(0, state.scrollTop), maxScrollTop());
+            }} else {{
+              box.scrollTop = maxScrollTop();
+            }}
+
+            window.setTimeout(() => {{
+              restoring = false;
+              persistCurrentState();
+            }}, 0);
+          }};
+
+          window.requestAnimationFrame(() => {{
+            window.requestAnimationFrame(restoreScrollPosition);
+          }});
+        }})();
+        </script>
+        """,
+        width="stretch",
+        height=430,
+    )
+
+
 def render_metrics() -> None:
     candidates = load_candidates()
     suggestion = latest_suggestion()
@@ -496,7 +698,7 @@ def render_run_log_panel(run_dir_str: str) -> None:
     active = is_run_active(run_dir)
     status_label = "running" if active else display_run_status(run_dir)
     st.subheader(f"运行日志 · {status_label}")
-    st.markdown(f"<div class='log-box'>{escape_log(read_run_log(run_dir))}</div>", unsafe_allow_html=True)
+    render_log_console(read_run_log(run_dir), storage_key=str(run_dir or "default"))
     if active:
         step = state.get("current_step") or "启动中"
         idx = state.get("step_index")
@@ -510,7 +712,8 @@ def render_run_center() -> None:
     render_metrics()
     current_run = latest_run_dir()
     state = run_state(current_run)
-    active = is_run_active(current_run)
+    running = active_run_dir()
+    active = running is not None
     left, right = st.columns([0.42, 0.58], gap="large")
 
     with left:
@@ -543,8 +746,9 @@ def render_run_center() -> None:
         st.session_state.run_cfg = run_cfg
 
         if active:
-            step_text = state.get("current_step") or "启动中"
-            st.info(f"任务运行中：{step_text}")
+            active_state = run_state(running)
+            step_text = active_state.get("current_step") or "启动中"
+            st.info(f"{active_run_label(running)}任务运行中：{step_text}")
         if st.button("开始运行", type="primary", width="stretch", disabled=active):
             try:
                 run_dir = start_background_run(run_mode)
@@ -554,8 +758,8 @@ def render_run_center() -> None:
                 st.warning(str(exc))
             st.rerun()
         if st.button("停止当前任务", width="stretch", disabled=not active):
-            if current_run:
-                stop_background_run(current_run)
+            if running:
+                stop_background_run(running)
             st.rerun()
 
     with right:
@@ -925,7 +1129,7 @@ def result_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
     return []
 
 
-def qfq_return_since(code: str, start_date: str) -> dict[str, Any]:
+def qfq_return_since(code: str, start_date: str, end_date: str | None = None) -> dict[str, Any]:
     path = ROOT / "data" / "raw" / f"{code}.csv"
     if not path.exists():
         return {"error": f"未找到 {path}"}
@@ -939,22 +1143,30 @@ def qfq_return_since(code: str, start_date: str) -> dict[str, Any]:
         return {"error": "本地 K 线无有效数据"}
 
     start_ts = pd.to_datetime(start_date)
+    target_end = pd.to_datetime(end_date or dt.date.today().isoformat())
     future_rows = df[df["date"] >= start_ts]
     if future_rows.empty:
         return {"error": f"没有不早于 {start_date} 的本地 K 线"}
+    available_end_rows = df[df["date"] <= target_end]
+    if available_end_rows.empty:
+        return {"error": f"没有不晚于 {target_end.strftime('%Y-%m-%d')} 的本地 K 线"}
     start_row = future_rows.iloc[0]
-    latest_row = df.iloc[-1]
+    latest_row = available_end_rows.iloc[-1]
     start_close = float(start_row["close"])
     latest_close = float(latest_row["close"])
     if start_close <= 0:
         return {"error": "起算收盘价无效"}
     return_pct = (latest_close / start_close - 1.0) * 100.0
+    target_end_date = target_end.strftime("%Y-%m-%d")
+    latest_date = pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d")
     return {
         "start_date": pd.Timestamp(start_row["date"]).strftime("%Y-%m-%d"),
-        "latest_date": pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d"),
+        "target_end_date": target_end_date,
+        "latest_date": latest_date,
         "start_close": start_close,
         "latest_close": latest_close,
         "return_pct": return_pct,
+        "data_stale": latest_date < target_end_date,
     }
 
 
@@ -962,7 +1174,8 @@ def render_return_action_table(df: pd.DataFrame, pick_date: str) -> None:
     if df.empty:
         return
     st.subheader("涨跌幅计算")
-    st.caption("按本地前复权日线收盘价计算：起算交易日收盘价 → 最新交易日收盘价。")
+    today = dt.date.today().isoformat()
+    st.caption(f"按本地前复权日线收盘价计算：起算交易日收盘价 → 当前日期（{today}）本地可用收盘价。")
 
     page_size = 25
     total_pages = max((len(df) - 1) // page_size + 1, 1)
@@ -993,17 +1206,20 @@ def render_return_action_table(df: pd.DataFrame, pick_date: str) -> None:
         cols[4].write(f"{score:.1f}" if isinstance(score, (int, float)) else "")
         cols[5].write(row.get("推荐", ""))
         if cols[6].button("计算", key=f"calc_return_{row_key}"):
-            calc_state[row_key] = qfq_return_since(str(row["代码"]), pick_date)
+            calc_state[row_key] = qfq_return_since(str(row["代码"]), pick_date, today)
         result = calc_state.get(row_key)
         if result:
             if result.get("error"):
                 cols[6].error(result["error"])
             else:
-                cols[6].write(
+                value_text = (
                     f"{result['return_pct']:.2f}% "
                     f"({result['start_date']} {result['start_close']:.2f} → "
                     f"{result['latest_date']} {result['latest_close']:.2f})"
                 )
+                if result.get("data_stale"):
+                    value_text += f"；当前日期 {result['target_end_date']}，本地数据截止 {result['latest_date']}"
+                cols[6].write(value_text)
 
 
 def strategy_summary_rows_from_result_df(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -1246,6 +1462,246 @@ def render_stock_view() -> None:
             st.json(review)
 
 
+def render_paper_metrics(cfg: dict[str, Any]) -> None:
+    value = portfolio_value(cfg, dt.date.today().isoformat())
+    st.markdown(
+        f"""
+        <div class="metric-row">
+          <div class="metric-card"><div class="metric-label">总资产</div><div class="metric-value">{value['total_value']:.2f}</div></div>
+          <div class="metric-card"><div class="metric-label">可用现金</div><div class="metric-value">{value['cash']:.2f}</div></div>
+          <div class="metric-card"><div class="metric-label">持仓市值</div><div class="metric-value">{value['market_value']:.2f}</div></div>
+          <div class="metric-card"><div class="metric-label">持仓数量</div><div class="metric-value">{len(value['positions'])}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def sync_initial_cash_runtime(cfg: dict[str, Any]) -> bool:
+    global paper_trading_core
+    func = getattr(paper_trading_core, "sync_initial_cash_if_pristine", None)
+    if func is None:
+        paper_trading_core = importlib.reload(paper_trading_core)
+        func = getattr(paper_trading_core, "sync_initial_cash_if_pristine")
+    return bool(func(cfg))
+
+
+def render_paper_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    with st.expander("模拟交易参数", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            cfg["initial_cash"] = st.number_input("初始资金", min_value=1000, value=int(float(cfg.get("initial_cash", 20000))), step=1000)
+            cfg["max_positions"] = st.number_input("最多持仓数", min_value=1, value=int(cfg.get("max_positions", 5)))
+        with c2:
+            cfg["max_new_buys_per_day"] = st.number_input("每日最多新买", min_value=0, value=int(cfg.get("max_new_buys_per_day", 2)))
+            cfg["target_position_weight"] = st.number_input("单票目标仓位", min_value=0.01, max_value=1.0, value=float(cfg.get("target_position_weight", 0.2)), step=0.01)
+        with c3:
+            cfg["stop_loss_pct"] = st.number_input("止损比例", min_value=0.0, max_value=1.0, value=float(cfg.get("stop_loss_pct", 0.08)), step=0.01)
+            cfg["take_profit_pct"] = st.number_input("止盈比例", min_value=0.0, max_value=3.0, value=float(cfg.get("take_profit_pct", 0.18)), step=0.01)
+        with c4:
+            cfg["min_hold_days"] = st.number_input("最短持仓天数", min_value=0, value=int(cfg.get("min_hold_days", 3)))
+            cfg["max_hold_days"] = st.number_input("最长持仓天数", min_value=1, value=int(cfg.get("max_hold_days", 20)))
+        c5, c6, c7, c8 = st.columns(4)
+        with c5:
+            cfg["buy_slippage_pct"] = st.number_input("买入滑点", min_value=0.0, max_value=0.1, value=float(cfg.get("buy_slippage_pct", 0.001)), step=0.001, format="%.3f")
+        with c6:
+            cfg["sell_slippage_pct"] = st.number_input("卖出滑点", min_value=0.0, max_value=0.1, value=float(cfg.get("sell_slippage_pct", 0.001)), step=0.001, format="%.3f")
+        with c7:
+            cfg["commission_rate"] = st.number_input("佣金率", min_value=0.0, max_value=0.01, value=float(cfg.get("commission_rate", 0.0003)), step=0.0001, format="%.4f")
+        with c8:
+            cfg["stamp_tax_rate"] = st.number_input("印花税率", min_value=0.0, max_value=0.01, value=float(cfg.get("stamp_tax_rate", 0.0005)), step=0.0001, format="%.4f")
+        cfg["auto_confirm_generated_plan"] = st.toggle("生成计划后自动确认", value=bool(cfg.get("auto_confirm_generated_plan", False)))
+        cfg["auto_execute_confirmed_plan"] = False
+        cfg["skip_today_signal_before_refresh_time"] = st.toggle(
+            "信号刷新时间前跳过今日选股",
+            value=bool(cfg.get("skip_today_signal_before_refresh_time", True)),
+            help="开盘前或盘中执行模拟流程时，只使用上一完整信号日生成当前计划，不拉取 K 线、不跑今日选股。",
+        )
+        cfg["signal_refresh_after_time"] = st.text_input(
+            "今日信号刷新时间",
+            value=str(cfg.get("signal_refresh_after_time", "16:00")),
+            help="默认 16:00。该时间前如果今日没有完整归档，会沿用最近完整信号日。",
+        )
+        cfg["trade_calendar_provider"] = st.selectbox(
+            "交易日历来源",
+            ["tushare", "local_raw"],
+            index=0 if str(cfg.get("trade_calendar_provider", "tushare")) == "tushare" else 1,
+            help="tushare 会在需要未来交易日时尝试刷新并缓存；local_raw 只用本地 K 线日期推导。",
+        )
+        cfg["trade_calendar_lookahead_days"] = st.number_input(
+            "交易日历前瞻天数",
+            min_value=30,
+            max_value=365,
+            value=int(cfg.get("trade_calendar_lookahead_days", 120)),
+            step=30,
+        )
+        cfg["trade_calendar_raw_sample_files"] = st.number_input(
+            "本地日历采样 CSV 数",
+            min_value=10,
+            max_value=1000,
+            value=int(cfg.get("trade_calendar_raw_sample_files", 120)),
+            step=10,
+        )
+        cfg["trade_calendar_path"] = st.text_input(
+            "交易日历缓存文件",
+            value=str(cfg.get("trade_calendar_path", "data/trading/trading_calendar.json")),
+        )
+        if not sync_initial_cash_runtime(cfg):
+            st.warning("模拟账户已有持仓或成交记录，初始资金不会自动覆盖现有账户。")
+    return cfg
+
+
+def plan_table(plan: dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    for idx, order in enumerate(plan.get("orders", []), 1):
+        rows.append(
+            {
+                "序号": idx,
+                "代码": order.get("code", ""),
+                "方向": order.get("side", ""),
+                "策略": order.get("strategy", ""),
+                "数量": order.get("quantity", 0),
+                "参考价": order.get("reference_price", 0),
+                "估算金额": order.get("estimated_amount", 0),
+                "状态": order.get("status", ""),
+                "原因": order.get("reason", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def render_paper_flow_tab(cfg: dict[str, Any]) -> None:
+    running = active_run_dir()
+    target_date = clean_text(st.session_state.run_cfg.get("pick_date")) or dt.date.today().isoformat()
+    complete = complete_history_result(target_date)
+    c1, c2 = st.columns([0.35, 0.65], gap="large")
+    with c1:
+        st.subheader("今日模拟流程")
+        st.caption(f"目标信号日：{target_date}；当日完整归档：{'已存在' if complete else '未发现'}")
+        if running:
+            state = run_state(running)
+            st.info(f"{active_run_label(running)}任务运行中：{state.get('current_step') or '启动中'}")
+        if st.button("运行今日模拟流程", type="primary", width="stretch", disabled=running is not None):
+            try:
+                run_dir = start_paper_trading_run()
+                st.session_state.last_run_dir = str(run_dir)
+                st.success(f"模拟交易流程已启动：{run_dir}")
+            except RuntimeError as exc:
+                st.warning(str(exc))
+            st.rerun()
+        if st.button("停止当前任务", width="stretch", disabled=running is None):
+            if running:
+                stop_background_run(running)
+            st.rerun()
+    with c2:
+        current_run = latest_run_dir()
+        render_run_log_panel(str(current_run) if current_run else "")
+
+
+def render_paper_plan_tab(cfg: dict[str, Any]) -> None:
+    files = plan_files(cfg)
+    if not files:
+        st.info("还没有交易计划。运行一次模拟交易流程后会生成下一交易日计划。")
+        return
+    labels = [path.stem.replace("plan_", "") for path in files]
+    selected_execute_date = st.selectbox("计划执行日", labels)
+    path = plan_path(cfg, selected_execute_date)
+    plan = load_json(path)
+    if not plan:
+        st.warning("计划文件为空或无法读取。")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("计划状态", plan.get("status", ""))
+    c2.metric("信号日", plan.get("signal_date", ""))
+    c3.metric("执行日", plan.get("execute_date", ""))
+    c4.metric("订单数", len(plan.get("orders", [])))
+
+    a1, a2, a3, a4 = st.columns(4)
+    if a1.button("确认计划", disabled=plan.get("status") not in {"draft"}, width="stretch"):
+        update_plan_status(selected_execute_date, "confirmed", cfg)
+        st.rerun()
+    if a2.button("取消计划", disabled=plan.get("status") in {"canceled", "executed"}, width="stretch"):
+        update_plan_status(selected_execute_date, "canceled", cfg)
+        st.rerun()
+    if a3.button("手动执行今日计划", disabled=selected_execute_date != dt.date.today().isoformat() or plan.get("status") not in {"confirmed"}, width="stretch"):
+        result = execute_plan(selected_execute_date, cfg, allow_draft=False)
+        st.info(result.get("message") or f"执行结果：{result.get('status')}")
+        st.rerun()
+    if a4.button("重新生成明日计划", width="stretch"):
+        signal_date = clean_text(plan.get("signal_date")) or latest_pick_date()
+        if signal_date:
+            generate_plan(signal_date, cfg)
+            st.rerun()
+
+    df = plan_table(plan)
+    if not df.empty:
+        st.dataframe(df, width="stretch", hide_index=True)
+    skipped = plan.get("skipped", [])
+    if skipped:
+        with st.expander("跳过记录", expanded=False):
+            st.dataframe(pd.DataFrame(skipped), width="stretch", hide_index=True)
+    with st.expander("原始计划 JSON", expanded=False):
+        st.json(plan)
+
+
+def render_paper_positions_tab(cfg: dict[str, Any]) -> None:
+    value = portfolio_value(cfg, dt.date.today().isoformat())
+    positions = value.get("positions", [])
+    if not positions:
+        st.info("当前没有模拟持仓。")
+        return
+    rows = []
+    for pos in positions:
+        rows.append(
+            {
+                "代码": pos.get("code", ""),
+                "策略": pos.get("strategy", ""),
+                "数量": pos.get("quantity", 0),
+                "成本价": pos.get("avg_cost", 0),
+                "估值价": pos.get("market_price", 0),
+                "市值": pos.get("market_value", 0),
+                "浮动盈亏": pos.get("unrealized_pnl", 0),
+                "持仓天数": pos.get("hold_days", 0),
+                "入场日期": pos.get("entry_date", ""),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    if st.button("按今天保存账户快照"):
+        save_snapshot(dt.date.today().isoformat(), cfg)
+        st.rerun()
+
+
+def render_paper_equity_tab(cfg: dict[str, Any]) -> None:
+    path = trading_dir(cfg) / "equity_curve.csv"
+    if not path.exists():
+        st.info("还没有收益曲线。执行计划或保存账户快照后会生成。")
+        return
+    df = pd.read_csv(path)
+    if df.empty:
+        st.info("收益曲线为空。")
+        return
+    st.line_chart(df.set_index("date")[["total_value", "return_pct"]])
+    st.dataframe(df, width="stretch", hide_index=True)
+
+
+def render_paper_trading() -> None:
+    st.title("模拟交易")
+    cfg = st.session_state.trading_cfg
+    cfg = render_paper_config(cfg)
+    st.session_state.trading_cfg = cfg
+    render_paper_metrics(cfg)
+    tab_flow, tab_plan, tab_positions, tab_equity = st.tabs(["流程", "交易计划", "持仓", "收益"])
+    with tab_flow:
+        render_paper_flow_tab(cfg)
+    with tab_plan:
+        render_paper_plan_tab(cfg)
+    with tab_positions:
+        render_paper_positions_tab(cfg)
+    with tab_equity:
+        render_paper_equity_tab(cfg)
+
+
 def main() -> None:
     st.set_page_config(page_title="AgentTrader 工作台", layout="wide", initial_sidebar_state="expanded")
     ensure_session_state()
@@ -1258,7 +1714,7 @@ def main() -> None:
         st.caption("本地选股工作台")
         page = st.radio(
             "导航",
-            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "历史结果", "单票复盘"],
+            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "历史结果", "单票复盘", "模拟交易"],
             label_visibility="collapsed",
         )
 
@@ -1275,6 +1731,8 @@ def main() -> None:
         render_result_center()
     elif page == "历史结果":
         render_history_center()
+    elif page == "模拟交易":
+        render_paper_trading()
     else:
         render_stock_view()
 

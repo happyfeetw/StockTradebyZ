@@ -53,6 +53,27 @@ def _candidate_key(candidate: Candidate) -> tuple[str, str]:
     return candidate.code, candidate.strategy
 
 
+def _run_strategies(run: CandidateRun) -> set[str]:
+    strategies = run.meta.get("executed_strategies") or run.meta.get("replaced_strategies") or []
+    if strategies:
+        return {str(strategy) for strategy in strategies}
+    return {candidate.strategy for candidate in run.candidates}
+
+
+def _strategy_candidate_counts(run: CandidateRun) -> dict[str, int]:
+    raw_counts = run.meta.get("strategy_candidate_counts") or {}
+    if raw_counts:
+        counts = {str(strategy): int(total or 0) for strategy, total in raw_counts.items()}
+        for candidate in run.candidates:
+            counts.setdefault(candidate.strategy, 0)
+        return counts
+
+    counts: dict[str, int] = {}
+    for candidate in run.candidates:
+        counts[candidate.strategy] = counts.get(candidate.strategy, 0) + 1
+    return counts
+
+
 def merge_same_date_by_strategy(existing: CandidateRun | None, incoming: CandidateRun) -> CandidateRun:
     """
     Merge same-date candidate snapshots by strategy.
@@ -63,7 +84,7 @@ def merge_same_date_by_strategy(existing: CandidateRun | None, incoming: Candida
     if existing is None or existing.pick_date != incoming.pick_date:
         return incoming
 
-    incoming_strategies = {candidate.strategy for candidate in incoming.candidates}
+    incoming_strategies = _run_strategies(incoming)
     kept = [
         candidate
         for candidate in existing.candidates
@@ -78,12 +99,24 @@ def merge_same_date_by_strategy(existing: CandidateRun | None, incoming: Candida
         seen.add(key)
         merged.append(candidate)
 
+    existing_counts = _strategy_candidate_counts(existing)
+    incoming_counts = _strategy_candidate_counts(incoming)
+    merged_counts = {
+        strategy: total
+        for strategy, total in existing_counts.items()
+        if strategy not in incoming_strategies
+    }
+    merged_counts.update(incoming_counts)
+    executed_strategies = sorted(_run_strategies(existing) | incoming_strategies)
+
     meta = {
         **existing.meta,
         **incoming.meta,
         "merge_same_date": True,
         "merged_strategies": sorted({candidate.strategy for candidate in merged}),
         "replaced_strategies": sorted(incoming_strategies),
+        "executed_strategies": executed_strategies,
+        "strategy_candidate_counts": merged_counts,
         "previous_total": len(existing.candidates),
         "incoming_total": len(incoming.candidates),
         "merged_total": len(merged),

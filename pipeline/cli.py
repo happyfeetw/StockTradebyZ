@@ -21,7 +21,7 @@ from pathlib import Path
 # 将 pipeline 目录加入 path（直接用 python cli.py 时需要）
 sys.path.insert(0, str(Path(__file__).parent))
 
-from select_stock import run_preselect, resolve_preselect_output_dir
+from select_stock import load_config, run_preselect, resolve_preselect_output_dir
 from schemas import CandidateRun
 from pipeline_io import save_candidates
 
@@ -32,6 +32,23 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("cli")
+
+
+def _enabled_strategies(config_path: str | None) -> list[str]:
+    cfg = load_config(config_path)
+    strategies: list[str] = []
+    if cfg.get("b1", {}).get("enabled", True):
+        strategies.append("b1")
+    if cfg.get("brick", {}).get("enabled", True):
+        strategies.append("brick")
+    return strategies
+
+
+def _strategy_candidate_counts(strategies: list[str], candidates: list) -> dict[str, int]:
+    counts = {strategy: 0 for strategy in strategies}
+    for candidate in candidates:
+        counts[candidate.strategy] = counts.get(candidate.strategy, 0) + 1
+    return counts
 
 
 def _add_log_file(log_dir: str, pick_date: str) -> None:
@@ -59,6 +76,8 @@ def cmd_preselect(args: argparse.Namespace) -> None:
 
     pick_date_str = pick_ts.strftime("%Y-%m-%d")
     run_date_str = datetime.date.today().isoformat()
+    executed_strategies = _enabled_strategies(args.config or None)
+    strategy_candidate_counts = _strategy_candidate_counts(executed_strategies, candidates)
 
     # 可选日志文件
     if args.log_dir:
@@ -72,6 +91,8 @@ def cmd_preselect(args: argparse.Namespace) -> None:
             "config": args.config,
             "data_dir": args.data,
             "total": len(candidates),
+            "executed_strategies": executed_strategies,
+            "strategy_candidate_counts": strategy_candidate_counts,
         },
     )
 

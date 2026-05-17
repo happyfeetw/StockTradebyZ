@@ -460,9 +460,9 @@ def complete_history_result(signal_date: str) -> bool:
     if not summary:
         return False
     counts = summary.get("strategy_counts") or {}
-    if not all((counts.get(strategy) or {}).get("total", 0) > 0 for strategy in ("b1", "brick")):
+    if not all(strategy in counts for strategy in ("b1", "brick")):
         return False
-    return int(summary.get("candidate_count") or 0) > 0 and int(summary.get("reviewed_count") or 0) >= int(
+    return int(summary.get("reviewed_count") or 0) >= int(
         summary.get("candidate_count") or 0
     )
 

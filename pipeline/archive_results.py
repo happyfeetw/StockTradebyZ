@@ -104,13 +104,26 @@ def build_rows(
     return rows
 
 
-def strategy_counts(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+def candidate_strategy_totals(candidates_data: dict[str, Any]) -> dict[str, int]:
+    meta = candidates_data.get("meta") or {}
+    raw_counts = meta.get("strategy_candidate_counts") or {}
+    counts = {str(strategy): int(total or 0) for strategy, total in raw_counts.items()}
+    for strategy in meta.get("executed_strategies") or []:
+        counts.setdefault(str(strategy), 0)
+    return counts
+
+
+def strategy_counts(rows: list[dict[str, Any]], strategy_totals: dict[str, int] | None = None) -> dict[str, dict[str, int]]:
     counts: dict[str, dict[str, int]] = {}
+    strategy_totals = strategy_totals or {}
+    for strategy, total in strategy_totals.items():
+        counts[strategy] = {"total": int(total), "recommended": 0, "reviewed": 0, "unreviewed": 0}
     for row in rows:
         strategy = str(row.get("strategy") or "unknown")
         status = str(row.get("status") or "unknown")
-        counts.setdefault(strategy, {"total": 0, "recommended": 0, "reviewed": 0, "unreviewed": 0})
-        counts[strategy]["total"] += 1
+        if strategy not in counts:
+            counts[strategy] = {"total": 0, "recommended": 0, "reviewed": 0, "unreviewed": 0}
+            counts[strategy]["total"] += 1
         if status in counts[strategy]:
             counts[strategy][status] += 1
     return counts
@@ -124,6 +137,7 @@ def build_summary(
     suggestion: dict[str, Any],
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    counts = strategy_counts(rows, candidate_strategy_totals(candidates_data))
     recommended = [row for row in rows if row.get("status") == "recommended"]
     reviewed = [row for row in rows if row.get("review")]
     return {
@@ -134,7 +148,8 @@ def build_summary(
         "candidate_count": len(rows),
         "reviewed_count": len(reviewed),
         "recommended_count": len(recommended),
-        "strategy_counts": strategy_counts(rows),
+        "strategy_counts": counts,
+        "executed_strategies": sorted(counts),
         "min_score_threshold": suggestion.get("min_score_threshold"),
         "source": {
             "candidates": "data/candidates/candidates_latest.json",
@@ -193,14 +208,15 @@ def archive(args: argparse.Namespace) -> Path:
         pick_date=pick_date,
         run_id=run_id,
     )
-    if not rows:
+    strategy_totals = candidate_strategy_totals(candidates_data)
+    if not rows and not strategy_totals:
         raise ValueError(f"没有可归档候选: {candidates_path}")
 
     date_dir = history_dir / pick_date
     all_rows = {"date": pick_date, "run_id": run_id, "results": rows}
     atomic_write_json(date_dir / "all.json", all_rows)
 
-    strategies = sorted({str(row.get("strategy") or "unknown") for row in rows})
+    strategies = sorted(set(strategy_totals) | {str(row.get("strategy") or "unknown") for row in rows})
     for strategy in strategies:
         strategy_rows = [row for row in rows if str(row.get("strategy") or "unknown") == strategy]
         atomic_write_json(date_dir / f"{strategy}.json", {"date": pick_date, "run_id": run_id, "results": strategy_rows})

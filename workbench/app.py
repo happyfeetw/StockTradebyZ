@@ -1512,11 +1512,6 @@ def render_paper_config(cfg: dict[str, Any]) -> dict[str, Any]:
             cfg["stamp_tax_rate"] = st.number_input("印花税率", min_value=0.0, max_value=0.01, value=float(cfg.get("stamp_tax_rate", 0.0005)), step=0.0001, format="%.4f")
         cfg["auto_confirm_generated_plan"] = st.toggle("生成计划后自动确认", value=bool(cfg.get("auto_confirm_generated_plan", False)))
         cfg["auto_execute_confirmed_plan"] = False
-        cfg["skip_today_signal_before_refresh_time"] = st.toggle(
-            "信号刷新时间前跳过今日选股",
-            value=bool(cfg.get("skip_today_signal_before_refresh_time", True)),
-            help="开盘前或盘中执行模拟流程时，只使用上一完整信号日生成当前计划，不拉取 K 线、不跑今日选股。",
-        )
         cfg["signal_refresh_after_time"] = st.text_input(
             "今日信号刷新时间",
             value=str(cfg.get("signal_refresh_after_time", "16:00")),

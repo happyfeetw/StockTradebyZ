@@ -17,7 +17,6 @@ stamp_tax_rate: 0.0005
 suggest_min_score: 4.0
 auto_confirm_generated_plan: false
 auto_execute_confirmed_plan: false
-skip_today_signal_before_refresh_time: true
 signal_refresh_after_time: "16:00"
 trade_calendar_provider: tushare
 trade_calendar_path: data/trading/trading_calendar.json

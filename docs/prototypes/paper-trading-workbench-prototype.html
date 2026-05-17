@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模拟交易 Workbench 原型</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --sidebar: #eef1f4;
+      --border: #dce1e6;
+      --text: #20252b;
+      --muted: #69717d;
+      --primary: #1f6feb;
+      --success: #1f8f5f;
+      --warning: #a66f00;
+      --danger: #c93c37;
+      --log-bg: #1f242c;
+      --log-border: #111820;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 232px 1fr;
+      min-height: 100vh;
+    }
+
+    aside {
+      background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      padding: 22px 18px;
+    }
+
+    .brand {
+      color: var(--primary);
+      font-size: 24px;
+      font-weight: 750;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 26px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-item {
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px 12px;
+    }
+
+    .nav-item.active {
+      background: #dbe9ff;
+      color: #174a96;
+      font-weight: 700;
+    }
+
+    main {
+      padding: 28px 34px 40px;
+    }
+
+    .status {
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin-bottom: 24px;
+      padding: 10px 14px;
+    }
+
+    .status span {
+      align-items: center;
+      color: var(--muted);
+      display: inline-flex;
+      font-size: 13px;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      background: var(--success);
+      border-radius: 50%;
+      height: 8px;
+      width: 8px;
+    }
+
+    .dot.warn {
+      background: var(--warning);
+    }
+
+    h1 {
+      font-size: 42px;
+      line-height: 1.05;
+      margin: 0 0 22px;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin: 26px 0 12px;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin: 0 0 12px;
+    }
+
+    .metric-row {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 18px;
+    }
+
+    .metric-card,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .metric-card {
+      padding: 14px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .metric-value.positive {
+      color: var(--success);
+    }
+
+    .metric-value.negative {
+      color: var(--danger);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin: 6px 0 18px;
+    }
+
+    .tab {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 8px 14px;
+    }
+
+    .tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 0.44fr 0.56fr;
+    }
+
+    .panel {
+      padding: 16px;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .button-row {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin: 14px 0;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: default;
+      font-size: 14px;
+      font-weight: 650;
+      padding: 10px 12px;
+    }
+
+    button.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    button.secondary {
+      background: #fff;
+      color: var(--text);
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .step {
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 24px 1fr auto;
+      padding: 10px;
+    }
+
+    .step-num {
+      align-items: center;
+      background: #dbe9ff;
+      border-radius: 50%;
+      color: #174a96;
+      display: inline-flex;
+      font-size: 12px;
+      font-weight: 700;
+      height: 24px;
+      justify-content: center;
+      width: 24px;
+    }
+
+    .tag {
+      border-radius: 4px;
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 7px;
+    }
+
+    .tag.pass {
+      background: #d9f0e2;
+      color: #116149;
+    }
+
+    .tag.watch {
+      background: #fff0c2;
+      color: #765400;
+    }
+
+    .tag.fail {
+      background: #f9d6d5;
+      color: #8a2520;
+    }
+
+    .tag.b1 {
+      background: #dbe9ff;
+      color: #174a96;
+    }
+
+    .tag.brick {
+      background: #e5e9ef;
+      color: #39424e;
+    }
+
+    .table {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .inline-actions {
+      display: flex;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .inline-actions button {
+      padding: 8px 10px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-size: 13px;
+      padding: 10px 12px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f4f6f8;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .log-box {
+      background: var(--log-bg);
+      border: 1px solid var(--log-border);
+      border-radius: 6px;
+      color: #d8dee9;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 12px;
+      min-height: 220px;
+      padding: 14px;
+      white-space: pre-wrap;
+    }
+
+    .chart {
+      align-items: end;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      gap: 10px;
+      height: 190px;
+      padding: 18px 18px 28px;
+      position: relative;
+    }
+
+    .chart::after {
+      bottom: 8px;
+      color: var(--muted);
+      content: "净值曲线 / 回撤概览";
+      font-size: 12px;
+      left: 18px;
+      position: absolute;
+    }
+
+    .bar {
+      background: #dbe9ff;
+      border-radius: 4px 4px 0 0;
+      flex: 1;
+    }
+
+    .bar.strong {
+      background: var(--primary);
+    }
+
+    .split {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    @media (max-width: 1100px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        display: none;
+      }
+
+      .grid,
+      .split,
+      .metric-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">AgentTrader</div>
+      <div class="subtitle">本地选股工作台</div>
+      <div class="nav">
+        <div class="nav-item">运行中心</div>
+        <div class="nav-item">数据配置</div>
+        <div class="nav-item">策略配置</div>
+        <div class="nav-item">复评配置</div>
+        <div class="nav-item">结果中心</div>
+        <div class="nav-item active">模拟交易</div>
+        <div class="nav-item">历史结果</div>
+        <div class="nav-item">单票复盘</div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="status">
+        <span><i class="dot"></i>Tushare: 已配置</span>
+        <span><i class="dot"></i>Gemini CLI: 已安装</span>
+        <span><i class="dot"></i>模拟账户: 已初始化</span>
+        <span><i class="dot"></i>全局流程: 空闲</span>
+        <span><i class="dot warn"></i>今日计划: 待生成</span>
+        <span><i class="dot"></i>最新选股: 2026-05-11</span>
+      </div>
+
+      <h1>模拟交易</h1>
+
+      <div class="metric-row">
+        <div class="metric-card">
+          <div class="metric-label">总资产</div>
+          <div class="metric-value">20,482.35</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">现金</div>
+          <div class="metric-value">8,216.20</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">持仓市值</div>
+          <div class="metric-value">12,266.15</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">累计收益</div>
+          <div class="metric-value positive">+2.41%</div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active">运行</div>
+        <div class="tab">交易计划</div>
+        <div class="tab">持仓</div>
+        <div class="tab">收益分析</div>
+        <div class="tab">配置</div>
+      </div>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>今日模拟流程</h2>
+          <p class="note">收盘后人工启动。系统先检查全局流程锁和当日归档结果；如果今日已经完成 B1 + 砖型图选股复评，则跳过选股流程，直接生成下一交易日计划。</p>
+          <div class="button-row">
+            <button class="primary">运行今日模拟流程</button>
+            <button class="secondary">只生成下一计划</button>
+          </div>
+          <div class="button-row">
+            <button class="secondary">只执行已有计划</button>
+            <button class="secondary">保存账户快照</button>
+          </div>
+
+          <div class="steps">
+            <div class="step">
+              <span class="step-num">1</span>
+              <div>
+                <strong>检查全局流程锁</strong>
+                <div class="note">运行中心和模拟交易全局互斥，已有流程运行时禁止启动</div>
+              </div>
+              <span class="tag pass">就绪</span>
+            </div>
+            <div class="step">
+              <span class="step-num">2</span>
+              <div>
+                <strong>检查当日选股结果</strong>
+                <div class="note">已发现 2026-05-11 完整归档，B1 38 只，砖型图 115 只</div>
+              </div>
+              <span class="tag pass">可复用</span>
+            </div>
+            <div class="step">
+              <span class="step-num">3</span>
+              <div>
+                <strong>B1 / 砖型图流程</strong>
+                <div class="note">仅当当日结果不存在时执行；否则跳过，避免重复覆盖结果</div>
+              </div>
+              <span class="tag watch">本次跳过</span>
+            </div>
+            <div class="step">
+              <span class="step-num">4</span>
+              <div>
+                <strong>执行上一交易计划</strong>
+                <div class="note">按执行日开盘价 + 滑点模拟成交</div>
+              </div>
+              <span class="tag watch">待处理</span>
+            </div>
+            <div class="step">
+              <span class="step-num">5</span>
+              <div>
+                <strong>生成下一交易日计划</strong>
+                <div class="note">结合推荐、现金、持仓、风控生成 plan JSON</div>
+              </div>
+              <span class="tag watch">待处理</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>运行日志</h2>
+          <div class="log-box">[System] 模拟交易模块已启动
+[Plan] 初始资金: 20000.00
+[Lock] 全局流程空闲，可以启动
+[Check] 已发现 2026-05-11 完整选股结果，跳过 B1 / 砖型图流程
+[Step] 等待执行上一交易计划
+[Info] 下一交易日计划将写入 data/trading/plans/</div>
+        </section>
+      </div>
+
+      <h2>明日交易计划</h2>
+      <div class="metric-row" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+        <div class="metric-card">
+          <div class="metric-label">计划日期</div>
+          <div class="metric-value">2026-05-12</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">执行日期</div>
+          <div class="metric-value">2026-05-13</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">计划状态</div>
+          <div class="metric-value">草稿</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">预计买入</div>
+          <div class="metric-value">6,585</div>
+        </div>
+      </div>
+      <div class="inline-actions">
+        <button class="primary">确认计划</button>
+        <button class="secondary">取消计划</button>
+        <button class="secondary">手动执行今日计划</button>
+        <button class="secondary">导出 JSON</button>
+      </div>
+      <div class="table">
+        <table>
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>执行日期</th>
+              <th>代码</th>
+              <th>策略</th>
+              <th>方向</th>
+              <th>数量</th>
+              <th>参考价</th>
+              <th>预计金额</th>
+              <th>风控</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>2026-05-13</td>
+              <td>600989</td>
+              <td><span class="tag b1">b1</span></td>
+              <td>BUY</td>
+              <td>100</td>
+              <td>28.34</td>
+              <td>2,837.00</td>
+              <td><span class="tag pass">通过</span></td>
+              <td>草稿</td>
+              <td>查看风控 · 取消</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>2026-05-13</td>
+              <td>603303</td>
+              <td><span class="tag brick">brick</span></td>
+              <td>BUY</td>
+              <td>200</td>
+              <td>18.72</td>
+              <td>3,748.00</td>
+              <td><span class="tag pass">通过</span></td>
+              <td>草稿</td>
+              <td>查看原因 · 取消</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>2026-05-13</td>
+              <td>002259</td>
+              <td><span class="tag brick">brick</span></td>
+              <td>SKIP</td>
+              <td>0</td>
+              <td>5.94</td>
+              <td>0.00</td>
+              <td><span class="tag watch">现金不足</span></td>
+              <td>已跳过</td>
+              <td>查看原因</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="split">
+        <section>
+          <h2>当前持仓</h2>
+          <div class="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>代码</th>
+                  <th>策略</th>
+                  <th>持仓天数</th>
+                  <th>数量</th>
+                  <th>成本价</th>
+                  <th>最新价</th>
+                  <th>浮盈</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>600875</td>
+                  <td><span class="tag b1">b1</span></td>
+                  <td>4</td>
+                  <td>100</td>
+                  <td>37.72</td>
+                  <td>39.10</td>
+                  <td class="metric-value positive" style="font-size:13px;">+3.66%</td>
+                </tr>
+                <tr>
+                  <td>603773</td>
+                  <td><span class="tag brick">brick</span></td>
+                  <td>2</td>
+                  <td>100</td>
+                  <td>72.75</td>
+                  <td>71.40</td>
+                  <td class="metric-value negative" style="font-size:13px;">-1.86%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2>收益分析</h2>
+          <div class="chart">
+            <div class="bar" style="height: 42%;"></div>
+            <div class="bar" style="height: 48%;"></div>
+            <div class="bar" style="height: 55%;"></div>
+            <div class="bar strong" style="height: 63%;"></div>
+            <div class="bar" style="height: 59%;"></div>
+            <div class="bar strong" style="height: 76%;"></div>
+            <div class="bar strong" style="height: 82%;"></div>
+          </div>
+          <div class="metric-row" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px;">
+            <div class="metric-card">
+              <div class="metric-label">最大回撤</div>
+              <div class="metric-value negative">-3.18%</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">胜率</div>
+              <div class="metric-value">58.3%</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

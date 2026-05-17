@@ -22,6 +22,7 @@ import json
 import os
 import queue
 import random
+import re
 import signal
 import shlex
 import shutil
@@ -84,7 +85,6 @@ RATE_LIMIT_MARKERS = (
     "quota",
     "too many requests",
     "resource exhausted",
-    "429",
     "exceeded",
     "per minute",
     "daily limit",
@@ -93,13 +93,21 @@ RATE_LIMIT_MARKERS = (
     "resource_exhausted",
 )
 
+RATE_LIMIT_PATTERNS = (
+    re.compile(r"\b(?:http\s*)?429\b"),
+    re.compile(r"\bstatus(?:\s+code)?\s*[:=]?\s*429\b"),
+)
+
 TRANSIENT_ERROR_MARKERS = (
     "premature close",
     "err_stream_premature_close",
+    "fetchadmincontrols",
+    "cloudcode-pa.googleapis.com",
+    "gaxioserror",
     "econnreset",
+    "socket hang up",
     "etimedout",
     "socket disconnected",
-    "socket hang up",
     "tls connection",
     "timed out",
     "timeout",
@@ -139,7 +147,9 @@ def _optional_int(value: Any) -> int | None:
 
 def _is_rate_limit_text(text: str) -> bool:
     lower = text.lower()
-    return any(marker in lower for marker in RATE_LIMIT_MARKERS)
+    return any(marker in lower for marker in RATE_LIMIT_MARKERS) or any(
+        pattern.search(lower) for pattern in RATE_LIMIT_PATTERNS
+    )
 
 
 def _is_credential_error_text(text: str) -> bool:
@@ -150,6 +160,19 @@ def _is_credential_error_text(text: str) -> bool:
 def _is_transient_error_text(text: str) -> bool:
     lower = text.lower()
     return any(marker in lower for marker in TRANSIENT_ERROR_MARKERS) or _is_rate_limit_text(text)
+
+
+def _transient_error_label(text: str) -> str:
+    lower = text.lower()
+    if "fetchadmincontrols" in lower or "cloudcode-pa.googleapis.com" in lower:
+        return "Gemini CLI 账号策略接口网络异常"
+    if "socket hang up" in lower:
+        return "网络连接被中断"
+    if "premature close" in lower or "err_stream_premature_close" in lower:
+        return "流式连接提前关闭"
+    if "timeout" in lower or "timed out" in lower:
+        return "请求超时"
+    return "瞬时网络错误"
 
 
 def _optional_float_list(value: Any) -> list[float]:
@@ -973,10 +996,10 @@ class GeminiCliReviewer(BaseReviewer):
                     if _is_transient_error_text(message) and attempt < len(retry_delays):
                         delay = self._jittered_delay(retry_delays[attempt])
                         attempt += 1
-                        print(f"失败 — {exc}")
+                        print(f"失败 — {_transient_error_label(message)}: {message[:500]}")
                         self._sleep_before_retry(
                             delay,
-                            f"[INFO] {code} 瞬时错误，重试 {attempt}/{len(retry_delays)}",
+                            f"[INFO] {code} {_transient_error_label(message)}，重试 {attempt}/{len(retry_delays)}",
                             codes=[code],
                             attempt=attempt,
                         )
@@ -1053,16 +1076,18 @@ class GeminiCliReviewer(BaseReviewer):
                 print(f"凭证错误 — {reason}")
                 return [], codes, reason
             except Exception as exc:
-                print(f"批量失败 — {exc}")
-                if _is_transient_error_text(str(exc)) and attempt < len(retry_delays):
+                message = str(exc)
+                if _is_transient_error_text(message) and attempt < len(retry_delays):
+                    print(f"批量失败 — {_transient_error_label(message)}: {message[:500]}")
                     delay = self._jittered_delay(retry_delays[attempt])
                     self._sleep_before_retry(
                         delay,
-                        f"[INFO] 本批瞬时错误，重试 {attempt + 1}/{len(retry_delays)}",
+                        f"[INFO] 本批{_transient_error_label(message)}，重试 {attempt + 1}/{len(retry_delays)}",
                         codes=codes,
                         attempt=attempt + 1,
                     )
                     continue
+                print(f"批量失败 — {exc}")
                 break
 
         if not self.config.get("fallback_to_single_on_batch_error", True):

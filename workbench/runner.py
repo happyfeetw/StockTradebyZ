@@ -50,6 +50,8 @@ def run(run_dir: Path) -> int:
     commands = config.get("commands", [])
     log_path = run_dir / "run.log"
     state_path = run_dir / "run_state.json"
+    owner = str(config.get("owner") or "run_center")
+    owner_label = str(config.get("owner_label") or "运行中心")
 
     log_path.write_text(
         f"[System] 运行快照: {run_dir}\n"
@@ -60,6 +62,8 @@ def run(run_dir: Path) -> int:
         state_path,
         {
             "status": "running",
+            "owner": owner,
+            "owner_label": owner_label,
             "runner_pid": os.getpid(),
             "started_at": dt.datetime.now().isoformat(timespec="seconds"),
             "run_dir": str(run_dir),
@@ -74,6 +78,8 @@ def run(run_dir: Path) -> int:
             state_path,
             {
                 "status": "running",
+                "owner": owner,
+                "owner_label": owner_label,
                 "runner_pid": os.getpid(),
                 "current_step": step_name,
                 "step_index": index,
@@ -94,6 +100,8 @@ def run(run_dir: Path) -> int:
             state_path,
             {
                 "status": "running",
+                "owner": owner,
+                "owner_label": owner_label,
                 "runner_pid": os.getpid(),
                 "child_pid": proc.pid,
                 "current_step": step_name,
@@ -122,6 +130,8 @@ def run(run_dir: Path) -> int:
                 state_path,
                 {
                     "status": "failed",
+                    "owner": owner,
+                    "owner_label": owner_label,
                     "runner_pid": os.getpid(),
                     "current_step": step_name,
                     "return_code": return_code,
@@ -137,6 +147,8 @@ def run(run_dir: Path) -> int:
         state_path,
         {
             "status": "success",
+            "owner": owner,
+            "owner_label": owner_label,
             "runner_pid": os.getpid(),
             "finished_at": dt.datetime.now().isoformat(timespec="seconds"),
             "run_dir": str(run_dir),

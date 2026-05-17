@@ -51,12 +51,34 @@ section[data-testid="stSidebar"] h3 {
   padding-bottom: 2rem;
 }
 
-.stApp header,
-.stApp [data-testid="stHeader"],
-.stApp [data-testid="stToolbar"],
 .stApp [data-testid="stDecoration"],
-.stApp [data-testid="stStatusWidget"] {
+.stApp [data-testid="stStatusWidget"],
+.stApp [data-testid="stToolbarActions"],
+.stApp [data-testid="stMainMenu"],
+.stApp [data-testid="stAppDeployButton"] {
   display: none;
+}
+
+.stApp header,
+.stApp [data-testid="stHeader"] {
+  background: transparent;
+  pointer-events: auto;
+  z-index: 100000;
+}
+
+.stApp [data-testid="stToolbar"] {
+  background: transparent;
+  pointer-events: auto;
+  z-index: 100001;
+}
+
+.stApp [data-testid="stExpandSidebarButton"],
+.stApp [data-testid="stSidebarCollapseButton"] {
+  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  z-index: 100002;
 }
 
 .stApp iframe[title="streamlit_navigation_bar"] {

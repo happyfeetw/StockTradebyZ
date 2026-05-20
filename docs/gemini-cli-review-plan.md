@@ -4,6 +4,9 @@
 当前实现已把 `run_all.py` 的默认复评方式切换为 Gemini CLI，并保留 Gemini API
 作为显式兼容模式。
 
+> AGY 迁移探索：Antigravity CLI 迁移不在本文档直接展开，当前探索设计见
+> [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
+
 ## 背景
 
 当前项目主流程为：

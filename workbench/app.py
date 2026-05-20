@@ -721,6 +721,8 @@ def render_run_center() -> None:
         run_mode = st.selectbox("运行模式", RUN_MODES, index=1)
         run_dir_preview = RUNS_DIR / "本次运行会自动生成时间戳目录"
         st.markdown(f"<div class='panel-note'>运行配置会保存到 <code>{run_dir_preview}</code>，不会覆盖默认 YAML。</div>", unsafe_allow_html=True)
+        if run_mode == "只抓取数据":
+            st.caption("只执行「拉取 K 线数据」这一环节；抓取参数在「数据配置」的行情下载区域设置。")
         if current_run:
             st.caption(f"最近运行快照：{current_run}")
 

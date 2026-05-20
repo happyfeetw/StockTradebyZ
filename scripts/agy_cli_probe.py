@@ -202,9 +202,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             json_probe = _run_command(
                 [
                     agy_bin,
-                    "--print",
                     "--print-timeout",
                     args.print_timeout,
+                    "--print",
                     JSON_PROBE_PROMPT,
                 ],
                 cwd=probe_cwd,
@@ -234,9 +234,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                 agy_bin,
                 "--add-dir",
                 str(image_path.parent.resolve()),
-                "--print",
                 "--print-timeout",
                 args.print_timeout,
+                "--print",
                 image_prompt,
             ]
             image_probe = _run_command(

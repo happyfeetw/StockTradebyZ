@@ -81,10 +81,10 @@
 
 目标：验证 `agy` 是否能在非交互模式下返回可解析 JSON。
 
-建议命令形态：
+建议命令形态。注意 `--print` 是带 prompt 值的 flag，`--print-timeout` 必须放在 `--print` 之前，否则 `--print-timeout` 可能被模型当成 prompt 内容：
 
 ```bash
-agy --print --print-timeout 5m "Return exactly {\"ok\":true,\"runner\":\"agy\"} and nothing else."
+agy --print-timeout 5m --print "Return exactly {\"ok\":true,\"runner\":\"agy\"} and nothing else."
 ```
 
 验收：

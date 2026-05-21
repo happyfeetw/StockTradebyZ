@@ -22,12 +22,16 @@
 - `agy --help` 未暴露等价于 Gemini CLI 的 `--output-format json` 或 `--output-format stream-json` 参数。
 - 当前 `agy --print` 非交互 JSON 探针会触发重新认证，并在 30 秒后认证超时；探针结果见
   [`docs/agy-cli-probe-results.md`](agy-cli-probe-results.md)。
+- 认证专项调研显示：本机 Keychain 中存在 AGY/Gemini 相关条目，但 AGY 1.0.0 新进程反复出现
+  `keyringAuth: timed out after 1s`，随后回退到 OAuth；详见
+  [`docs/agy-cli-auth-research.md`](agy-cli-auth-research.md)。
 
 官方文档当前给出的约束：
 
 - Antigravity CLI 的 `/model` 是交互式默认推理模型选择，并会在会话中保持，而不是当前脚本可直接传入的 per-call 参数。
 - Antigravity CLI 的设置文件位于 `~/.gemini/antigravity-cli/settings.json`，部分设置可被启动参数覆盖，但官方文档没有给出模型的命令行覆盖参数。
 - Gemini CLI 到 Antigravity CLI 的迁移不是 100% feature parity。
+- 官方文档没有给出通过 API key、环境变量 token、认证缓存文件或 timeout 参数绕过浏览器 OAuth 的 AGY CLI 登录方案。
 
 这些约束意味着：本分支不能把 `agy` 设计成 `gemini` 命令的直接参数替换，必须先设计探针、阻断条件和实验输出隔离。
 
@@ -38,6 +42,7 @@
 - Gemini CLI 迁移文档：https://antigravity.google/docs/gcli-migration
 - Antigravity CLI 产品页：https://antigravity.google/product/antigravity-cli
 - Gemini 3.5 Flash in Antigravity：https://antigravity.google/blog/gemini-3-5-flash-in-google-antigravity
+- AGY CLI 认证专项调研：[docs/agy-cli-auth-research.md](agy-cli-auth-research.md)
 
 ## 当前实现状态
 
@@ -76,6 +81,7 @@
 
 - 如果没有 `--print` / `--prompt`，停止迁移探索。
 - 如果无法确认模型来源，后续只能做“运行机制实验”，不能做“模型能力对比结论”。
+- 如果新进程无法稳定复用系统 keyring 中的登录状态，停止批量 reviewer 实现。
 
 ### Phase 1：最小非交互 JSON 探针
 
@@ -93,6 +99,7 @@ agy --print-timeout 5m --print "Return exactly {\"ok\":true,\"runner\":\"agy\"} 
 - stdout 能提取出严格 JSON。
 - stderr 不包含认证失败、权限等待、交互阻塞或超时。
 - 当前工作目录没有留下需要提交的临时文件；如果 `agy` 创建 `.antigravitycli` 等本地运行痕迹，脚本必须明确清理或加入本地忽略策略，但不能提交。
+- 同一 shell 中连续多次运行不要求重新登录。
 
 ### Phase 2：图片读取探针
 
@@ -124,7 +131,7 @@ agy --print-timeout 5m --print "Return exactly {\"ok\":true,\"runner\":\"agy\"} 
 - 新增 `agent/agy_cli_review.py`，复用 `BaseReviewer` 的候选读取、图表查找、结果汇总能力。
 - 新增 `config/agy_cli_review.yaml`，配置 `agy_bin`、`print_timeout`、`request_delay`、`skip_existing`、`raw_log_dir`、`suggest_min_score`。
 - 构造 prompt 时复用 `agent/prompt.md` 和现有 JSON 输出契约。
-- 调用 `agy --print --print-timeout <duration> <prompt>`。
+- 调用 `agy --print-timeout <duration> --print <prompt>`。
 - 输出结果写入实验目录，例如 `data/review/{pick_date}/agy_cli_experimental/{code}.json`，或者在 JSON 中明确 `reviewer: agy-cli-experimental`，避免和正式结果混淆。
 - 保存 prompt、stdout、stderr、returncode、duration、resolved model evidence。
 

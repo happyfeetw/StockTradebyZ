@@ -25,6 +25,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REPORT_DIR = ROOT / "data" / "review" / "agy_cli_probe"
 DEFAULT_SETTINGS_PATH = Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
+DEFAULT_LOG_DIR = Path.home() / ".gemini" / "antigravity-cli" / "log"
 JSON_PROBE_PROMPT = 'Return exactly {"ok":true,"runner":"agy"} and nothing else.'
 IMAGE_PROBE_PROMPT = """Read this stock K-line chart image: @{image_path}
 
@@ -36,10 +37,23 @@ SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 AUTH_MARKER_RE = re.compile(
-    r"(authentication required|waiting for authentication|authorization code|authentication timed out)",
+    r"(authentication required|waiting for authentication|authorization code|authentication timed out|auth timed out)",
     re.IGNORECASE,
 )
 AUTH_URL_RE = re.compile(r"https://accounts\.google\.com/\S+")
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+AUTH_LOG_MARKER_RE = re.compile(
+    r"("
+    r"keyringAuth: timed out|"
+    r"failed to persist token|"
+    r"Print mode: not authenticated|"
+    r"Print mode: silent auth failed|"
+    r"Print mode: auth timed out|"
+    r"token exchange failed|"
+    r"Invalid code verifier"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _utc_timestamp() -> str:
@@ -93,7 +107,8 @@ def _run_command(cmd: list[str], cwd: Path, timeout_seconds: int) -> dict[str, A
 
 
 def _sanitize_output(text: str) -> str:
-    return AUTH_URL_RE.sub("<redacted-google-auth-url>", text)
+    text = AUTH_URL_RE.sub("<redacted-google-auth-url>", text)
+    return EMAIL_RE.sub("<redacted-email>", text)
 
 
 def _preview(text: str, limit: int = 2000) -> str:
@@ -170,6 +185,52 @@ def _inspect_settings(settings_path: Path) -> dict[str, Any]:
     return info
 
 
+def _collect_auth_log_diagnostics(log_dir: Path, max_files: int = 8, max_lines: int = 80) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "path": str(log_dir),
+        "exists": log_dir.exists(),
+        "markers": [],
+        "keyring_timeout_seen": False,
+        "error": "",
+    }
+    if not log_dir.exists():
+        return info
+
+    try:
+        log_files = sorted(
+            log_dir.glob("cli-*.log"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:max_files]
+        markers: list[dict[str, Any]] = []
+        for log_file in log_files:
+            try:
+                lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line_no, line in enumerate(lines, start=1):
+                if not AUTH_LOG_MARKER_RE.search(line):
+                    continue
+                sanitized = _sanitize_output(line)
+                markers.append(
+                    {
+                        "file": log_file.name,
+                        "line": line_no,
+                        "message": sanitized,
+                    }
+                )
+                if "keyringAuth: timed out" in line:
+                    info["keyring_timeout_seen"] = True
+                if len(markers) >= max_lines:
+                    break
+            if len(markers) >= max_lines:
+                break
+        info["markers"] = markers
+    except Exception as exc:  # noqa: BLE001 - diagnostics should not fail the probe
+        info["error"] = str(exc)
+    return info
+
+
 def _summarize_probe(raw: dict[str, Any]) -> dict[str, Any]:
     if raw is None:
         return {}
@@ -196,6 +257,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         help_result = _run_command([agy_bin, "--help"], cwd=probe_cwd, timeout_seconds=args.command_timeout)
         help_text = str(help_result.get("stdout", "")) + "\n" + str(help_result.get("stderr", ""))
         capabilities = _collect_cli_capabilities(help_text)
+        auth_log_diagnostics = _collect_auth_log_diagnostics(Path(args.log_dir).expanduser())
 
         json_probe: dict[str, Any] | None = None
         if not args.skip_json_probe and capabilities["has_print"]:
@@ -258,10 +320,16 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         report = {
             "generated_at": generated_at,
             "agy_bin": agy_bin,
+            "environment": {
+                "term": os.environ.get("TERM", ""),
+                "shell": os.environ.get("SHELL", ""),
+                "cf_bundle_identifier": os.environ.get("__CFBundleIdentifier", ""),
+            },
             "version": _summarize_probe(version),
             "help": _summarize_probe(help_result),
             "capabilities": capabilities,
             "settings": _inspect_settings(Path(args.settings_path).expanduser()),
+            "auth_log_diagnostics": auth_log_diagnostics,
             "json_probe": _summarize_probe(json_probe) if json_probe else None,
             "image_probe": _summarize_probe(image_probe) if image_probe else None,
             "blocking": {
@@ -278,6 +346,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 ),
                 "authentication_required": _has_auth_marker(json_probe),
+                "keyring_auth_timeout_seen": auth_log_diagnostics["keyring_timeout_seen"],
                 "image_probe_failed": bool(
                     image_probe
                     and (
@@ -296,6 +365,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Probe Antigravity CLI review migration capabilities.")
     parser.add_argument("--agy-bin", default="agy", help="agy executable name or absolute path")
     parser.add_argument("--settings-path", default=str(DEFAULT_SETTINGS_PATH), help="Antigravity settings.json path")
+    parser.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR), help="Antigravity CLI log directory")
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="Directory for JSON probe reports")
     parser.add_argument("--print-timeout", default="5m", help="Value passed to agy --print-timeout")
     parser.add_argument("--command-timeout", type=int, default=30, help="Timeout for version/help commands in seconds")

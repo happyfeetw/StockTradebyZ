@@ -45,9 +45,11 @@ EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECAS
 AUTH_LOG_MARKER_RE = re.compile(
     r"("
     r"keyringAuth: timed out|"
+    r"authenticated via keyring|"
     r"failed to persist token|"
     r"Print mode: not authenticated|"
     r"Print mode: silent auth failed|"
+    r"Print mode: silent auth succeeded|"
     r"Print mode: auth timed out|"
     r"token exchange failed|"
     r"Invalid code verifier"
@@ -185,12 +187,20 @@ def _inspect_settings(settings_path: Path) -> dict[str, Any]:
     return info
 
 
-def _collect_auth_log_diagnostics(log_dir: Path, max_files: int = 8, max_lines: int = 80) -> dict[str, Any]:
+def _collect_auth_log_diagnostics(
+    log_dir: Path,
+    max_files: int = 8,
+    max_lines: int = 80,
+    since_epoch: float | None = None,
+) -> dict[str, Any]:
     info: dict[str, Any] = {
         "path": str(log_dir),
         "exists": log_dir.exists(),
+        "since_epoch": since_epoch,
         "markers": [],
         "keyring_timeout_seen": False,
+        "keyring_success_seen": False,
+        "silent_auth_success_seen": False,
         "error": "",
     }
     if not log_dir.exists():
@@ -204,6 +214,8 @@ def _collect_auth_log_diagnostics(log_dir: Path, max_files: int = 8, max_lines: 
         )[:max_files]
         markers: list[dict[str, Any]] = []
         for log_file in log_files:
+            if since_epoch is not None and log_file.stat().st_mtime < since_epoch - 2:
+                continue
             try:
                 lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
@@ -221,6 +233,10 @@ def _collect_auth_log_diagnostics(log_dir: Path, max_files: int = 8, max_lines: 
                 )
                 if "keyringAuth: timed out" in line:
                     info["keyring_timeout_seen"] = True
+                if "authenticated via keyring" in line:
+                    info["keyring_success_seen"] = True
+                if "Print mode: silent auth succeeded" in line:
+                    info["silent_auth_success_seen"] = True
                 if len(markers) >= max_lines:
                     break
             if len(markers) >= max_lines:
@@ -250,6 +266,7 @@ def _has_auth_marker(raw: dict[str, Any] | None) -> bool:
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     agy_bin = _resolve_binary(args.agy_bin)
     generated_at = dt.datetime.now(dt.UTC).isoformat()
+    probe_started_epoch = time.time()
 
     with tempfile.TemporaryDirectory(prefix="stocktradebyz-agy-probe-") as tmp:
         probe_cwd = Path(tmp)
@@ -257,7 +274,6 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         help_result = _run_command([agy_bin, "--help"], cwd=probe_cwd, timeout_seconds=args.command_timeout)
         help_text = str(help_result.get("stdout", "")) + "\n" + str(help_result.get("stderr", ""))
         capabilities = _collect_cli_capabilities(help_text)
-        auth_log_diagnostics = _collect_auth_log_diagnostics(Path(args.log_dir).expanduser())
 
         json_probe: dict[str, Any] | None = None
         if not args.skip_json_probe and capabilities["has_print"]:
@@ -317,6 +333,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             image_probe["json_parse_error"] = image_parse_error
             image_probe["authentication_required"] = _has_auth_marker(image_probe)
 
+        auth_log_diagnostics = _collect_auth_log_diagnostics(Path(args.log_dir).expanduser())
+        current_run_auth_log_diagnostics = _collect_auth_log_diagnostics(
+            Path(args.log_dir).expanduser(),
+            since_epoch=probe_started_epoch,
+        )
+
         report = {
             "generated_at": generated_at,
             "agy_bin": agy_bin,
@@ -330,6 +352,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "capabilities": capabilities,
             "settings": _inspect_settings(Path(args.settings_path).expanduser()),
             "auth_log_diagnostics": auth_log_diagnostics,
+            "current_run_auth_log_diagnostics": current_run_auth_log_diagnostics,
             "json_probe": _summarize_probe(json_probe) if json_probe else None,
             "image_probe": _summarize_probe(image_probe) if image_probe else None,
             "blocking": {
@@ -346,7 +369,10 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 ),
                 "authentication_required": _has_auth_marker(json_probe),
-                "keyring_auth_timeout_seen": auth_log_diagnostics["keyring_timeout_seen"],
+                "current_run_keyring_auth_timeout_seen": current_run_auth_log_diagnostics[
+                    "keyring_timeout_seen"
+                ],
+                "current_run_keyring_success_seen": current_run_auth_log_diagnostics["keyring_success_seen"],
                 "image_probe_failed": bool(
                     image_probe
                     and (

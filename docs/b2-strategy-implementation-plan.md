@@ -13,7 +13,7 @@ B2 不是单日大阳线策略，也不是 B1 的替代策略。它是 B1 后的
 1. `T-1` 或 `T-2` 满足系统 B1 条件。
 2. `T` 日 KDJ 的 `J` 值相对触发 B1 的那一天向上，即 `J_T > J_B1_day`。
 3. `T` 日 `J < 55`。
-4. `T` 日收盘涨幅大于 4%，即 `close_T / close_T-1 - 1 > 0.04`。
+4. `T` 日收盘涨幅大于等于 4%，即 `close_T / close_T-1 - 1 >= 0.04`。
 5. `T` 日必须是有实体阳线，过滤假阴真阳、十字星和极小实体阳线。
 6. `T` 日满足量能确认：
    - 正常放量：`volume_T > volume_T-1`。
@@ -94,14 +94,14 @@ wma_bull_T = true
 
 ### 强阳线条件
 
-`收盘涨幅 > 4%` 只能说明今日收盘相对昨日收盘上涨，不能证明今日 K 线本身是阳线。例如高开低走的假阴真阳也可能满足涨幅大于 4%。B2 的强阳确认必须同时检查当日实体阳线：
+`收盘涨幅 >= 4%` 只能说明今日收盘相对昨日收盘上涨，不能证明今日 K 线本身是阳线。例如高开低走的假阴真阳也可能满足涨幅门槛。B2 的强阳确认必须同时检查当日实体阳线：
 
 ```python
 daily_return = close_t / close_prev - 1
 today_body_pct = (close_t - open_t) / open_t
 
 price_confirm_ok = (
-    daily_return > min_return
+    daily_return >= min_return
     and close_t > open_t
     and today_body_pct >= min_today_body_pct
 )
@@ -151,7 +151,7 @@ flat_volume_ratio: 0.98
 
 ### 严格阳包阴
 
-阳包阴只在近似平量分支中启用。正常放量路径不要求阳包阴，但仍必须满足“当日有实体阳线”和“收盘涨幅大于 4%”。
+阳包阴只在近似平量分支中启用。正常放量路径不要求阳包阴，但仍必须满足“当日有实体阳线”和“收盘涨幅大于等于 4%”。
 
 严格阳包阴定义：
 
@@ -242,10 +242,10 @@ B2 的知行线、KDJ、周线参数继承 `b1` 段配置，确保 B1 前置和 
 
 ```python
 daily_return = close_t / close_prev - 1
-daily_return_ok = daily_return > min_return
+daily_return_ok = daily_return >= min_return
 ```
 
-注意使用严格大于 `>`，对应“涨幅大于 4%”。
+注意使用大于等于 `>=`，对应“涨幅大于等于 4%”。
 
 ### `BullBodyFilter`
 
@@ -520,8 +520,8 @@ J 拐头：
 3. `T-3` 满足 B1，`T` 不应满足 B2。
 4. `J_T <= J_B1_day` 不应满足 B2。
 5. `J_T >= 55` 不应满足 B2。
-6. 收盘涨幅大于 4%，但 `close_T <= open_T`，不应满足 B2。
-7. 收盘涨幅大于 4%，但实体小于 `min_today_body_pct`，不应满足 B2。
+6. 收盘涨幅大于等于 4%，但 `close_T <= open_T`，不应满足 B2。
+7. 收盘涨幅大于等于 4%，但实体小于 `min_today_body_pct`，不应满足 B2。
 8. 放量且实体阳线，通过量能确认，不要求阳包阴。
 9. 近似平量且严格阳包阴，通过量能确认。
 10. 近似平量但非严格阳包阴，不应满足 B2。

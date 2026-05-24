@@ -929,7 +929,7 @@ def render_strategy_config() -> None:
         b2 = cfg["b2"]
         b2["enabled"] = st.toggle("启用 B2", value=bool(b2.get("enabled", False)))
         b2["b1_lookback"] = st.number_input("B1 回看窗口", min_value=1, max_value=5, value=int(b2.get("b1_lookback", 2)))
-        b2["min_return"] = st.number_input("最低收盘涨幅", value=float(b2.get("min_return", 0.04)), step=0.005, format="%.3f")
+        b2["min_return"] = st.number_input("最低收盘涨幅", value=float(b2.get("min_return", 0.04)), step=0.001, format="%.4f")
         b2["min_today_body_pct"] = st.number_input("当日实体阳线阈值", value=float(b2.get("min_today_body_pct", 0.003)), step=0.001, format="%.3f")
         b2["j_ceiling"] = st.number_input("J 安全上限", value=float(b2.get("j_ceiling", 55.0)), step=1.0)
         b2["require_j_turn_up"] = st.toggle("要求 J 相对 B1 日拐头", value=bool(b2.get("require_j_turn_up", True)))

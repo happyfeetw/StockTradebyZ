@@ -782,8 +782,9 @@ class B1Selector(PipelineSelector):
 
 @dataclass(frozen=True)
 class DailyReturnFilter:
-    """当日收盘涨幅过滤：close / prev_close - 1 > min_return。"""
+    """当日收盘涨幅过滤：close / prev_close - 1 >= min_return。"""
     min_return: float = 0.04
+    tolerance: float = 1e-12
 
     def __call__(self, hist: pd.DataFrame) -> bool:
         if len(hist) < 2:
@@ -792,7 +793,7 @@ class DailyReturnFilter:
         prev_close = float(close.iloc[-2])
         if prev_close <= 0:
             return False
-        return float(close.iloc[-1]) / prev_close - 1.0 > self.min_return
+        return float(close.iloc[-1]) / prev_close - 1.0 >= self.min_return - self.tolerance
 
     def values(self, df: pd.DataFrame) -> np.ndarray:
         close = df["close"].to_numpy(dtype=float)
@@ -804,7 +805,7 @@ class DailyReturnFilter:
         return out - 1.0
 
     def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
-        return self.values(df) > self.min_return
+        return self.values(df) >= self.min_return - self.tolerance
 
 
 @dataclass(frozen=True)
@@ -961,7 +962,7 @@ class B2Selector(PipelineSelector):
     B2 选股器：
       ① T-1/T-2 满足系统 B1
       ② T 日 J 相对 B1 日拐头向上且 J < j_ceiling
-      ③ T 日涨幅 > min_return 且为实体阳线
+      ③ T 日涨幅 >= min_return 且为实体阳线
       ④ 放量，或近似平量且严格阳包阴
       ⑤ T 日满足知行线与周线多头基础趋势
     """

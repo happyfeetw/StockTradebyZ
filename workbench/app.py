@@ -10,6 +10,7 @@ import datetime as dt
 import importlib
 import json
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ from paper_trading.core import (  # noqa: E402
     plan_files,
     plan_path,
     portfolio_value,
+    required_signal_strategies,
     save_snapshot,
     trading_config,
     trading_dir,
@@ -68,6 +70,18 @@ def load_json(path: Path) -> dict[str, Any]:
         return {}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def review_key(code: str, strategy: str = "") -> str:
+    suffix = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(strategy or "").strip())
+    return f"{code}_{suffix}" if suffix else code
+
+
+def load_review_result(review_dir: Path, code: str, strategy: str = "") -> dict[str, Any]:
+    keyed = load_json(review_dir / f"{review_key(code, strategy)}.json")
+    if keyed:
+        return keyed
+    return load_json(review_dir / f"{code}.json")
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
@@ -246,15 +260,31 @@ def display_run_status(run_dir: Path | None) -> str:
 def strategy_preset(cfg: dict[str, Any], preset: str) -> dict[str, Any]:
     updated = json.loads(json.dumps(cfg))
     updated.setdefault("b1", {})
+    updated.setdefault("b2", {})
     updated.setdefault("brick", {})
     if preset == "B1 策略":
         updated["b1"]["enabled"] = True
+        updated["b2"]["enabled"] = False
+        updated["brick"]["enabled"] = False
+    elif preset == "B2 策略":
+        updated["b1"]["enabled"] = False
+        updated["b2"]["enabled"] = True
+        updated["brick"]["enabled"] = False
+    elif preset == "B1 + B2":
+        updated["b1"]["enabled"] = True
+        updated["b2"]["enabled"] = True
         updated["brick"]["enabled"] = False
     elif preset == "砖型图策略":
         updated["b1"]["enabled"] = False
+        updated["b2"]["enabled"] = False
         updated["brick"]["enabled"] = True
     elif preset == "B1 + 砖型图":
         updated["b1"]["enabled"] = True
+        updated["b2"]["enabled"] = False
+        updated["brick"]["enabled"] = True
+    elif preset == "B1 + B2 + 砖型图":
+        updated["b1"]["enabled"] = True
+        updated["b2"]["enabled"] = True
         updated["brick"]["enabled"] = True
     return updated
 
@@ -839,9 +869,14 @@ def render_strategy_config() -> None:
     cfg = st.session_state.rules_cfg
     cfg.setdefault("global", {})
     cfg.setdefault("b1", {})
+    cfg.setdefault("b2", {})
     cfg.setdefault("brick", {})
 
-    preset = st.selectbox("策略预设", ["B1 策略", "砖型图策略", "B1 + 砖型图", "自定义"], index=0)
+    preset = st.selectbox(
+        "策略预设",
+        ["B1 策略", "B2 策略", "B1 + B2", "砖型图策略", "B1 + 砖型图", "B1 + B2 + 砖型图", "自定义"],
+        index=0,
+    )
     if st.button("应用预设"):
         st.session_state.rules_cfg = strategy_preset(cfg, preset)
         st.rerun()
@@ -877,7 +912,7 @@ def render_strategy_config() -> None:
     with p2:
         g["output_dir"] = st.text_input("候选输出目录 output_dir", value=str(g.get("output_dir", "./data/candidates")))
 
-    left, right = st.columns(2, gap="large")
+    left, middle, right = st.columns(3, gap="large")
     with left:
         st.subheader("B1 策略参数")
         b1 = cfg["b1"]
@@ -888,6 +923,25 @@ def render_strategy_config() -> None:
         for idx, key in enumerate(["zx_m1", "zx_m2", "zx_m3", "zx_m4"]):
             with cols[idx]:
                 b1[key] = st.number_input(key, min_value=1, value=int(b1.get(key, [14, 28, 57, 114][idx])))
+
+    with middle:
+        st.subheader("B2 策略参数")
+        b2 = cfg["b2"]
+        b2["enabled"] = st.toggle("启用 B2", value=bool(b2.get("enabled", False)))
+        b2["b1_lookback"] = st.number_input("B1 回看窗口", min_value=1, max_value=5, value=int(b2.get("b1_lookback", 2)))
+        b2["min_return"] = st.number_input("最低收盘涨幅", value=float(b2.get("min_return", 0.04)), step=0.005, format="%.3f")
+        b2["min_today_body_pct"] = st.number_input("当日实体阳线阈值", value=float(b2.get("min_today_body_pct", 0.003)), step=0.001, format="%.3f")
+        b2["j_ceiling"] = st.number_input("J 安全上限", value=float(b2.get("j_ceiling", 55.0)), step=1.0)
+        b2["require_j_turn_up"] = st.toggle("要求 J 相对 B1 日拐头", value=bool(b2.get("require_j_turn_up", True)))
+        b2["volume_ratio_min"] = st.number_input("放量阈值", value=float(b2.get("volume_ratio_min", 1.0)), step=0.01, format="%.2f")
+        b2["flat_volume_ratio"] = st.number_input("平量阈值", value=float(b2.get("flat_volume_ratio", 0.98)), step=0.01, format="%.2f")
+        b2["min_yang_bao_yin_body_pct"] = st.number_input(
+            "阳包阴实体阈值",
+            value=float(b2.get("min_yang_bao_yin_body_pct", 0.003)),
+            step=0.001,
+            format="%.3f",
+        )
+        b2["upper_shadow_soft_limit"] = st.number_input("上影线软阈值", value=float(b2.get("upper_shadow_soft_limit", 0.15)), step=0.01, format="%.2f")
 
     with right:
         st.subheader("砖型图策略参数")
@@ -1065,14 +1119,17 @@ def result_rows() -> list[dict[str, Any]]:
         code = str(candidate.get("code") or "")
         if not code:
             continue
-        review = load_json(review_dir / f"{code}.json")
+        strategy = str(candidate.get("strategy") or "")
+        item_key = review_key(code, strategy)
+        review = load_review_result(review_dir, code, strategy)
         close = candidate.get("close")
         brick_growth = candidate.get("brick_growth")
         total_score = review.get("total_score")
         rows.append(
             {
                 "代码": code,
-                "策略": candidate.get("strategy") or "",
+                "策略": strategy,
+                "review_key": item_key,
                 "收盘价": float(close) if close is not None else None,
                 "brick_growth": float(brick_growth) if brick_growth is not None else None,
                 "结论": review.get("verdict") or "",
@@ -1081,9 +1138,13 @@ def result_rows() -> list[dict[str, Any]]:
                 "评论": review.get("comment") or "",
             }
         )
-    recommendation_codes = {item.get("code") for item in suggestion.get("recommendations", [])}
+    recommendation_keys = {
+        item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or ""))
+        for item in suggestion.get("recommendations", [])
+    }
     for row in rows:
-        row["推荐"] = "是" if row["代码"] in recommendation_codes else "否"
+        row["推荐"] = "是" if row["review_key"] in recommendation_keys else "否"
+        row.pop("review_key", None)
     return rows
 
 
@@ -1345,6 +1406,7 @@ def history_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def render_history_metrics(summary: dict[str, Any]) -> None:
     strategy_counts = summary.get("strategy_counts", {})
     b1_rec_count = strategy_counts.get("b1", {}).get("recommended", 0)
+    b2_rec_count = strategy_counts.get("b2", {}).get("recommended", 0)
     brick_rec_count = strategy_counts.get("brick", {}).get("recommended", 0)
     st.markdown(
         f"""
@@ -1352,7 +1414,7 @@ def render_history_metrics(summary: dict[str, Any]) -> None:
           <div class="metric-card"><div class="metric-label">归档日期</div><div class="metric-value">{summary.get("date", "无")}</div></div>
           <div class="metric-card"><div class="metric-label">候选 / 已复评</div><div class="metric-value">{summary.get("candidate_count", 0)} / {summary.get("reviewed_count", 0)}</div></div>
           <div class="metric-card"><div class="metric-label">推荐数量</div><div class="metric-value">{summary.get("recommended_count", 0)}</div></div>
-          <div class="metric-card"><div class="metric-label">B1 / 砖型图推荐</div><div class="metric-value">{b1_rec_count} / {brick_rec_count}</div></div>
+          <div class="metric-card"><div class="metric-label">B1 / B2 / 砖型图推荐</div><div class="metric-value">{b1_rec_count} / {b2_rec_count} / {brick_rec_count}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1393,11 +1455,23 @@ def render_history_center() -> None:
     table_df = pd.DataFrame(history_table_rows(rows))
     st.dataframe(table_df, width="stretch", hide_index=True)
 
-    codes = [str(row.get("code")) for row in rows if row.get("code")]
-    selected_code = st.selectbox("查看单票详情", codes)
-    selected_row = next((row for row in rows if str(row.get("code")) == selected_code), {})
+    options = [
+        f"{row.get('code')} · {row.get('strategy') or 'unknown'}"
+        for row in rows
+        if row.get("code")
+    ]
+    selected = st.selectbox("查看单票详情", options)
+    selected_row = next(
+        (
+            row
+            for row in rows
+            if f"{row.get('code')} · {row.get('strategy') or 'unknown'}" == selected
+        ),
+        {},
+    )
     if not selected_row:
         return
+    selected_code = str(selected_row.get("code") or "")
 
     left, right = st.columns([0.46, 0.54], gap="large")
     review = selected_row.get("review") or {}
@@ -1435,17 +1509,30 @@ def _load_raw(code: str) -> pd.DataFrame:
 def render_stock_view() -> None:
     st.title("单票复盘")
     candidates = load_candidates().get("candidates", [])
-    codes = [item["code"] for item in candidates if item.get("code")]
-    if not codes:
+    options = [
+        f"{item['code']} · {item.get('strategy') or 'unknown'}"
+        for item in candidates
+        if item.get("code")
+    ]
+    if not options:
         st.warning("还没有候选股票。")
         return
-    selected = st.selectbox("选择股票", codes)
-    candidate = next((item for item in candidates if item.get("code") == selected), {})
+    selected = st.selectbox("选择股票", options)
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if f"{item['code']} · {item.get('strategy') or 'unknown'}" == selected
+        ),
+        {},
+    )
+    selected_code = str(candidate.get("code") or "")
+    selected_strategy = str(candidate.get("strategy") or "")
     pick_date = latest_pick_date()
-    review = load_json(ROOT / "data" / "review" / pick_date / f"{selected}.json")
-    df = _load_raw(selected)
+    review = load_review_result(ROOT / "data" / "review" / pick_date, selected_code, selected_strategy)
+    df = _load_raw(selected_code)
     if df.empty:
-        st.error(f"未找到 data/raw/{selected}.csv")
+        st.error(f"未找到 data/raw/{selected_code}.csv")
         return
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1454,8 +1541,8 @@ def render_stock_view() -> None:
     c3.metric("Gemini 结论", review.get("verdict", "未复评"))
     c4.metric("总分", review.get("total_score", ""))
 
-    st.plotly_chart(make_daily_chart(df, selected, bars=120, height=620), width="stretch", config={"scrollZoom": True})
-    st.plotly_chart(make_weekly_chart(df, selected, height=460), width="stretch", config={"scrollZoom": True})
+    st.plotly_chart(make_daily_chart(df, selected_code, bars=120, height=620), width="stretch", config={"scrollZoom": True})
+    st.plotly_chart(make_weekly_chart(df, selected_code, height=460), width="stretch", config={"scrollZoom": True})
 
     if review:
         st.subheader("复评摘要")
@@ -1570,11 +1657,12 @@ def plan_table(plan: dict[str, Any]) -> pd.DataFrame:
 def render_paper_flow_tab(cfg: dict[str, Any]) -> None:
     running = active_run_dir()
     target_date = clean_text(st.session_state.run_cfg.get("pick_date")) or dt.date.today().isoformat()
-    complete = complete_history_result(target_date)
+    complete = complete_history_result(target_date, cfg)
+    required = " + ".join(required_signal_strategies(cfg))
     c1, c2 = st.columns([0.35, 0.65], gap="large")
     with c1:
         st.subheader("今日模拟流程")
-        st.caption(f"目标信号日：{target_date}；当日完整归档：{'已存在' if complete else '未发现'}")
+        st.caption(f"目标信号日：{target_date}；必需策略：{required}；当日完整归档：{'已存在' if complete else '未发现'}")
         if running:
             state = run_state(running)
             st.info(f"{active_run_label(running)}任务运行中：{state.get('current_step') or '启动中'}")

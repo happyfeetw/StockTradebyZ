@@ -22,6 +22,19 @@ b1:
   j_threshold: 15.0
   j_q_threshold: 0.10
 
+# ── B2 策略参数（B1 后强阳确认） ────────────────────────────────────
+b2:
+  enabled: false
+  b1_lookback: 2                  # 前置 B1 窗口：T-1 或 T-2 需满足 B1
+  min_return: 0.04                # 当日收盘涨幅必须大于 4%
+  min_today_body_pct: 0.003       # 当日实体阳线最小实体比例，过滤假阴真阳/十字星
+  j_ceiling: 55.0                 # B2 当日 J 值安全上限
+  require_j_turn_up: true         # B2 当日 J 必须相对触发 B1 日拐头向上
+  volume_ratio_min: 1.0           # 正常放量阈值：volume_T > volume_T-1
+  flat_volume_ratio: 0.98         # 近似平量阈值；平量时必须严格阳包阴
+  min_yang_bao_yin_body_pct: 0.003
+  upper_shadow_soft_limit: 0.15   # 上影线软降分阈值，不做硬过滤
+
 # ── 砖型图（BrickChart）策略参数 ──────────────────────────────────────
 brick:
   enabled: false

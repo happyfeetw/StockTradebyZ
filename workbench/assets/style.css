@@ -270,6 +270,11 @@ section[data-testid="stSidebar"] h3 {
   color: #174a96;
 }
 
+.tag.b2 {
+  background: #ffe5d2;
+  color: #8a3b12;
+}
+
 .tag.brick {
   background: #e5e9ef;
   color: #39424e;

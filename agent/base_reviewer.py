@@ -41,6 +41,25 @@ class BaseReviewer:
         return day_chart
 
     @staticmethod
+    def review_key(code: str, strategy: str = "") -> str:
+        suffix = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(strategy or "").strip())
+        return f"{code}_{suffix}" if suffix else code
+
+    @classmethod
+    def candidate_review_key(cls, candidate: dict) -> str:
+        return cls.review_key(str(candidate.get("code") or ""), str(candidate.get("strategy") or ""))
+
+    @classmethod
+    def result_review_key(cls, result: dict) -> str:
+        if result.get("review_key"):
+            return str(result["review_key"])
+        return cls.review_key(str(result.get("code") or ""), str(result.get("strategy") or ""))
+
+    @classmethod
+    def review_file(cls, out_dir: Path, code: str, strategy: str = "") -> Path:
+        return out_dir / f"{cls.review_key(code, strategy)}.json"
+
+    @staticmethod
     def extract_json(text: str) -> dict:
         code_block = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if code_block:
@@ -63,27 +82,28 @@ class BaseReviewer:
         candidates: List[dict] | None = None,
     ) -> dict:
         candidates = candidates or []
-        code_to_strategy = {
-            str(candidate.get("code")): str(candidate.get("strategy") or "")
+        key_to_strategy = {
+            self.candidate_review_key(candidate): str(candidate.get("strategy") or "")
             for candidate in candidates
             if candidate.get("code")
         }
-        result_by_code = {str(result.get("code")): result for result in all_results if result.get("code")}
+        result_by_key = {self.result_review_key(result): result for result in all_results if result.get("code")}
         passed = [r for r in all_results if r.get("total_score", 0) >= min_score]
-        excluded = [r["code"] for r in all_results if r.get("total_score", 0) < min_score]
+        excluded = [self.result_review_key(r) for r in all_results if r.get("total_score", 0) < min_score]
 
         strategy_counts: dict[str, dict[str, int]] = {}
         for candidate in candidates:
             code = str(candidate.get("code") or "")
             if not code:
                 continue
+            review_key = self.candidate_review_key(candidate)
             strategy = str(candidate.get("strategy") or "unknown")
             counts = strategy_counts.setdefault(
                 strategy,
                 {"total": 0, "reviewed": 0, "recommended": 0, "excluded": 0, "pending": 0},
             )
             counts["total"] += 1
-            result = result_by_code.get(code)
+            result = result_by_key.get(review_key)
             if not result:
                 counts["pending"] += 1
                 continue
@@ -99,7 +119,8 @@ class BaseReviewer:
             {
                 "rank": i + 1,
                 "code": r["code"],
-                "strategy": r.get("strategy") or code_to_strategy.get(str(r.get("code")), ""),
+                "strategy": r.get("strategy") or key_to_strategy.get(self.result_review_key(r), ""),
+                "review_key": self.result_review_key(r),
                 "verdict": r.get("verdict", ""),
                 "total_score": r.get("total_score", 0),
                 "signal_type": r.get("signal_type", ""),
@@ -131,10 +152,12 @@ class BaseReviewer:
 
         for i, candidate in enumerate(candidates, 1):
             code: str = candidate["code"]
-            out_file = out_dir / f"{code}.json"
+            strategy = str(candidate.get("strategy") or "")
+            review_key = self.review_key(code, strategy)
+            out_file = self.review_file(out_dir, code, strategy)
 
             if self.config.get("skip_existing", False) and out_file.exists():
-                print(f"[{i}/{len(candidates)}] {code} — 已存在，跳过。")
+                print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
                 with open(out_file, encoding="utf-8") as f:
                     result = json.load(f)
                 all_results.append(result)
@@ -142,11 +165,11 @@ class BaseReviewer:
 
             day_chart = self.find_chart_images(pick_date, code)
             if day_chart is None:
-                print(f"[{i}/{len(candidates)}] {code} — 缺少日线图，跳过。")
-                failed_codes.append(code)
+                print(f"[{i}/{len(candidates)}] {review_key} — 缺少日线图，跳过。")
+                failed_codes.append(review_key)
                 continue
 
-            print(f"[{i}/{len(candidates)}] {code} — 正在分析 ...", end=" ", flush=True)
+            print(f"[{i}/{len(candidates)}] {review_key} — 正在分析 ...", end=" ", flush=True)
 
             try:
                 result = self.review_stock(
@@ -154,7 +177,8 @@ class BaseReviewer:
                     day_chart=day_chart,
                     prompt=self.prompt,
                 )
-                result["strategy"] = candidate.get("strategy") or result.get("strategy", "")
+                result["strategy"] = strategy or result.get("strategy", "")
+                result["review_key"] = review_key
                 with open(out_file, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 all_results.append(result)
@@ -163,7 +187,7 @@ class BaseReviewer:
                 print(f"完成 — verdict={verdict}, score={score}")
             except Exception as e:
                 print(f"失败 — {e}")
-                failed_codes.append(code)
+                failed_codes.append(review_key)
 
             if i < len(candidates):
                 time.sleep(self.config.get("request_delay", 5))

@@ -15,7 +15,7 @@ gemini_review.py
     GEMINI_API_KEY  —— Google Gemini API Key（必填）
 
 输出：
-    ./data/review/{pick_date}/{code}.json   每支股票的评分 JSON
+    ./data/review/{pick_date}/{code}_{strategy}.json   每个候选的评分 JSON
     ./data/review/{pick_date}/suggestion.json  汇总推荐建议
 """
 

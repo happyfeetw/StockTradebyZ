@@ -18,6 +18,9 @@ suggest_min_score: 4.0
 auto_confirm_generated_plan: false
 auto_execute_confirmed_plan: false
 signal_refresh_after_time: "16:00"
+required_signal_strategies:
+  - b1
+  - brick
 trade_calendar_provider: tushare
 trade_calendar_path: data/trading/trading_calendar.json
 trade_calendar_lookahead_days: 120

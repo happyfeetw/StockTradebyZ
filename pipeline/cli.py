@@ -39,6 +39,8 @@ def _enabled_strategies(config_path: str | None) -> list[str]:
     strategies: list[str] = []
     if cfg.get("b1", {}).get("enabled", True):
         strategies.append("b1")
+    if cfg.get("b2", {}).get("enabled", False):
+        strategies.append("b2")
     if cfg.get("brick", {}).get("enabled", True):
         strategies.append("brick")
     return strategies

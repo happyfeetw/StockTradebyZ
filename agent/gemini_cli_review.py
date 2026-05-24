@@ -11,7 +11,7 @@ gemini_cli_review.py
     gemini CLI 已安装，并已在本机完成账号登录。
 
 输出：
-    ./data/review/{pick_date}/{code}.json
+    ./data/review/{pick_date}/{code}_{strategy}.json
     ./data/review/{pick_date}/suggestion.json
 """
 
@@ -428,9 +428,8 @@ class GeminiCliReviewer(BaseReviewer):
             return False, f"已达到每日请求预算 daily_request_budget={self.config.get('daily_request_budget')}"
         return True, ""
 
-    @staticmethod
-    def _iter_pending_codes(candidates: Iterable[dict]) -> list[str]:
-        return [str(candidate.get("code", "")) for candidate in candidates if candidate.get("code")]
+    def _iter_pending_codes(self, candidates: Iterable[dict]) -> list[str]:
+        return [self.candidate_review_key(candidate) for candidate in candidates if candidate.get("code")]
 
     def _validate_chart_for_cli(self, source: Path, code: str) -> None:
         image_size = source.stat().st_size
@@ -493,6 +492,8 @@ class GeminiCliReviewer(BaseReviewer):
         ]
         for index, item in enumerate(items, 1):
             lines.append(f"{index}. 股票代码：{item['code']}")
+            if item.get("strategy"):
+                lines.append(f"   来源策略：{item['strategy']}")
             lines.append(f"   日线图：{item['chart_ref']}")
 
         lines.extend(
@@ -816,7 +817,7 @@ class GeminiCliReviewer(BaseReviewer):
             self._validate_chart_for_cli(day_chart, item["code"])
             chart_ref = self._chart_ref_for_cli(day_chart, cwd)
             image_paths.append(day_chart)
-            prompt_items.append({"code": item["code"], "chart_ref": chart_ref})
+            prompt_items.append({"code": item["code"], "strategy": item.get("strategy") or "", "chart_ref": chart_ref})
 
         prompt_text = self._build_batch_prompt(items=prompt_items, prompt=prompt)
         cmd = self._build_command()
@@ -934,7 +935,7 @@ class GeminiCliReviewer(BaseReviewer):
 
     @staticmethod
     def _codes(items: list[dict[str, Any]]) -> list[str]:
-        return [str(item["code"]) for item in items]
+        return [str(item.get("review_key") or item["code"]) for item in items]
 
     def _review_single_items(
         self,
@@ -950,6 +951,7 @@ class GeminiCliReviewer(BaseReviewer):
 
         for offset, item in enumerate(items):
             code = item["code"]
+            review_key = str(item.get("review_key") or code)
             attempt = 0
 
             while True:
@@ -959,14 +961,15 @@ class GeminiCliReviewer(BaseReviewer):
                     print(f"[STOP] {reason}")
                     break
 
-                print(f"[{item['index']}/{total_candidates}] {code} — Gemini CLI 正在分析 ...", end=" ", flush=True)
+                print(f"[{item['index']}/{total_candidates}] {review_key} — Gemini CLI 正在分析 ...", end=" ", flush=True)
                 try:
                     result = self.review_stock(code=code, day_chart=item["day_chart"], prompt=self.prompt)
                     result["strategy"] = item.get("strategy") or result.get("strategy", "")
+                    result["review_key"] = review_key
                     self._write_stock_result(item, result)
                     all_results.append(result)
                     print(f"完成 — {self._format_result_status(result)}")
-                    self._write_checkpoint(status="stock_done", codes=[code], message=self._format_result_status(result))
+                    self._write_checkpoint(status="stock_done", codes=[review_key], message=self._format_result_status(result))
                     break
                 except GeminiCliRateLimitError as exc:
                     print(f"限流/容量错误 — {str(exc)[:500]}")
@@ -975,19 +978,19 @@ class GeminiCliReviewer(BaseReviewer):
                         attempt += 1
                         self._sleep_before_retry(
                             delay,
-                            f"[INFO] {code} 命中限流/容量不足，重试 {attempt}/{len(retry_delays)}",
-                            codes=[code],
+                            f"[INFO] {review_key} 命中限流/容量不足，重试 {attempt}/{len(retry_delays)}",
+                            codes=[review_key],
                             attempt=attempt,
                         )
                         continue
-                    failed_codes.append(code)
+                    failed_codes.append(review_key)
                     if self.config.get("stop_on_rate_limit", True):
                         stop_reason = "Gemini CLI 命中限流或额度限制"
                     else:
-                        print(f"[WARN] {code} 达到限流重试上限，跳过该股并继续。")
+                        print(f"[WARN] {review_key} 达到限流重试上限，跳过该候选并继续。")
                     break
                 except GeminiCliCredentialError as exc:
-                    failed_codes.append(code)
+                    failed_codes.append(review_key)
                     stop_reason = str(exc)
                     print(f"凭证错误 — {stop_reason}")
                     break
@@ -999,13 +1002,13 @@ class GeminiCliReviewer(BaseReviewer):
                         print(f"失败 — {_transient_error_label(message)}: {message[:500]}")
                         self._sleep_before_retry(
                             delay,
-                            f"[INFO] {code} {_transient_error_label(message)}，重试 {attempt}/{len(retry_delays)}",
-                            codes=[code],
+                            f"[INFO] {review_key} {_transient_error_label(message)}，重试 {attempt}/{len(retry_delays)}",
+                            codes=[review_key],
                             attempt=attempt,
                         )
                         continue
                     print(f"失败 — {exc}")
-                    failed_codes.append(code)
+                    failed_codes.append(review_key)
                     break
 
             if stop_reason:
@@ -1049,6 +1052,10 @@ class GeminiCliReviewer(BaseReviewer):
                 results = self.review_batch(items=items, prompt=self.prompt)
                 for item, result in zip(items, results):
                     result["strategy"] = item.get("strategy") or result.get("strategy", "")
+                    result["review_key"] = item.get("review_key") or self.review_key(
+                        str(result.get("code") or item["code"]),
+                        str(result.get("strategy") or ""),
+                    )
                     self._write_stock_result(item, result)
                 print("完成")
                 for result in results:
@@ -1155,28 +1162,30 @@ class GeminiCliReviewer(BaseReviewer):
 
         for i, candidate in enumerate(candidates, 1):
             code: str = candidate["code"]
-            out_file = out_dir / f"{code}.json"
+            strategy = str(candidate.get("strategy") or "")
+            review_key = self.review_key(code, strategy)
+            out_file = self.review_file(out_dir, code, strategy)
 
             if self.config.get("skip_existing", False) and out_file.exists():
                 with open(out_file, encoding="utf-8") as f:
                     result = json.load(f)
                 if result.get("reviewer") == "gemini-cli":
-                    print(f"[{i}/{len(candidates)}] {code} — 已存在，跳过。")
+                    print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
                     all_results.append(result)
-                    self._write_checkpoint(status="skip_existing", codes=[code], message="已存在 gemini-cli 结果")
+                    self._write_checkpoint(status="skip_existing", codes=[review_key], message="已存在 gemini-cli 结果")
                     continue
-                print(f"[{i}/{len(candidates)}] {code} — 已有非 gemini-cli 结果，重新复评。")
+                print(f"[{i}/{len(candidates)}] {review_key} — 已有非 gemini-cli 结果，重新复评。")
 
             day_chart = self.find_chart_images(pick_date, code)
             if day_chart is None:
-                print(f"[{i}/{len(candidates)}] {code} — 缺少日线图，跳过。")
-                failed_codes.append(code)
+                print(f"[{i}/{len(candidates)}] {review_key} — 缺少日线图，跳过。")
+                failed_codes.append(review_key)
                 continue
             try:
                 item_estimated_tokens = estimate_image_tokens(day_chart) + ESTIMATED_OUTPUT_TOKENS_PER_STOCK
             except Exception as exc:
-                print(f"[{i}/{len(candidates)}] {code} — 图片 token 估算失败，跳过：{exc}")
-                failed_codes.append(code)
+                print(f"[{i}/{len(candidates)}] {review_key} — 图片 token 估算失败，跳过：{exc}")
+                failed_codes.append(review_key)
                 continue
 
             if review_batch and review_batch_estimated_tokens + item_estimated_tokens > MAX_CONTEXT_TOKENS:
@@ -1203,7 +1212,8 @@ class GeminiCliReviewer(BaseReviewer):
                 {
                     "index": i,
                     "code": code,
-                    "strategy": candidate.get("strategy") or "",
+                    "strategy": strategy,
+                    "review_key": review_key,
                     "day_chart": day_chart,
                     "out_file": out_file,
                 }
@@ -1257,7 +1267,7 @@ class GeminiCliReviewer(BaseReviewer):
             min_score=min_score,
             candidates=candidates,
         )
-        reviewed_codes = {str(item.get("code")) for item in all_results}
+        reviewed_codes = {self.result_review_key(item) for item in all_results}
         pending_codes = [code for code in self._iter_pending_codes(candidates) if code not in reviewed_codes]
         suggestion.update(
             {

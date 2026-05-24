@@ -19,6 +19,7 @@ Selector.py — 模块化、向量化、Numba 加速选股框架
 Selector 一览
 -------------
 - ``B1Selector``          KDJ 分位 + 知行线 + 周线多头排列
+- ``B2Selector``          B1 后强阳 + 量能确认 + J 拐头
 - ``BrickChartSelector``  砖型图形态 + 知行线 + 周线多头排列
 """
 from __future__ import annotations
@@ -28,7 +29,13 @@ from typing import Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
 import pandas as pd
-from numba import njit as _njit
+try:
+    from numba import njit as _njit
+except ImportError:
+    def _njit(*args, **kwargs):
+        if args and callable(args[0]):
+            return args[0]
+        return lambda func: func
 
 # =============================================================================
 # Numba 加速核心函数
@@ -767,6 +774,364 @@ class B1Selector(PipelineSelector):
             _b1_vec_filters.append(self._max_vol_filter)
         df["_vec_pick"] = _apply_vec_filters(df, _b1_vec_filters)
         return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B2Selector
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class DailyReturnFilter:
+    """当日收盘涨幅过滤：close / prev_close - 1 > min_return。"""
+    min_return: float = 0.04
+
+    def __call__(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < 2:
+            return False
+        close = hist["close"].astype(float)
+        prev_close = float(close.iloc[-2])
+        if prev_close <= 0:
+            return False
+        return float(close.iloc[-1]) / prev_close - 1.0 > self.min_return
+
+    def values(self, df: pd.DataFrame) -> np.ndarray:
+        close = df["close"].to_numpy(dtype=float)
+        prev_close = np.empty_like(close)
+        prev_close[0] = np.nan
+        prev_close[1:] = close[:-1]
+        out = np.full(len(close), np.nan, dtype=float)
+        np.divide(close, prev_close, out=out, where=prev_close > 0)
+        return out - 1.0
+
+    def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        return self.values(df) > self.min_return
+
+
+@dataclass(frozen=True)
+class BullBodyFilter:
+    """当日必须是有实体阳线，过滤假阴真阳和十字星。"""
+    min_body_pct: float = 0.003
+
+    def __call__(self, hist: pd.DataFrame) -> bool:
+        if hist.empty:
+            return False
+        row = hist.iloc[-1]
+        open_ = float(row["open"])
+        close = float(row["close"])
+        if open_ <= 0 or not close > open_:
+            return False
+        return (close - open_) / open_ >= self.min_body_pct
+
+    def values(self, df: pd.DataFrame) -> np.ndarray:
+        open_ = df["open"].to_numpy(dtype=float)
+        close = df["close"].to_numpy(dtype=float)
+        out = np.full(len(df), np.nan, dtype=float)
+        np.divide(close - open_, open_, out=out, where=open_ > 0)
+        return out
+
+    def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        open_ = df["open"].to_numpy(dtype=float)
+        close = df["close"].to_numpy(dtype=float)
+        return (close > open_) & (self.values(df) >= self.min_body_pct)
+
+
+@dataclass(frozen=True)
+class JValueCeilingFilter:
+    """KDJ J 值必须低于安全上限。"""
+    j_ceiling: float = 55.0
+    kdj_n: int = 9
+
+    def _j_series(self, hist: pd.DataFrame) -> pd.Series:
+        if "J" in hist.columns:
+            return hist["J"].astype(float)
+        return compute_kdj(hist, n=self.kdj_n)["J"].astype(float)
+
+    def __call__(self, hist: pd.DataFrame) -> bool:
+        if hist.empty:
+            return False
+        j = self._j_series(hist).dropna()
+        return bool(not j.empty and float(j.iloc[-1]) < self.j_ceiling)
+
+    def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        return self._j_series(df).to_numpy(dtype=float) < self.j_ceiling
+
+
+@dataclass(frozen=True)
+class VolumeConfirmFilter:
+    """放量通过；近似平量时必须由严格阳包阴补偿。"""
+    volume_ratio_min: float = 1.0
+    flat_volume_ratio: float = 0.98
+    min_today_body_pct: float = 0.003
+    min_yang_bao_yin_body_pct: float = 0.003
+
+    def volume_ratio_arr(self, df: pd.DataFrame) -> np.ndarray:
+        volume = df["volume"].to_numpy(dtype=float)
+        prev_volume = np.empty_like(volume)
+        prev_volume[0] = np.nan
+        prev_volume[1:] = volume[:-1]
+        out = np.full(len(df), np.nan, dtype=float)
+        np.divide(volume, prev_volume, out=out, where=prev_volume > 0)
+        return out
+
+    def strict_yang_bao_yin_arr(self, df: pd.DataFrame) -> np.ndarray:
+        open_ = df["open"].to_numpy(dtype=float)
+        close = df["close"].to_numpy(dtype=float)
+
+        prev_open = np.empty_like(open_)
+        prev_close = np.empty_like(close)
+        prev_open[0] = np.nan
+        prev_close[0] = np.nan
+        prev_open[1:] = open_[:-1]
+        prev_close[1:] = close[:-1]
+
+        prev_body_pct = np.full(len(df), np.nan, dtype=float)
+        np.divide(prev_open - prev_close, prev_close, out=prev_body_pct, where=prev_close > 0)
+
+        today_body_pct = np.full(len(df), np.nan, dtype=float)
+        np.divide(close - open_, open_, out=today_body_pct, where=open_ > 0)
+
+        prev_bear_body_ok = (
+            (prev_close < prev_open)
+            & (prev_body_pct >= self.min_yang_bao_yin_body_pct)
+        )
+        today_bull_body_ok = (
+            (close > open_)
+            & (today_body_pct >= self.min_today_body_pct)
+        )
+        return (
+            prev_bear_body_ok
+            & today_bull_body_ok
+            & (open_ <= prev_close)
+            & (close >= prev_open)
+        )
+
+    def __call__(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < 2:
+            return False
+        prepared = hist.tail(2)
+        return bool(self.vec_mask(prepared)[-1])
+
+    def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        volume_ratio = self.volume_ratio_arr(df)
+        vol_up = volume_ratio > self.volume_ratio_min
+        vol_flat = volume_ratio >= self.flat_volume_ratio
+        return vol_up | (vol_flat & self.strict_yang_bao_yin_arr(df))
+
+
+@dataclass(frozen=True)
+class RecentB1PickFilter:
+    """检查 T-1/T-2 等前置窗口是否出现 B1 信号，并取最近一天。"""
+    lookback: int = 2
+
+    def prior_lag_arr(self, df: pd.DataFrame) -> np.ndarray:
+        if "_b1_pick" not in df.columns:
+            raise KeyError("RecentB1PickFilter requires precomputed '_b1_pick'.")
+        b1_pick = df["_b1_pick"].to_numpy(dtype=bool)
+        out = np.zeros(len(df), dtype=np.int16)
+        for lag in range(1, self.lookback + 1):
+            shifted = np.zeros(len(df), dtype=bool)
+            shifted[lag:] = b1_pick[:-lag]
+            fill = (out == 0) & shifted
+            out[fill] = lag
+        return out
+
+    def prior_j_arr(self, df: pd.DataFrame, prior_lag: np.ndarray) -> np.ndarray:
+        if "J" not in df.columns:
+            raise KeyError("RecentB1PickFilter requires precomputed 'J'.")
+        j_vals = df["J"].to_numpy(dtype=float)
+        out = np.full(len(df), np.nan, dtype=float)
+        for lag in range(1, self.lookback + 1):
+            mask = prior_lag == lag
+            shifted_j = np.full(len(df), np.nan, dtype=float)
+            shifted_j[lag:] = j_vals[:-lag]
+            out[mask] = shifted_j[mask]
+        return out
+
+    def __call__(self, hist: pd.DataFrame) -> bool:
+        if len(hist) < self.lookback + 1:
+            return False
+        return bool(self.vec_mask(hist)[-1])
+
+    def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        return self.prior_lag_arr(df) > 0
+
+
+class B2Selector(PipelineSelector):
+    """
+    B2 选股器：
+      ① T-1/T-2 满足系统 B1
+      ② T 日 J 相对 B1 日拐头向上且 J < j_ceiling
+      ③ T 日涨幅 > min_return 且为实体阳线
+      ④ 放量，或近似平量且严格阳包阴
+      ⑤ T 日满足知行线与周线多头基础趋势
+    """
+
+    def __init__(
+        self,
+        *,
+        # B1 继承参数
+        j_threshold: float = 15.0,
+        j_q_threshold: float = 0.10,
+        kdj_n: int = 9,
+        zx_m1: int = 14,
+        zx_m2: int = 28,
+        zx_m3: int = 57,
+        zx_m4: int = 114,
+        zxdq_span: int = 10,
+        wma_short: int = 10,
+        wma_mid: int = 20,
+        wma_long: int = 30,
+        max_vol_lookback: Optional[int] = 20,
+        # B2 参数
+        b1_lookback: int = 2,
+        min_return: float = 0.04,
+        min_today_body_pct: float = 0.003,
+        j_ceiling: float = 55.0,
+        require_j_turn_up: bool = True,
+        volume_ratio_min: float = 1.0,
+        flat_volume_ratio: float = 0.98,
+        min_yang_bao_yin_body_pct: float = 0.003,
+        upper_shadow_soft_limit: float = 0.15,
+        date_col: str = "date",
+        extra_bars_buffer: int = 20,
+    ) -> None:
+        self._b1_kdj_filter = KDJQuantileFilter(
+            j_threshold=j_threshold,
+            j_q_threshold=j_q_threshold,
+            kdj_n=kdj_n,
+        )
+        self._zx_filter = ZXConditionFilter(
+            zx_m1=zx_m1,
+            zx_m2=zx_m2,
+            zx_m3=zx_m3,
+            zx_m4=zx_m4,
+            zxdq_span=zxdq_span,
+            require_close_gt_long=True,
+            require_short_gt_long=True,
+        )
+        self._wma_filter = WeeklyMABullFilter(
+            wma_short=wma_short,
+            wma_mid=wma_mid,
+            wma_long=wma_long,
+        )
+        self._max_vol_filter = MaxVolNotBearishFilter(n=max_vol_lookback) if max_vol_lookback else None
+        self._daily_return_filter = DailyReturnFilter(min_return=min_return)
+        self._bull_body_filter = BullBodyFilter(min_body_pct=min_today_body_pct)
+        self._j_ceiling_filter = JValueCeilingFilter(j_ceiling=j_ceiling, kdj_n=kdj_n)
+        self._volume_filter = VolumeConfirmFilter(
+            volume_ratio_min=volume_ratio_min,
+            flat_volume_ratio=flat_volume_ratio,
+            min_today_body_pct=min_today_body_pct,
+            min_yang_bao_yin_body_pct=min_yang_bao_yin_body_pct,
+        )
+        self._recent_b1_filter = RecentB1PickFilter(lookback=b1_lookback)
+        super().__init__(
+            filters=[],
+            date_col=date_col,
+            min_bars=max(30, zx_m4, wma_long * 5),
+            extra_bars_buffer=extra_bars_buffer + b1_lookback,
+        )
+        self.kdj_n = kdj_n
+        self.zx_m1, self.zx_m2, self.zx_m3, self.zx_m4 = zx_m1, zx_m2, zx_m3, zx_m4
+        self.zxdq_span = zxdq_span
+        self.wma_short, self.wma_mid, self.wma_long = wma_short, wma_mid, wma_long
+        self.require_j_turn_up = require_j_turn_up
+        self.upper_shadow_soft_limit = upper_shadow_soft_limit
+
+    def _b1_pick_mask(self, df: pd.DataFrame) -> np.ndarray:
+        filters: list = [self._b1_kdj_filter, self._zx_filter, self._wma_filter]
+        if self._max_vol_filter is not None:
+            filters.append(self._max_vol_filter)
+        return _apply_vec_filters(df, filters)
+
+    def _upper_shadow_ratio(self, df: pd.DataFrame) -> np.ndarray:
+        high = df["high"].to_numpy(dtype=float)
+        low = df["low"].to_numpy(dtype=float)
+        close = df["close"].to_numpy(dtype=float)
+        span = high - low
+        out = np.zeros(len(df), dtype=float)
+        np.divide(high - close, span, out=out, where=span > 0)
+        return out
+
+    def _quality_score(self, df: pd.DataFrame) -> np.ndarray:
+        score = np.full(len(df), 100.0, dtype=float)
+        j_vals = df["J"].to_numpy(dtype=float)
+        prior_j = df["_b2_prior_b1_j"].to_numpy(dtype=float)
+        j_delta = j_vals - prior_j
+        volume_ratio = df["_b2_volume_ratio"].to_numpy(dtype=float)
+        body_pct = df["_b2_today_body_pct"].to_numpy(dtype=float)
+        upper_shadow = df["_b2_upper_shadow_ratio"].to_numpy(dtype=float)
+
+        score += np.where(j_vals < 25.0, 5.0, 0.0)
+        score += np.where((j_vals >= 45.0) & (j_vals < 55.0), -5.0, 0.0)
+        score += np.where(j_delta >= 10.0, 5.0, 0.0)
+        score += np.where(volume_ratio > 1.2, 8.0, np.where(volume_ratio > 1.0, 3.0, 0.0))
+        score += np.where(body_pct >= 0.03, 5.0, np.where(body_pct < 0.01, -5.0, 0.0))
+        score += np.where(upper_shadow <= 0.03, 5.0, 0.0)
+        score += np.where(upper_shadow > self.upper_shadow_soft_limit, -10.0, 0.0)
+        return score
+
+    def prepare_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """预计算 B1 前置、B2 中间列和向量化 pick mask。"""
+        df = df.copy()
+        zs, zk = compute_zx_lines(
+            df,
+            self.zx_m1,
+            self.zx_m2,
+            self.zx_m3,
+            self.zx_m4,
+            zxdq_span=self.zxdq_span,
+        )
+        df["zxdq"] = zs
+        df["zxdkx"] = zk
+        kdj = compute_kdj(df, n=self.kdj_n)
+        df["K"] = kdj["K"]
+        df["D"] = kdj["D"]
+        df["J"] = kdj["J"]
+        df["wma_bull"] = compute_weekly_ma_bull(
+            df,
+            ma_periods=(self.wma_short, self.wma_mid, self.wma_long),
+        ).to_numpy()
+
+        df["_b1_pick"] = self._b1_pick_mask(df)
+        prior_lag = self._recent_b1_filter.prior_lag_arr(df)
+        df["_b2_prior_b1_lag"] = prior_lag
+        df["_b2_prior_b1_j"] = self._recent_b1_filter.prior_j_arr(df, prior_lag)
+        df["_b2_j_turn_up"] = df["J"].to_numpy(dtype=float) > df["_b2_prior_b1_j"].to_numpy(dtype=float)
+        df["_b2_daily_return"] = self._daily_return_filter.values(df)
+        df["_b2_today_body_pct"] = self._bull_body_filter.values(df)
+        df["_b2_volume_ratio"] = self._volume_filter.volume_ratio_arr(df)
+        df["_b2_strict_yang_bao_yin"] = self._volume_filter.strict_yang_bao_yin_arr(df)
+        df["_b2_upper_shadow_ratio"] = self._upper_shadow_ratio(df)
+        df["_b2_quality_score"] = self._quality_score(df)
+
+        current_zx_ok = self._zx_filter.vec_mask(df)
+        current_weekly_ok = self._wma_filter.vec_mask(df)
+        recent_b1_ok = prior_lag > 0
+        j_turn_up_ok = (
+            df["_b2_j_turn_up"].to_numpy(dtype=bool)
+            if self.require_j_turn_up
+            else np.ones(len(df), dtype=bool)
+        )
+        df["_vec_pick"] = (
+            current_zx_ok
+            & current_weekly_ok
+            & recent_b1_ok
+            & j_turn_up_ok
+            & self._j_ceiling_filter.vec_mask(df)
+            & self._daily_return_filter.vec_mask(df)
+            & self._bull_body_filter.vec_mask(df)
+            & self._volume_filter.vec_mask(df)
+        )
+        return df
+
+    def passes_hist(self, hist: pd.DataFrame) -> bool:
+        if hist is None or hist.empty:
+            return False
+        if len(hist) < self.min_bars + self.extra_bars_buffer:
+            return False
+        prepared = self.prepare_df(hist)
+        return bool(prepared["_vec_pick"].iloc[-1])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

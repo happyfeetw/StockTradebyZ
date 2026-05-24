@@ -217,6 +217,7 @@ def trading_config(path: Path | None = None) -> dict[str, Any]:
         "auto_confirm_generated_plan": False,
         "auto_execute_confirmed_plan": False,
         "signal_refresh_after_time": "16:00",
+        "required_signal_strategies": ["b1", "brick"],
         "trade_calendar_provider": "tushare",
         "trade_calendar_path": "data/trading/trading_calendar.json",
         "trade_calendar_lookahead_days": 120,
@@ -224,6 +225,21 @@ def trading_config(path: Path | None = None) -> dict[str, Any]:
         "trading_dir": "data/trading",
     }
     return {**defaults, **cfg}
+
+
+def required_signal_strategies(cfg: dict[str, Any] | None = None) -> list[str]:
+    raw = (cfg or trading_config()).get("required_signal_strategies") or ["b1", "brick"]
+    if isinstance(raw, str):
+        return [item.strip().lower() for item in raw.split(",") if item.strip()]
+    return [str(item).strip().lower() for item in raw if str(item).strip()]
+
+
+def position_key(code: str, strategy: str = "") -> str:
+    return f"{code}::{strategy or 'unknown'}"
+
+
+def item_position_key(item: dict[str, Any]) -> str:
+    return str(item.get("position_key") or position_key(str(item.get("code") or ""), str(item.get("strategy") or "")))
 
 
 def plan_config_snapshot(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +261,7 @@ def plan_config_snapshot(cfg: dict[str, Any]) -> dict[str, Any]:
         "auto_confirm_generated_plan",
         "auto_execute_confirmed_plan",
         "signal_refresh_after_time",
+        "required_signal_strategies",
         "trade_calendar_provider",
         "trade_calendar_path",
         "trade_calendar_lookahead_days",
@@ -439,6 +456,7 @@ def portfolio_value(cfg: dict[str, Any], as_of_date: str) -> dict[str, Any]:
         enriched.append(
             {
                 **pos,
+                "position_key": item_position_key(pos),
                 "market_price": float(close),
                 "market_date": row.get("date", ""),
                 "market_value": value,
@@ -455,19 +473,24 @@ def portfolio_value(cfg: dict[str, Any], as_of_date: str) -> dict[str, Any]:
     }
 
 
-def complete_history_result(signal_date: str) -> bool:
+def complete_history_result(signal_date: str, cfg: dict[str, Any] | None = None) -> bool:
     summary = load_json(ROOT / "data" / "history" / signal_date / "summary.json")
     if not summary:
         return False
     counts = summary.get("strategy_counts") or {}
-    if not all(strategy in counts for strategy in ("b1", "brick")):
+    if not all(strategy in counts for strategy in required_signal_strategies(cfg)):
         return False
     return int(summary.get("reviewed_count") or 0) >= int(
         summary.get("candidate_count") or 0
     )
 
 
-def latest_complete_signal_date(on_or_before: str, *, strict_before: bool = False) -> str:
+def latest_complete_signal_date(
+    on_or_before: str,
+    *,
+    strict_before: bool = False,
+    cfg: dict[str, Any] | None = None,
+) -> str:
     history_dir = ROOT / "data" / "history"
     if not history_dir.exists():
         return ""
@@ -484,7 +507,7 @@ def latest_complete_signal_date(on_or_before: str, *, strict_before: bool = Fals
             continue
         if not strict_before and current > cutoff:
             continue
-        if complete_history_result(path.name):
+        if complete_history_result(path.name, cfg):
             dates.append(path.name)
     return max(dates) if dates else ""
 
@@ -496,16 +519,17 @@ def recommended_rows(signal_date: str, min_score: float) -> list[dict[str, Any]]
     seen: set[str] = set()
     for row in rows:
         code = str(row.get("code") or "")
+        key = item_position_key(row)
         review = row.get("review") or {}
         score = review.get("total_score")
-        if not code or code in seen:
+        if not code or key in seen:
             continue
         if row.get("status") != "recommended":
             continue
         if score is not None and float(score) < min_score:
             continue
         selected.append(row)
-        seen.add(code)
+        seen.add(key)
     selected.sort(key=lambda item: item.get("rank") if item.get("rank") is not None else 999999)
     return selected
 
@@ -522,7 +546,7 @@ def build_sell_orders(
     cfg: dict[str, Any],
     signal_date: str,
     positions: list[dict[str, Any]],
-    recommended_codes: set[str],
+    recommended_keys: set[str],
 ) -> list[dict[str, Any]]:
     orders: list[dict[str, Any]] = []
     min_hold_days = int(cfg.get("min_hold_days", 3))
@@ -531,6 +555,8 @@ def build_sell_orders(
     take_profit_pct = float(cfg.get("take_profit_pct", 0.18))
     for pos in positions:
         code = str(pos.get("code") or "")
+        strategy = str(pos.get("strategy") or "")
+        key = item_position_key(pos)
         quantity = int(pos.get("quantity") or 0)
         if not code or quantity <= 0:
             continue
@@ -545,14 +571,15 @@ def build_sell_orders(
             reasons.append("触发止盈")
         if days >= max_hold_days:
             reasons.append("达到最长持仓天数")
-        if days >= min_hold_days and code not in recommended_codes:
+        if days >= min_hold_days and key not in recommended_keys:
             reasons.append("持仓满最短周期且不在最新推荐")
         if not reasons:
             continue
         orders.append(
             {
                 "code": code,
-                "strategy": pos.get("strategy") or "",
+                "strategy": strategy,
+                "position_key": key,
                 "side": "SELL",
                 "quantity": quantity,
                 "reference_price": close,
@@ -574,47 +601,52 @@ def generate_plan(signal_date: str, cfg: dict[str, Any] | None = None) -> dict[s
     current_positions = load_positions(cfg)
     value = portfolio_value(cfg, signal_date)
     rows = recommended_rows(signal_date, min_score)
-    recommended_codes = {str(row.get("code")) for row in rows if row.get("code")}
+    recommended_keys = {item_position_key(row) for row in rows if row.get("code")}
     sell_orders = build_sell_orders(
         cfg=cfg,
         signal_date=signal_date,
         positions=current_positions,
-        recommended_codes=recommended_codes,
+        recommended_keys=recommended_keys,
     )
 
-    held_codes = {str(pos.get("code")) for pos in current_positions if pos.get("code")}
-    slots_after_sells = int(cfg.get("max_positions", 5)) - (len(held_codes) - len(sell_orders))
+    held_keys = {item_position_key(pos) for pos in current_positions if pos.get("code")}
+    selling_keys = {item_position_key(order) for order in sell_orders}
+    slots_after_sells = int(cfg.get("max_positions", 5)) - (len(held_keys - selling_keys))
     available_new_buys = max(0, min(int(cfg.get("max_new_buys_per_day", 2)), slots_after_sells))
     target_amount = value["total_value"] * float(cfg.get("target_position_weight", 0.2))
     reserved_cash = 0.0
     buy_orders: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    reserved_keys: set[str] = set()
 
     for row in rows:
         if len(buy_orders) >= available_new_buys:
             break
         code = str(row.get("code") or "")
+        strategy = str(row.get("strategy") or (row.get("review") or {}).get("strategy") or "")
+        key = item_position_key({"code": code, "strategy": strategy})
         if not code:
             continue
-        if code in held_codes:
-            skipped.append({"code": code, "reason": "already_held"})
+        if key in held_keys or key in reserved_keys:
+            skipped.append({"code": code, "strategy": strategy, "position_key": key, "reason": "already_held"})
             continue
         close = float(row.get("close") or 0)
         if close <= 0:
-            skipped.append({"code": code, "reason": "missing_reference_price"})
+            skipped.append({"code": code, "strategy": strategy, "position_key": key, "reason": "missing_reference_price"})
             continue
         quantity = order_quantity(target_amount, close)
         estimated_amount = quantity * close
         estimated_fee = commission(estimated_amount, cfg)
         cash_ok = quantity >= 100 and float(account.get("cash") or 0) - reserved_cash >= estimated_amount + estimated_fee
         if not cash_ok:
-            skipped.append({"code": code, "reason": "cash_not_enough_for_100_shares"})
+            skipped.append({"code": code, "strategy": strategy, "position_key": key, "reason": "cash_not_enough_for_100_shares"})
             continue
         review = row.get("review") or {}
         buy_orders.append(
             {
                 "code": code,
-                "strategy": row.get("strategy") or review.get("strategy") or "",
+                "strategy": strategy,
+                "position_key": key,
                 "side": "BUY",
                 "quantity": quantity,
                 "reference_price": close,
@@ -630,6 +662,7 @@ def generate_plan(signal_date: str, cfg: dict[str, Any] | None = None) -> dict[s
             }
         )
         reserved_cash += estimated_amount + estimated_fee
+        reserved_keys.add(key)
 
     status = "confirmed" if bool(cfg.get("auto_confirm_generated_plan", False)) else "draft"
     orders = sell_orders + buy_orders
@@ -686,13 +719,15 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
 
     account = ensure_account(cfg)
     positions = load_positions(cfg)
-    by_code = {str(pos.get("code")): dict(pos) for pos in positions if pos.get("code")}
+    by_key = {item_position_key(pos): dict(pos) for pos in positions if pos.get("code")}
     fills: list[dict[str, Any]] = []
 
     for order in plan.get("orders", []):
         if order.get("status") in {"filled", "canceled"}:
             continue
         code = str(order.get("code") or "")
+        strategy = str(order.get("strategy") or "")
+        key = item_position_key(order)
         side = str(order.get("side") or "")
         quantity = int(order.get("quantity") or 0)
         price_row = price_on_date(code, execute_date)
@@ -711,7 +746,7 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
                 order["message"] = "现金不足"
                 continue
             account["cash"] = float(account.get("cash") or 0) - amount - fee
-            existing = by_code.get(code)
+            existing = by_key.get(key)
             if existing:
                 old_qty = int(existing.get("quantity") or 0)
                 old_cost = float(existing.get("avg_cost") or 0) * old_qty
@@ -720,11 +755,14 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
                 existing["avg_cost"] = (old_cost + amount + fee) / new_qty
                 existing["market_price"] = float(close_price or fill_price)
                 existing["market_value"] = new_qty * float(existing["market_price"])
-                by_code[code] = existing
+                existing["position_key"] = key
+                existing["strategy"] = strategy
+                by_key[key] = existing
             else:
-                by_code[code] = {
+                by_key[key] = {
+                    "position_key": key,
                     "code": code,
-                    "strategy": order.get("strategy") or "",
+                    "strategy": strategy,
                     "quantity": quantity,
                     "avg_cost": (amount + fee) / quantity,
                     "entry_date": execute_date,
@@ -734,7 +772,9 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
                 }
             fill = {
                 "execute_date": execute_date,
+                "position_key": key,
                 "code": code,
+                "strategy": strategy,
                 "side": side,
                 "quantity": quantity,
                 "price": fill_price,
@@ -743,7 +783,7 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
                 "stamp_tax": 0.0,
             }
         elif side == "SELL":
-            existing = by_code.get(code)
+            existing = by_key.get(key)
             if not existing:
                 order["status"] = "skipped"
                 order["message"] = "无持仓"
@@ -758,15 +798,19 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
             account["realized_pnl"] = float(account.get("realized_pnl") or 0) + amount - fee - tax - cost
             remaining = int(existing.get("quantity") or 0) - sell_qty
             if remaining <= 0:
-                by_code.pop(code, None)
+                by_key.pop(key, None)
             else:
                 existing["quantity"] = remaining
                 existing["market_price"] = float(close_price or fill_price)
                 existing["market_value"] = remaining * float(existing["market_price"])
-                by_code[code] = existing
+                existing["position_key"] = key
+                existing["strategy"] = strategy
+                by_key[key] = existing
             fill = {
                 "execute_date": execute_date,
+                "position_key": key,
                 "code": code,
+                "strategy": strategy,
                 "side": side,
                 "quantity": sell_qty,
                 "price": fill_price,
@@ -790,7 +834,7 @@ def execute_plan(execute_date: str, cfg: dict[str, Any] | None = None, *, allow_
     plan["fills"] = fills
     atomic_write_json(path, plan)
     save_account(cfg, account)
-    save_positions(cfg, list(by_code.values()))
+    save_positions(cfg, list(by_key.values()))
     snapshot = save_snapshot(execute_date, cfg)
     return {"status": plan["status"], "fills": fills, "plan": plan, "snapshot": snapshot}
 

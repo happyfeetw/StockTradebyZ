@@ -21,7 +21,7 @@ import pandas as pd
 import yaml 
 
 from schemas import Candidate
-from Selector import B1Selector, BrickChartSelector
+from Selector import B1Selector, B2Selector, BrickChartSelector
 from pipeline_core import MarketDataPreparer, TopTurnoverPoolBuilder
 
 logger = logging.getLogger(__name__)
@@ -137,7 +137,19 @@ def _calc_warmup(cfg: dict, buffer: int) -> int:
 
     cfg_b1 = cfg.get("b1", {})
     if cfg_b1.get("enabled", True):
-        warmup = max(warmup, int(cfg_b1.get("zx_m4", 371)) + buffer)
+        warmup = max(
+            warmup,
+            int(cfg_b1.get("zx_m4", 371)) + buffer,
+            int(cfg_b1.get("wma_long", 30)) * 5 + buffer,
+        )
+
+    cfg_b2 = cfg.get("b2", {})
+    if cfg_b2.get("enabled", False):
+        warmup = max(
+            warmup,
+            int(cfg_b1.get("zx_m4", 114)) + buffer + int(cfg_b2.get("b1_lookback", 2)),
+            int(cfg_b1.get("wma_long", 30)) * 5 + buffer + int(cfg_b2.get("b1_lookback", 2)),
+        )
 
     cfg_brick = cfg.get("brick", {})
     if cfg_brick.get("enabled", True):
@@ -196,6 +208,86 @@ def run_b1(
             logger.debug("B1 skip %s: %s", code, exc)
 
     logger.info("B1 选出: %d 只", len(candidates))
+    return candidates
+
+
+# =============================================================================
+# B2 策略
+# =============================================================================
+
+def run_b2(
+    prepared: Dict[str, pd.DataFrame],
+    pick_date: pd.Timestamp,
+    pool_codes: List[str],
+    cfg_b2: dict,
+    cfg_b1: dict,
+) -> List[Candidate]:
+    """在流动性池内运行 B2 策略，返回按质量分降序的 Candidate 列表."""
+    zx_m1, zx_m2, zx_m3, zx_m4 = _sorted_zx(
+        cfg_b1.get("zx_m1", 14),
+        cfg_b1.get("zx_m2", 28),
+        cfg_b1.get("zx_m3", 57),
+        cfg_b1.get("zx_m4", 114),
+    )
+    selector = B2Selector(
+        j_threshold=float(cfg_b1.get("j_threshold", 15.0)),
+        j_q_threshold=float(cfg_b1.get("j_q_threshold", 0.10)),
+        kdj_n=int(cfg_b1.get("kdj_n", 9)),
+        zx_m1=zx_m1,
+        zx_m2=zx_m2,
+        zx_m3=zx_m3,
+        zx_m4=zx_m4,
+        zxdq_span=int(cfg_b1.get("zxdq_span", 10)),
+        wma_short=int(cfg_b1.get("wma_short", 10)),
+        wma_mid=int(cfg_b1.get("wma_mid", 20)),
+        wma_long=int(cfg_b1.get("wma_long", 30)),
+        max_vol_lookback=cfg_b1.get("max_vol_lookback", 20),
+        b1_lookback=int(cfg_b2.get("b1_lookback", 2)),
+        min_return=float(cfg_b2.get("min_return", 0.04)),
+        min_today_body_pct=float(cfg_b2.get("min_today_body_pct", 0.003)),
+        j_ceiling=float(cfg_b2.get("j_ceiling", 55.0)),
+        require_j_turn_up=bool(cfg_b2.get("require_j_turn_up", True)),
+        volume_ratio_min=float(cfg_b2.get("volume_ratio_min", 1.0)),
+        flat_volume_ratio=float(cfg_b2.get("flat_volume_ratio", 0.98)),
+        min_yang_bao_yin_body_pct=float(cfg_b2.get("min_yang_bao_yin_body_pct", 0.003)),
+        upper_shadow_soft_limit=float(cfg_b2.get("upper_shadow_soft_limit", 0.15)),
+    )
+
+    date_str = pick_date.strftime("%Y-%m-%d")
+    candidates: List[Candidate] = []
+
+    for code in pool_codes:
+        df = prepared.get(code)
+        if df is None or pick_date not in df.index:
+            continue
+        try:
+            pf = selector.prepare_df(df)
+            if selector.vec_picks_from_prepared(pf, start=pick_date, end=pick_date):
+                row = pf.loc[pick_date]
+                candidates.append(Candidate(
+                    code=code,
+                    date=date_str,
+                    strategy="b2",
+                    close=float(row["close"]),
+                    turnover_n=float(row["turnover_n"]),
+                    extra={
+                        "daily_return": float(row["_b2_daily_return"]),
+                        "today_body_pct": float(row["_b2_today_body_pct"]),
+                        "volume_ratio": float(row["_b2_volume_ratio"]),
+                        "prior_b1_lag": int(row["_b2_prior_b1_lag"]),
+                        "prior_b1_j": float(row["_b2_prior_b1_j"]),
+                        "j": float(row["J"]),
+                        "j_turn_up": bool(row["_b2_j_turn_up"]),
+                        "strict_yang_bao_yin": bool(row["_b2_strict_yang_bao_yin"]),
+                        "upper_shadow_ratio": float(row["_b2_upper_shadow_ratio"]),
+                        "b2_quality_score": float(row["_b2_quality_score"]),
+                    },
+                ))
+        except Exception as exc:
+            logger.debug("B2 skip %s: %s", code, exc)
+
+    candidates.sort(key=lambda c: float(c.extra.get("b2_quality_score", -999)), reverse=True)
+    logger.info("B2 选出: %d 只", len(candidates))
     return candidates
 
 
@@ -337,12 +429,21 @@ def run_preselect(
     if cfg.get("b1", {}).get("enabled", True):
         all_candidates.extend(run_b1(prepared, pick_ts, pool_codes, cfg["b1"]))
 
+    if cfg.get("b2", {}).get("enabled", False):
+        all_candidates.extend(run_b2(prepared, pick_ts, pool_codes, cfg["b2"], cfg.get("b1", {})))
+
     if cfg.get("brick", {}).get("enabled", True):
         all_candidates.extend(run_brick(prepared, pick_ts, pool_codes, cfg["brick"]))
 
-    # 7) 去重（同一只保留首次命中的策略）
-    seen: set = set()
-    deduped = [c for c in all_candidates if not (c.code in seen or seen.add(c.code))]  # type: ignore[func-returns-value]
+    # 7) 去重（同一只股票可保留不同策略，因买卖点和持仓逻辑不同）
+    seen: set[tuple[str, str]] = set()
+    deduped: List[Candidate] = []
+    for candidate in all_candidates:
+        key = (candidate.code, candidate.strategy)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
 
     logger.info("初选完成，候选股票: %d 只", len(deduped))
     return pick_ts, deduped

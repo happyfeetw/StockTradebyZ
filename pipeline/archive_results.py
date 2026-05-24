@@ -10,6 +10,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,8 +48,20 @@ def find_chart(kline_dir: Path, pick_date: str, code: str) -> str:
     return ""
 
 
-def result_status(code: str, review: dict[str, Any], recommendation_ranks: dict[str, int]) -> str:
-    if code in recommendation_ranks:
+def review_key(code: str, strategy: str = "") -> str:
+    suffix = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(strategy or "").strip())
+    return f"{code}_{suffix}" if suffix else code
+
+
+def load_review(review_dir: Path, code: str, strategy: str) -> dict[str, Any]:
+    keyed = load_json(review_dir / f"{review_key(code, strategy)}.json")
+    if keyed:
+        return keyed
+    return load_json(review_dir / f"{code}.json")
+
+
+def result_status(item_key: str, review: dict[str, Any], recommendation_ranks: dict[str, int]) -> str:
+    if item_key in recommendation_ranks:
         return "recommended"
     if review:
         return "reviewed"
@@ -66,7 +79,7 @@ def build_rows(
 ) -> list[dict[str, Any]]:
     recommendations = suggestion.get("recommendations", []) if suggestion else []
     recommendation_ranks = {
-        str(item.get("code")): int(item.get("rank") or index + 1)
+        str(item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or ""))): int(item.get("rank") or index + 1)
         for index, item in enumerate(recommendations)
         if item.get("code")
     }
@@ -76,20 +89,24 @@ def build_rows(
         code = str(candidate.get("code") or "")
         if not code:
             continue
-        review = load_json(review_dir / f"{code}.json")
+        strategy = str(candidate.get("strategy") or "")
+        item_key = review_key(code, strategy)
+        review = load_review(review_dir, code, strategy)
         rows.append(
             {
                 "date": pick_date,
                 "run_id": run_id,
                 "code": code,
-                "strategy": candidate.get("strategy") or "",
+                "strategy": strategy,
+                "review_key": item_key,
                 "close": candidate.get("close"),
                 "turnover_n": candidate.get("turnover_n"),
                 "brick_growth": candidate.get("brick_growth"),
+                "extra": candidate.get("extra") or {},
                 "review": review,
-                "rank": recommendation_ranks.get(code),
+                "rank": recommendation_ranks.get(item_key),
                 "chart": find_chart(kline_dir, pick_date, code),
-                "status": result_status(code, review, recommendation_ranks),
+                "status": result_status(item_key, review, recommendation_ranks),
             }
         )
 

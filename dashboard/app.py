@@ -32,16 +32,20 @@ def _load_cfg() -> dict:
             return yaml.safe_load(f) or {}
     return {}
 
+def _candidate_label(candidate: dict) -> str:
+    return f"{candidate.get('code', '')} · {candidate.get('strategy') or 'unknown'}"
+
+
 @st.cache_data(ttl=30)
-def _load_candidates_map() -> dict[str, dict]:
+def _load_candidates() -> list[dict]:
     cfg = _load_cfg()
     rel = cfg.get("paths", {}).get("candidates_latest", "data/candidates/candidates_latest.json")
     p = _ROOT / rel
     if not p.exists():
-        return {}
+        return []
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return {c["code"]: c for c in data.get("candidates", [])}
+    return [c for c in data.get("candidates", []) if c.get("code")]
 
 
 @st.cache_data(show_spinner=False)
@@ -83,8 +87,8 @@ weekly_ma_colors = {int(k): v for k, v in chart_cfg.get("weekly_ma_colors", {}).
 vol_up   = chart_cfg.get("volume_up_color",  "rgba(220,53,69,0.7)")
 vol_down = chart_cfg.get("volume_down_color", "rgba(40,167,69,0.7)")
 
-candidates_map  = _load_candidates_map()
-candidate_codes = sorted(candidates_map.keys())
+candidates = _load_candidates()
+candidate_options = sorted(_candidate_label(candidate) for candidate in candidates)
 
 # ── 侧边栏 ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -92,20 +96,23 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🔍 选择股票")
 
-    if candidate_codes:
+    if candidate_options:
         st.markdown("**今日候选股票**")
-        quick_code = st.selectbox("快速选择候选", ["— 手动输入 —"] + candidate_codes)
+        quick_candidate = st.selectbox("快速选择候选", ["— 手动输入 —"] + candidate_options)
     else:
-        quick_code = "— 手动输入 —"
+        quick_candidate = "— 手动输入 —"
 
     manual_code = st.text_input("手动输入代码（6位）", placeholder="例：600519")
 
     if manual_code.strip():
         active_code = manual_code.strip().zfill(6)
-    elif quick_code and quick_code != "— 手动输入 —":
-        active_code = quick_code
+        active_candidate = next((c for c in candidates if str(c.get("code")) == active_code), None)
+    elif quick_candidate and quick_candidate != "— 手动输入 —":
+        active_candidate = next((c for c in candidates if _candidate_label(c) == quick_candidate), None)
+        active_code = str(active_candidate.get("code")) if active_candidate else None
     else:
         active_code = None
+        active_candidate = None
 
     st.markdown("---")
     st.markdown("### ⚙️ 图表设置")
@@ -130,7 +137,7 @@ if not active_code:
 
 st.markdown(f"### {active_code}")
 
-candidate = candidates_map.get(active_code)
+candidate = active_candidate or next((c for c in candidates if str(c.get("code")) == active_code), None)
 if candidate:
     bg_val = candidate.get("brick_growth")
     bg_str = f"{bg_val:.3f}x" if bg_val is not None else "—"

@@ -77,7 +77,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rate_limit_backoff_seconds": 300,
     "skip_existing": True,
     "suggest_min_score": 4.0,
-    "classic_pattern_strategies": ["b1", "b2", "brick"],
+    "classic_pattern_enabled": True,
 }
 
 RATE_LIMIT_MARKERS = (
@@ -974,7 +974,7 @@ class GeminiCliReviewer(BaseReviewer):
                     )
                     result["strategy"] = item.get("strategy") or result.get("strategy", "")
                     result["review_key"] = review_key
-                    result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
+                    result = self.normalize_scores(result, self.config)
                     self._write_stock_result(item, result)
                     all_results.append(result)
                     print(f"完成 — {self._format_result_status(result)}")
@@ -1065,7 +1065,7 @@ class GeminiCliReviewer(BaseReviewer):
                         str(result.get("code") or item["code"]),
                         str(result.get("strategy") or ""),
                     )
-                    result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
+                    result = self.normalize_scores(result, self.config)
                     self._write_stock_result(item, result)
                 print("完成")
                 for result in results:
@@ -1184,7 +1184,7 @@ class GeminiCliReviewer(BaseReviewer):
                     result = json.load(f)
                 if result.get("reviewer") == "gemini-cli":
                     print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
-                    result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
+                    result = self.normalize_scores(result, self.config)
                     all_results.append(result)
                     self._write_checkpoint(status="skip_existing", codes=[review_key], message="已存在 gemini-cli 结果")
                     continue

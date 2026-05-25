@@ -27,6 +27,7 @@ WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
 HISTORY_DIR = ROOT / "data" / "history"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
+DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -330,6 +331,30 @@ def make_run_id() -> str:
 
 def clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def classic_pattern_switch_enabled(cfg: dict[str, Any]) -> bool:
+    if "classic_pattern_enabled" in cfg:
+        return bool(cfg.get("classic_pattern_enabled"))
+    if "classic_pattern_strategies" in cfg:
+        return bool(cfg.get("classic_pattern_strategies"))
+    return True
+
+
+def render_classic_pattern_config(cfg: dict[str, Any], key_prefix: str) -> dict[str, Any]:
+    enabled = st.toggle(
+        "启用经典图形匹配环节",
+        value=classic_pattern_switch_enabled(cfg),
+        key=f"{key_prefix}_classic_pattern_enabled",
+        help="开启后按候选票来源策略自动匹配对应经典图形；复合策略或没有经典图形定义的策略仍按基础四维评分。",
+    )
+    cfg["classic_pattern_enabled"] = enabled
+    cfg.pop("classic_pattern_strategies", None)
+    st.caption(
+        f"当前已有经典图形定义：{', '.join(DEFAULT_CLASSIC_PATTERN_STRATEGIES)}。"
+        "开启后由复评器按候选策略自动判断，页面不需要逐个选择策略。"
+    )
+    return cfg
 
 
 def parse_date_or_today(value: Any) -> dt.date:
@@ -1069,6 +1094,9 @@ def render_review_config() -> None:
             else:
                 st.warning("GEMINI_API_KEY 未配置，运行 API Key 复评会失败。")
 
+        with st.expander("经典图形匹配", expanded=True):
+            cfg = render_classic_pattern_config(cfg, "api_review")
+
         with st.expander("路径配置"):
             p1, p2 = st.columns(2)
             with p1:
@@ -1126,6 +1154,9 @@ def render_review_config() -> None:
             value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
         )
         cfg["stop_on_rate_limit"] = st.toggle("重试耗尽后命中限流则停止", value=bool(cfg.get("stop_on_rate_limit", False)))
+
+    with st.expander("经典图形匹配", expanded=True):
+        cfg = render_classic_pattern_config(cfg, "cli_review")
 
     with st.expander("路径配置"):
         p1, p2 = st.columns(2)

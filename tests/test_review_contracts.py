@@ -109,7 +109,41 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(normalized["classic_pattern_reasoning"], "")
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 0.0)
 
-    def test_classic_pattern_strategy_list_is_configurable(self) -> None:
+    def test_classic_pattern_switch_controls_defined_strategies(self) -> None:
+        brick_result = {
+            "strategy": "brick",
+            "total_score": 1.0,
+            "scores": {
+                "trend_structure": 4,
+                "price_position": 3,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 2,
+                "classic_pattern_match": 5,
+            },
+        }
+        unknown_result = {
+            "strategy": "custom_single",
+            "total_score": 1.0,
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 5,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 1,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        enabled = BaseReviewer.normalize_scores(deepcopy(brick_result), {"classic_pattern_enabled": True})
+        disabled = BaseReviewer.normalize_scores(deepcopy(brick_result), {"classic_pattern_enabled": False})
+        unknown = BaseReviewer.normalize_scores(deepcopy(unknown_result), {"classic_pattern_enabled": True})
+
+        self.assertEqual(enabled["total_score"], 3.8)
+        self.assertEqual(disabled["total_score"], 3.5)
+        self.assertEqual(disabled["scores"]["classic_pattern_match"], 0.0)
+        self.assertEqual(unknown["total_score"], 3.8)
+        self.assertEqual(unknown["scores"]["classic_pattern_match"], 0.0)
+
+    def test_legacy_classic_pattern_strategy_list_remains_compatible(self) -> None:
         result = {
             "strategy": "custom_single",
             "total_score": 1.0,
@@ -122,11 +156,11 @@ class ReviewContractTests(unittest.TestCase):
             },
         }
 
-        unchanged = BaseReviewer.normalize_scores(deepcopy(result))
+        defaulted = BaseReviewer.normalize_scores(deepcopy(result))
         normalized = BaseReviewer.normalize_scores(deepcopy(result), ["custom_single"])
         disabled = BaseReviewer.normalize_scores(deepcopy(result), [])
 
-        self.assertEqual(unchanged["total_score"], 3.8)
+        self.assertEqual(defaulted["total_score"], 3.8)
         self.assertEqual(normalized["total_score"], 4.2)
         self.assertEqual(disabled["total_score"], 3.8)
 

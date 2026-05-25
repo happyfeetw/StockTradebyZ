@@ -48,7 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "request_delay": 5,
     "skip_existing": False,
     "suggest_min_score": 4.0,
-    "classic_pattern_strategies": ["b1", "b2", "brick"],
+    "classic_pattern_enabled": True,
 }
 
 

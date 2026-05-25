@@ -85,8 +85,19 @@ class BaseReviewer:
         return []
 
     @classmethod
-    def _normalized_strategy_set(cls, value: Any) -> set[str]:
-        if value is None:
+    def _classic_pattern_enabled_strategies(cls, value: Any) -> set[str]:
+        if isinstance(value, dict):
+            if "classic_pattern_enabled" in value:
+                if not bool(value.get("classic_pattern_enabled")):
+                    return set()
+                strategies = list(cls.DEFAULT_CLASSIC_PATTERN_STRATEGIES)
+            elif "classic_pattern_strategies" in value:
+                strategies = cls._strategy_list(value.get("classic_pattern_strategies"))
+            else:
+                strategies = list(cls.DEFAULT_CLASSIC_PATTERN_STRATEGIES)
+        elif isinstance(value, bool):
+            strategies = list(cls.DEFAULT_CLASSIC_PATTERN_STRATEGIES) if value else []
+        elif value is None:
             strategies = list(cls.DEFAULT_CLASSIC_PATTERN_STRATEGIES)
         else:
             strategies = cls._strategy_list(value)
@@ -97,11 +108,11 @@ class BaseReviewer:
         return any(separator in strategy for separator in ("+", "&", ",", "|"))
 
     @classmethod
-    def has_classic_pattern_review(cls, strategy: str, configured_strategies: Any = None) -> bool:
+    def has_classic_pattern_review(cls, strategy: str, classic_pattern_config: Any = None) -> bool:
         normalized = str(strategy or "").strip().lower()
         if not normalized or cls.is_composite_strategy(normalized):
             return False
-        enabled = cls._normalized_strategy_set(configured_strategies)
+        enabled = cls._classic_pattern_enabled_strategies(classic_pattern_config)
         return "*" in enabled or normalized in enabled
 
     def review_priority_strategies(self, candidates_data: dict) -> list[str]:
@@ -164,13 +175,13 @@ class BaseReviewer:
         return cls._numeric_score(scores.get("classic_pattern_match"))
 
     @classmethod
-    def normalize_scores(cls, result: dict, classic_pattern_strategies: Any = None) -> dict:
+    def normalize_scores(cls, result: dict, classic_pattern_config: Any = None) -> dict:
         strategy = str(result.get("strategy") or "").strip().lower()
         scores = result.get("scores") or {}
         if not isinstance(scores, dict):
             return result
 
-        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_strategies)
+        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_config)
         score_weights = (
             cls.CLASSIC_PATTERN_SCORE_WEIGHTS
             if has_classic_pattern
@@ -299,7 +310,7 @@ class BaseReviewer:
                 print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
                 with open(out_file, encoding="utf-8") as f:
                     result = json.load(f)
-                result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
+                result = self.normalize_scores(result, self.config)
                 all_results.append(result)
                 continue
 
@@ -320,7 +331,7 @@ class BaseReviewer:
                 )
                 result["strategy"] = strategy or result.get("strategy", "")
                 result["review_key"] = review_key
-                result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
+                result = self.normalize_scores(result, self.config)
                 with open(out_file, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 all_results.append(result)

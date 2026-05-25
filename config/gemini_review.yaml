@@ -25,9 +25,6 @@ skip_existing: false
 # 推荐最小分数门槛
 suggest_min_score: 4.0
 
-# 启用经典图形匹配环节的单一策略；命中这些策略时使用五维评分权重。
-# 复合策略不应写入这里，未列入的策略走基础四维评分。
-classic_pattern_strategies:
-  - b1
-  - b2
-  - brick
+# 是否启用经典图形匹配环节。
+# 开启后按候选票来源策略自动匹配已有经典图形定义；复合策略和无定义策略走基础四维评分。
+classic_pattern_enabled: true

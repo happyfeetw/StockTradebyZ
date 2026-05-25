@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "request_delay": 5,
     "skip_existing": False,
     "suggest_min_score": 4.0,
+    "classic_pattern_enabled": True,
 }
 
 
@@ -95,12 +96,14 @@ class GeminiReviewer(BaseReviewer):
         data = path.read_bytes()
         return types.Part.from_bytes(data=data, mime_type=mime_type)
 
-    def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
+    def review_stock(self, code: str, day_chart: Path, prompt: str, strategy: str = "") -> dict:
         """
         调用 Gemini API，对单支股票进行图表分析，返回解析后的 JSON 结果。
         """
+        strategy_line = f"来源策略：{strategy}\n" if strategy else ""
         user_text = (
-            f"股票代码：{code}\n\n"
+            f"股票代码：{code}\n"
+            f"{strategy_line}\n"
             "以下是该股票的 **日线图**，请按照系统提示中的框架进行分析，"
             "并严格按照要求输出 JSON。"
         )

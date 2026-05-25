@@ -9,6 +9,7 @@ __pycache__/
 .vscode/
 data/
 .gemini_cli_tmp/
+.antigravitycli/
 
 # Virtual environments
 .venv/
@@ -44,3 +45,6 @@ pip-wheel-metadata/
 # OS files
 .DS_Store
 Thumbs.db
+
+# materials
+docs/经典图形/

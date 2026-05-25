@@ -77,6 +77,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rate_limit_backoff_seconds": 300,
     "skip_existing": True,
     "suggest_min_score": 4.0,
+    "classic_pattern_enabled": True,
 }
 
 RATE_LIMIT_MARKERS = (
@@ -472,11 +473,13 @@ class GeminiCliReviewer(BaseReviewer):
         with open(raw_dir / "meta.json", "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    def _build_prompt(self, *, code: str, chart_ref: str, prompt: str) -> str:
+    def _build_prompt(self, *, code: str, chart_ref: str, prompt: str, strategy: str = "") -> str:
+        strategy_line = f"来源策略：{strategy}\n" if strategy else ""
         return (
             f"{prompt}\n\n"
             "---\n\n"
             f"股票代码：{code}\n"
+            f"{strategy_line}"
             f"日线图：{chart_ref}\n\n"
             "请读取上面的日线图，严格按照评分规则完成复评。"
             "只输出一个 JSON 对象，不要输出 Markdown、解释文字或额外字段。"
@@ -771,11 +774,11 @@ class GeminiCliReviewer(BaseReviewer):
         self.usage.consume()
         return self._run_cli_command(cmd, env, prompt_text, cwd=cwd, codes=codes, image_paths=image_paths)
 
-    def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
+    def review_stock(self, code: str, day_chart: Path, prompt: str, strategy: str = "") -> dict:
         self._validate_chart_for_cli(day_chart, code)
         cwd = day_chart.parent
         chart_ref = self._chart_ref_for_cli(day_chart, cwd)
-        prompt_text = self._build_prompt(code=code, chart_ref=chart_ref, prompt=prompt)
+        prompt_text = self._build_prompt(code=code, chart_ref=chart_ref, prompt=prompt, strategy=strategy)
         cmd = self._build_command()
         env = {**os.environ, "NO_COLOR": "1"}
 
@@ -963,9 +966,15 @@ class GeminiCliReviewer(BaseReviewer):
 
                 print(f"[{item['index']}/{total_candidates}] {review_key} — Gemini CLI 正在分析 ...", end=" ", flush=True)
                 try:
-                    result = self.review_stock(code=code, day_chart=item["day_chart"], prompt=self.prompt)
+                    result = self.review_stock(
+                        code=code,
+                        day_chart=item["day_chart"],
+                        prompt=self.prompt,
+                        strategy=str(item.get("strategy") or ""),
+                    )
                     result["strategy"] = item.get("strategy") or result.get("strategy", "")
                     result["review_key"] = review_key
+                    result = self.normalize_scores(result, self.config)
                     self._write_stock_result(item, result)
                     all_results.append(result)
                     print(f"完成 — {self._format_result_status(result)}")
@@ -1056,6 +1065,7 @@ class GeminiCliReviewer(BaseReviewer):
                         str(result.get("code") or item["code"]),
                         str(result.get("strategy") or ""),
                     )
+                    result = self.normalize_scores(result, self.config)
                     self._write_stock_result(item, result)
                 print("完成")
                 for result in results:
@@ -1124,9 +1134,12 @@ class GeminiCliReviewer(BaseReviewer):
     def run(self):
         candidates_data = self.load_candidates(Path(self.config["candidates"]))
         pick_date: str = candidates_data["pick_date"]
-        candidates: list[dict] = candidates_data["candidates"]
+        candidates: list[dict] = self.order_candidates_for_review(candidates_data)
         batch_size = int(self.config.get("batch_size", 1))
         print(f"[INFO] pick_date={pick_date}，候选股票数={len(candidates)}")
+        priority = self.review_priority_strategies(candidates_data)
+        if priority:
+            print(f"[INFO] 复评优先策略: {', '.join(priority)}")
         print(
             "[INFO] Gemini CLI 限额："
             f"本次最多 {self.max_requests_per_run if self.max_requests_per_run is not None else '不限'} 次，"
@@ -1171,6 +1184,7 @@ class GeminiCliReviewer(BaseReviewer):
                     result = json.load(f)
                 if result.get("reviewer") == "gemini-cli":
                     print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
+                    result = self.normalize_scores(result, self.config)
                     all_results.append(result)
                     self._write_checkpoint(status="skip_existing", codes=[review_key], message="已存在 gemini-cli 结果")
                     continue

@@ -24,18 +24,18 @@ def frame(rows: list[dict]) -> pd.DataFrame:
 
 
 class B2StrategyFilterTests(unittest.TestCase):
-    def test_daily_return_is_strictly_greater_than_threshold(self) -> None:
+    def test_daily_return_is_greater_than_or_equal_to_threshold(self) -> None:
         df = frame(
             [
                 {"close": 100.0},
-                {"close": 103.99},
-                {"close": 108.3},
+                {"close": 104.0},
+                {"close": 108.15},
             ]
         )
 
         mask = DailyReturnFilter(min_return=0.04).vec_mask(df)
 
-        self.assertEqual(mask.tolist(), [False, False, True])
+        self.assertEqual(mask.tolist(), [False, True, False])
 
     def test_bull_body_rejects_fake_bearish_and_tiny_body(self) -> None:
         df = frame(

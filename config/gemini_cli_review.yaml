@@ -75,3 +75,7 @@ skip_existing: true
 
 # 推荐最小分数门槛
 suggest_min_score: 4.0
+
+# 是否启用经典图形匹配环节。
+# 开启后按候选票来源策略自动匹配已有经典图形定义；复合策略和无定义策略走基础四维评分。
+classic_pattern_enabled: true

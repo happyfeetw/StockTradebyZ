@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import sys
+import unittest
+from copy import deepcopy
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agent"))
+sys.path.insert(0, str(ROOT / "pipeline"))
+
+from base_reviewer import BaseReviewer  # noqa: E402
+from archive_results import review_matches_strategy  # noqa: E402
+
+
+class ReviewContractTests(unittest.TestCase):
+    def test_replaced_strategy_candidates_are_reviewed_first(self) -> None:
+        reviewer = BaseReviewer.__new__(BaseReviewer)
+        reviewer.config = {}
+        candidates_data = {
+            "meta": {"replaced_strategies": ["b2"]},
+            "candidates": [
+                {"code": "000001", "strategy": "b1"},
+                {"code": "000002", "strategy": "brick"},
+                {"code": "000003", "strategy": "b2"},
+                {"code": "000004", "strategy": "b2"},
+            ],
+        }
+
+        ordered = reviewer.order_candidates_for_review(candidates_data)
+
+        self.assertEqual([item["code"] for item in ordered], ["000003", "000004", "000001", "000002"])
+
+    def test_legacy_review_must_match_requested_strategy(self) -> None:
+        self.assertTrue(review_matches_strategy({"strategy": "b2"}, "000001", "b2"))
+        self.assertFalse(review_matches_strategy({"strategy": "brick"}, "000001", "b2"))
+        self.assertTrue(review_matches_strategy({"review_key": "000001_b2"}, "000001", "b2"))
+        self.assertFalse(review_matches_strategy({"review_key": "000001_brick"}, "000001", "b2"))
+        self.assertFalse(review_matches_strategy({"total_score": 4.0}, "000001", "b2"))
+        self.assertTrue(review_matches_strategy({"total_score": 4.0}, "000001", ""))
+
+    def test_suggestion_preserves_classic_pattern_fields(self) -> None:
+        reviewer = BaseReviewer.__new__(BaseReviewer)
+        result = {
+            "code": "000001",
+            "strategy": "b1",
+            "review_key": "000001_b1",
+            "total_score": 4.2,
+            "classic_pattern_type": "b1_type1_low_breakout_pullback",
+            "classic_pattern_reasoning": "缩量回踩匹配第一类",
+            "scores": {
+                "classic_pattern_match": 5,
+            },
+        }
+
+        suggestion = reviewer.generate_suggestion(
+            pick_date="2026-05-22",
+            all_results=[result],
+            min_score=4.0,
+            candidates=[{"code": "000001", "strategy": "b1"}],
+        )
+
+        recommendation = suggestion["recommendations"][0]
+        self.assertEqual(recommendation["classic_pattern_type"], "b1_type1_low_breakout_pullback")
+        self.assertEqual(recommendation["classic_pattern_match"], 5.0)
+        self.assertEqual(recommendation["classic_pattern_reasoning"], "缩量回踩匹配第一类")
+
+    def test_classic_pattern_strategy_uses_five_dimension_weight(self) -> None:
+        result = {
+            "strategy": "brick",
+            "total_score": 1.0,
+            "verdict": "FAIL",
+            "scores": {
+                "trend_structure": 4,
+                "price_position": 3,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 2,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result)
+
+        self.assertEqual(normalized["scores"]["previous_abnormal_move"], 2.0)
+        self.assertEqual(normalized["scores"]["classic_pattern_match"], 5.0)
+        self.assertEqual(normalized["total_score"], 3.8)
+        self.assertEqual(normalized["verdict"], "WATCH")
+
+    def test_composite_strategy_uses_base_four_dimension_weight(self) -> None:
+        result = {
+            "strategy": "b1+brick",
+            "total_score": 4.6,
+            "classic_pattern_type": "brick_green_to_red_reversal",
+            "classic_pattern_reasoning": "误用了 brick 子条件",
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 4,
+                "volume_behavior": 3,
+                "previous_abnormal_move": 2,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result)
+
+        self.assertEqual(normalized["total_score"], 3.3)
+        self.assertEqual(normalized["verdict"], "WATCH")
+        self.assertEqual(normalized["classic_pattern_type"], "none")
+        self.assertEqual(normalized["classic_pattern_reasoning"], "")
+        self.assertEqual(normalized["scores"]["classic_pattern_match"], 0.0)
+
+    def test_classic_pattern_strategy_list_is_configurable(self) -> None:
+        result = {
+            "strategy": "custom_single",
+            "total_score": 1.0,
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 5,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 1,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        unchanged = BaseReviewer.normalize_scores(deepcopy(result))
+        normalized = BaseReviewer.normalize_scores(deepcopy(result), ["custom_single"])
+        disabled = BaseReviewer.normalize_scores(deepcopy(result), [])
+
+        self.assertEqual(unchanged["total_score"], 3.8)
+        self.assertEqual(normalized["total_score"], 4.2)
+        self.assertEqual(disabled["total_score"], 3.8)
+
+
+if __name__ == "__main__":
+    unittest.main()

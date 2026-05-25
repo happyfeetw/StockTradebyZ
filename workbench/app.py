@@ -77,11 +77,46 @@ def review_key(code: str, strategy: str = "") -> str:
     return f"{code}_{suffix}" if suffix else code
 
 
+def review_matches_strategy(review: dict[str, Any], code: str, strategy: str = "") -> bool:
+    if not review:
+        return False
+    if not strategy:
+        return True
+
+    expected_key = review_key(code, strategy)
+    stored_key = str(review.get("review_key") or "")
+    if stored_key:
+        return stored_key == expected_key
+
+    stored_strategy = str(review.get("strategy") or "")
+    return stored_strategy == strategy
+
+
 def load_review_result(review_dir: Path, code: str, strategy: str = "") -> dict[str, Any]:
     keyed = load_json(review_dir / f"{review_key(code, strategy)}.json")
     if keyed:
         return keyed
-    return load_json(review_dir / f"{code}.json")
+    legacy = load_json(review_dir / f"{code}.json")
+    if review_matches_strategy(legacy, code, strategy):
+        return legacy
+    return {}
+
+
+def review_status_label(review: dict[str, Any], recommended: bool = False) -> str:
+    if recommended:
+        return "推荐"
+    return "已复评" if review else "未复评"
+
+
+def classic_pattern_match_score(review: dict[str, Any]) -> float | None:
+    scores = review.get("scores") or {}
+    if not isinstance(scores, dict):
+        return None
+    value = scores.get("classic_pattern_match")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
@@ -1125,6 +1160,7 @@ def result_rows() -> list[dict[str, Any]]:
         close = candidate.get("close")
         brick_growth = candidate.get("brick_growth")
         total_score = review.get("total_score")
+        has_review = bool(review)
         rows.append(
             {
                 "代码": code,
@@ -1132,10 +1168,13 @@ def result_rows() -> list[dict[str, Any]]:
                 "review_key": item_key,
                 "收盘价": float(close) if close is not None else None,
                 "brick_growth": float(brick_growth) if brick_growth is not None else None,
-                "结论": review.get("verdict") or "",
+                "复评状态": review_status_label(review),
+                "结论": review.get("verdict") or ("未复评" if not has_review else ""),
                 "总分": float(total_score) if total_score is not None else None,
                 "信号": review.get("signal_type") or "",
-                "评论": review.get("comment") or "",
+                "经典图形": review.get("classic_pattern_type") or "",
+                "经典匹配分": classic_pattern_match_score(review),
+                "评论": review.get("comment") or ("暂无复评结果" if not has_review else ""),
             }
         )
     recommendation_keys = {
@@ -1143,7 +1182,10 @@ def result_rows() -> list[dict[str, Any]]:
         for item in suggestion.get("recommendations", [])
     }
     for row in rows:
-        row["推荐"] = "是" if row["review_key"] in recommendation_keys else "否"
+        recommended = row["review_key"] in recommendation_keys
+        row["推荐"] = "是" if recommended else "否"
+        if recommended:
+            row["复评状态"] = "推荐"
         row.pop("review_key", None)
     return rows
 
@@ -1159,17 +1201,22 @@ def result_rows_from_history(pick_date: str) -> list[dict[str, Any]]:
         close = row.get("close")
         brick_growth = row.get("brick_growth")
         total_score = review.get("total_score")
+        has_review = bool(review)
+        recommended = row.get("status") == "recommended"
         rows.append(
             {
                 "代码": code,
                 "策略": row.get("strategy") or "",
                 "收盘价": float(close) if close is not None else None,
                 "brick_growth": float(brick_growth) if brick_growth is not None else None,
-                "结论": review.get("verdict") or "",
+                "复评状态": review_status_label(review, recommended),
+                "结论": review.get("verdict") or ("未复评" if not has_review else ""),
                 "总分": float(total_score) if total_score is not None else None,
                 "信号": review.get("signal_type") or "",
-                "评论": review.get("comment") or "",
-                "推荐": "是" if row.get("status") == "recommended" else "否",
+                "经典图形": review.get("classic_pattern_type") or "",
+                "经典匹配分": classic_pattern_match_score(review),
+                "评论": review.get("comment") or ("暂无复评结果" if not has_review else ""),
+                "推荐": "是" if recommended else "否",
             }
         )
     return rows
@@ -1291,7 +1338,10 @@ def strategy_summary_rows_from_result_df(df: pd.DataFrame) -> list[dict[str, Any
         return rows
     for strategy, group in df.groupby("策略", dropna=False):
         strategy_name = str(strategy or "unknown")
-        reviewed_count = int((group["结论"].fillna("") != "").sum())
+        if "复评状态" in group:
+            reviewed_count = int(group["复评状态"].isin(["已复评", "推荐"]).sum())
+        else:
+            reviewed_count = int(group["总分"].notna().sum())
         recommended_count = int((group["推荐"] == "是").sum())
         total_count = int(len(group))
         rows.append(
@@ -1386,18 +1436,23 @@ def history_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         close = row.get("close")
         brick_growth = row.get("brick_growth")
         total_score = review.get("total_score")
+        has_review = bool(review)
+        status = str(row.get("status") or "")
+        status_label = {"recommended": "推荐", "reviewed": "已复评", "unreviewed": "未复评"}.get(status, status)
         table.append(
             {
                 "排名": row.get("rank"),
                 "代码": row.get("code") or "",
                 "策略": row.get("strategy") or "",
-                "状态": row.get("status") or "",
+                "状态": status_label,
                 "收盘价": float(close) if close is not None else None,
                 "brick_growth": float(brick_growth) if brick_growth is not None else None,
-                "结论": review.get("verdict") or "",
+                "结论": review.get("verdict") or ("未复评" if not has_review else ""),
                 "总分": float(total_score) if total_score is not None else None,
                 "信号": review.get("signal_type") or "",
-                "评论": review.get("comment") or "",
+                "经典图形": review.get("classic_pattern_type") or "",
+                "经典匹配分": classic_pattern_match_score(review),
+                "评论": review.get("comment") or ("暂无复评结果" if not has_review else ""),
             }
         )
     return table
@@ -1477,10 +1532,13 @@ def render_history_center() -> None:
     review = selected_row.get("review") or {}
     with left:
         st.subheader(f"{selected_code} · {selected_row.get('strategy', '')}")
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        match_score = classic_pattern_match_score(review)
         c1.metric("状态", selected_row.get("status", ""))
         c2.metric("总分", review.get("total_score", ""))
-        c3.metric("排名", selected_row.get("rank") or "-")
+        c3.metric("经典图形", review.get("classic_pattern_type", "") or "-")
+        c4.metric("匹配分", match_score if match_score is not None else "-")
+        c5.metric("排名", selected_row.get("rank") or "-")
         chart_path = Path(str(selected_row.get("chart") or ""))
         if chart_path.exists():
             st.image(str(chart_path), caption=chart_path.name, width="stretch")
@@ -1535,11 +1593,14 @@ def render_stock_view() -> None:
         st.error(f"未找到 data/raw/{selected_code}.csv")
         return
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("策略", candidate.get("strategy", ""))
     c2.metric("收盘价", candidate.get("close", ""))
     c3.metric("Gemini 结论", review.get("verdict", "未复评"))
     c4.metric("总分", review.get("total_score", ""))
+    c5.metric("经典图形", review.get("classic_pattern_type", "") or "-")
+    match_score = classic_pattern_match_score(review)
+    c6.metric("匹配分", match_score if match_score is not None else "-")
 
     st.plotly_chart(make_daily_chart(df, selected_code, bars=120, height=620), width="stretch", config={"scrollZoom": True})
     st.plotly_chart(make_weekly_chart(df, selected_code, height=460), width="stretch", config={"scrollZoom": True})

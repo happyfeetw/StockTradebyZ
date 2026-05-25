@@ -53,11 +53,29 @@ def review_key(code: str, strategy: str = "") -> str:
     return f"{code}_{suffix}" if suffix else code
 
 
+def review_matches_strategy(review: dict[str, Any], code: str, strategy: str) -> bool:
+    if not review:
+        return False
+    if not strategy:
+        return True
+
+    expected_key = review_key(code, strategy)
+    stored_key = str(review.get("review_key") or "")
+    if stored_key:
+        return stored_key == expected_key
+
+    stored_strategy = str(review.get("strategy") or "")
+    return stored_strategy == strategy
+
+
 def load_review(review_dir: Path, code: str, strategy: str) -> dict[str, Any]:
     keyed = load_json(review_dir / f"{review_key(code, strategy)}.json")
     if keyed:
         return keyed
-    return load_json(review_dir / f"{code}.json")
+    legacy = load_json(review_dir / f"{code}.json")
+    if review_matches_strategy(legacy, code, strategy):
+        return legacy
+    return {}
 
 
 def result_status(item_key: str, review: dict[str, Any], recommendation_ranks: dict[str, int]) -> str:

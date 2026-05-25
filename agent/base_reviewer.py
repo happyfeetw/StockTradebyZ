@@ -17,6 +17,21 @@ from typing import Any, Dict, List, Optional
 
 
 class BaseReviewer:
+    DEFAULT_CLASSIC_PATTERN_STRATEGIES: tuple[str, ...] = ("b1", "b2", "brick")
+    BASE_SCORE_WEIGHTS: dict[str, float] = {
+        "trend_structure": 0.20,
+        "price_position": 0.20,
+        "volume_behavior": 0.30,
+        "previous_abnormal_move": 0.30,
+    }
+    CLASSIC_PATTERN_SCORE_WEIGHTS: dict[str, float] = {
+        "trend_structure": 0.20,
+        "price_position": 0.20,
+        "volume_behavior": 0.30,
+        "previous_abnormal_move": 0.20,
+        "classic_pattern_match": 0.10,
+    }
+
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.prompt = self.load_prompt(Path(config["prompt_path"]))
@@ -60,6 +75,63 @@ class BaseReviewer:
         return out_dir / f"{cls.review_key(code, strategy)}.json"
 
     @staticmethod
+    def _strategy_list(value: Any) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    @classmethod
+    def _normalized_strategy_set(cls, value: Any) -> set[str]:
+        if value is None:
+            strategies = list(cls.DEFAULT_CLASSIC_PATTERN_STRATEGIES)
+        else:
+            strategies = cls._strategy_list(value)
+        return {strategy.lower() for strategy in strategies}
+
+    @staticmethod
+    def is_composite_strategy(strategy: str) -> bool:
+        return any(separator in strategy for separator in ("+", "&", ",", "|"))
+
+    @classmethod
+    def has_classic_pattern_review(cls, strategy: str, configured_strategies: Any = None) -> bool:
+        normalized = str(strategy or "").strip().lower()
+        if not normalized or cls.is_composite_strategy(normalized):
+            return False
+        enabled = cls._normalized_strategy_set(configured_strategies)
+        return "*" in enabled or normalized in enabled
+
+    def review_priority_strategies(self, candidates_data: dict) -> list[str]:
+        configured = self._strategy_list(
+            self.config.get("review_priority_strategies")
+            or self.config.get("priority_strategies")
+        )
+        if configured:
+            return configured
+        meta = candidates_data.get("meta") or {}
+        return self._strategy_list(meta.get("replaced_strategies"))
+
+    def order_candidates_for_review(self, candidates_data: dict) -> list[dict]:
+        candidates = list(candidates_data.get("candidates") or [])
+        priority = self.review_priority_strategies(candidates_data)
+        if not priority:
+            return candidates
+
+        priority_index = {strategy: index for index, strategy in enumerate(priority)}
+        indexed_candidates = list(enumerate(candidates))
+        indexed_candidates.sort(
+            key=lambda item: (
+                str(item[1].get("strategy") or "") not in priority_index,
+                priority_index.get(str(item[1].get("strategy") or ""), len(priority_index)),
+                item[0],
+            )
+        )
+        return [candidate for _, candidate in indexed_candidates]
+
+    @staticmethod
     def extract_json(text: str) -> dict:
         code_block = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if code_block:
@@ -70,9 +142,70 @@ class BaseReviewer:
             raise ValueError(f"未能在模型输出中找到 JSON 对象:\n{text}")
         return json.loads(text[start:end])
 
-    def review_stock(self, code: str, day_chart: Path, prompt: str) -> dict:
+    def review_stock(self, code: str, day_chart: Path, prompt: str, strategy: str = "") -> dict:
         """子类需实现此方法，调用具体的 LLM 进行打分，并返回 JSON 解析字典。"""
         raise NotImplementedError("子类必须实现 review_stock 方法")
+
+    @staticmethod
+    def _numeric_score(value: Any) -> float | None:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= score <= 5:
+            return None
+        return score
+
+    @classmethod
+    def classic_pattern_score(cls, result: dict) -> float | None:
+        scores = result.get("scores") or {}
+        if not isinstance(scores, dict):
+            return None
+        return cls._numeric_score(scores.get("classic_pattern_match"))
+
+    @classmethod
+    def normalize_scores(cls, result: dict, classic_pattern_strategies: Any = None) -> dict:
+        strategy = str(result.get("strategy") or "").strip().lower()
+        scores = result.get("scores") or {}
+        if not isinstance(scores, dict):
+            return result
+
+        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_strategies)
+        score_weights = (
+            cls.CLASSIC_PATTERN_SCORE_WEIGHTS
+            if has_classic_pattern
+            else cls.BASE_SCORE_WEIGHTS
+        )
+
+        normalized_scores: dict[str, float] = {}
+        for key in score_weights:
+            score = cls._numeric_score(scores.get(key))
+            if score is None:
+                return result
+            normalized_scores[key] = score
+
+        merged_scores = {**scores, **normalized_scores}
+        if not has_classic_pattern:
+            merged_scores["classic_pattern_match"] = 0.0
+            result["classic_pattern_type"] = "none"
+            result["classic_pattern_reasoning"] = ""
+
+        result["scores"] = merged_scores
+        result["total_score"] = round(
+            sum(normalized_scores[key] * weight for key, weight in score_weights.items()),
+            2,
+        )
+
+        if normalized_scores["volume_behavior"] <= 1:
+            result["verdict"] = "FAIL"
+        elif result["total_score"] >= 4.0:
+            result["verdict"] = "PASS"
+        elif result["total_score"] >= 3.2:
+            result["verdict"] = "WATCH"
+        else:
+            result["verdict"] = "FAIL"
+
+        return result
 
     def generate_suggestion(
         self,
@@ -124,6 +257,9 @@ class BaseReviewer:
                 "verdict": r.get("verdict", ""),
                 "total_score": r.get("total_score", 0),
                 "signal_type": r.get("signal_type", ""),
+                "classic_pattern_type": r.get("classic_pattern_type", ""),
+                "classic_pattern_match": self.classic_pattern_score(r),
+                "classic_pattern_reasoning": r.get("classic_pattern_reasoning", ""),
                 "comment": r.get("comment", ""),
             }
             for i, r in enumerate(passed)
@@ -141,8 +277,11 @@ class BaseReviewer:
     def run(self):
         candidates_data = self.load_candidates(Path(self.config["candidates"]))
         pick_date: str = candidates_data["pick_date"]
-        candidates: List[dict] = candidates_data["candidates"]
+        candidates: List[dict] = self.order_candidates_for_review(candidates_data)
         print(f"[INFO] pick_date={pick_date}，候选股票数={len(candidates)}")
+        priority = self.review_priority_strategies(candidates_data)
+        if priority:
+            print(f"[INFO] 复评优先策略: {', '.join(priority)}")
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +299,7 @@ class BaseReviewer:
                 print(f"[{i}/{len(candidates)}] {review_key} — 已存在，跳过。")
                 with open(out_file, encoding="utf-8") as f:
                     result = json.load(f)
+                result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
                 all_results.append(result)
                 continue
 
@@ -176,9 +316,11 @@ class BaseReviewer:
                     code=code,
                     day_chart=day_chart,
                     prompt=self.prompt,
+                    strategy=strategy,
                 )
                 result["strategy"] = strategy or result.get("strategy", "")
                 result["review_key"] = review_key
+                result = self.normalize_scores(result, self.config.get("classic_pattern_strategies"))
                 with open(out_file, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 all_results.append(result)

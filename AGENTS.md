@@ -24,6 +24,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/uiux-quality-bar.md](docs/agent-harness/uiux-quality-bar.md)
 - Architecture quality bar:
   [docs/agent-harness/architecture-quality-bar.md](docs/agent-harness/architecture-quality-bar.md)
+- Target architecture design:
+  [docs/agent-harness/target-architecture-design.md](docs/agent-harness/target-architecture-design.md)
 - Validation gates: [docs/agent-harness/validation-gates.md](docs/agent-harness/validation-gates.md)
 - Core workflows: [docs/agent-harness/workflows.md](docs/agent-harness/workflows.md)
 

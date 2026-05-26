@@ -69,6 +69,7 @@ large implementation begins.
 Required artifacts:
 
 - [architecture-quality-bar.md](architecture-quality-bar.md);
+- [target-architecture-design.md](target-architecture-design.md);
 - target module boundaries and API contracts;
 - SQLite/DuckDB storage schema and migration plan;
 - runtime resource envelope for local development and normal operation.

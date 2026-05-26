@@ -39,6 +39,9 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
 - [uiux-quality-bar.md](uiux-quality-bar.md): measurable UI/UX acceptance bar.
 - [architecture-quality-bar.md](architecture-quality-bar.md): frontend,
   backend, system, storage, maintainability, and resource quality bar.
+- [target-architecture-design.md](target-architecture-design.md): Phase 2
+  SQLite/DuckDB schema ownership, API contract, job runtime, migration, and
+  rollback design.
 - [validation-gates.md](validation-gates.md): what to run for each change type.
 - [workflows.md](workflows.md): repeatable agent workflows.
 - [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.

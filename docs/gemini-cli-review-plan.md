@@ -25,7 +25,8 @@
 - 复用现有 `BaseReviewer` 的候选读取、图表查找、结果汇总逻辑。
 - 复用 `agent/prompt.md` 的评分规则和 JSON 输出契约。
 - 输出文件保持兼容：
-  - `data/review/{pick_date}/{code}.json`
+  - `data/review/{pick_date}/{code}_{strategy}.json`
+  - `data/review/{pick_date}/{code}.json`（旧结果回退读取）
   - `data/review/{pick_date}/suggestion.json`
 
 ## 非目标
@@ -118,7 +119,7 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
 - 达到 `max_requests_per_run` 或 `daily_request_budget` 后停止。
 - 如果 stdout/stderr 或退出码显示 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、`ECONNRESET`、超时等错误，按 `retry_backoff_seconds` 加 jitter 重试，并写入 `gemini_cli_review_checkpoint.json`。
 - 默认不启用空闲超时，只保留 `timeout_seconds=900` 总超时，避免误杀已进入模型处理但暂时无流式输出的请求。
-- `skip_existing: true` 时优先复用已有 `{code}.json`，支持隔天继续跑。
+- `skip_existing: true` 时优先复用已有 `{code}_{strategy}.json`，支持隔天继续跑。
 - 批量重试耗尽后先拆半继续；小批仍失败时再逐只复评，避免一开始就把整批拆成单股请求。
 - 每次 CLI 调用前打印实际执行命令、`--model`、`cwd` 和 raw log 路径，避免与 `/model` 交互状态混淆。
 - 主日志只保留状态摘要和少量 stderr 预览；完整原始流进入 raw log 目录，不影响 Workbench 其他运行日志的阅读。
@@ -137,9 +138,10 @@ Gemini CLI 存在分钟级请求速率限制和每日请求次数限制。批量
   - 单股强制返回 JSON 对象，批量强制返回 JSON 数组。
 - Python 只读取 CLI stdout，不允许 Gemini CLI 写入结果文件。
 - 脚本会直接把 Gemini CLI 的 `cwd` 切到 `data/kline/{pick_date}` 图片目录，再使用
-  `@{code}_day.jpg` 引用图片，不再复制到 `.gemini_cli_tmp/`。
+  `@{code}_{strategy}_day.jpg` 引用策略专属图片；如果策略专属图不存在，再回退
+  `@{code}_day.jpg`，不再复制到 `.gemini_cli_tmp/`。
 - 批量模式要求 Gemini CLI 返回与输入股票顺序一致的 JSON 数组；脚本会校验
-  `code` 顺序和数组长度，再拆分写入单股 `{code}.json`。
+  `code` 顺序和数组长度，再拆分写入单条候选 `{code}_{strategy}.json`。
 
 实际命令形态：
 
@@ -184,7 +186,7 @@ Gemini CLI 的 stdout 可能有两层 JSON：
 
 ```bash
 cd data/kline/2026-05-08
-gemini --output-format stream-json --prompt "请读取这张图片并用一句话描述：@600000_day.jpg"
+gemini --output-format stream-json --prompt "请读取这张图片并用一句话描述：@600000_b1_day.jpg"
 ```
 
 验收标准：
@@ -243,8 +245,9 @@ python run_all.py --skip-review
 ### 功能验收
 
 - 给定已有 `data/candidates/candidates_latest.json` 和 `data/kline/{pick_date}/*_day.jpg`。
+- 如果存在策略专属图，复评优先读取 `data/kline/{pick_date}/{code}_{strategy}_day.jpg`。
 - 运行 `python agent/gemini_cli_review.py`。
-- 每只成功复评股票生成 `data/review/{pick_date}/{code}.json`。
+- 每条成功复评候选生成 `data/review/{pick_date}/{code}_{strategy}.json`。
 - 最终生成 `data/review/{pick_date}/suggestion.json`。
 - `run_all.py` 能读取 `suggestion.json` 打印推荐结果。
 - 小批量运行达到 `max_requests_per_run` 时能正常停止。

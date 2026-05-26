@@ -1190,7 +1190,7 @@ class GeminiCliReviewer(BaseReviewer):
                     continue
                 print(f"[{i}/{len(candidates)}] {review_key} — 已有非 gemini-cli 结果，重新复评。")
 
-            day_chart = self.find_chart_images(pick_date, code)
+            day_chart = self.find_chart_images(pick_date, code, strategy)
             if day_chart is None:
                 print(f"[{i}/{len(candidates)}] {review_key} — 缺少日线图，跳过。")
                 failed_codes.append(review_key)

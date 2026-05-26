@@ -41,8 +41,14 @@ class BaseReviewer:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
-    def find_chart_images(self, pick_date: str, code: str) -> Optional[Path]:
+    def find_chart_images(self, pick_date: str, code: str, strategy: str = "") -> Optional[Path]:
         date_dir = self.kline_dir / pick_date
+        suffix = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(strategy or "").strip())
+        if suffix:
+            for ext in ("jpg", "png"):
+                strategy_chart = date_dir / f"{code}_{suffix}_day.{ext}"
+                if strategy_chart.exists():
+                    return strategy_chart
         day_chart = date_dir / f"{code}_day.jpg"
         if not day_chart.exists():
             day_chart_png = date_dir / f"{code}_day.png"
@@ -313,7 +319,7 @@ class BaseReviewer:
                 all_results.append(result)
                 continue
 
-            day_chart = self.find_chart_images(pick_date, code)
+            day_chart = self.find_chart_images(pick_date, code, strategy)
             if day_chart is None:
                 print(f"[{i}/{len(candidates)}] {review_key} — 缺少日线图，跳过。")
                 failed_codes.append(review_key)

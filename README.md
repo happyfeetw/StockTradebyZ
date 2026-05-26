@@ -138,7 +138,8 @@ python -m pipeline.cli preselect --config config/rules_preselect.yaml --data dat
 python dashboard/export_kline_charts.py
 ~~~
 
-输出到 data/kline/选股日期，图像命名为 代码_day.jpg。
+输出到 data/kline/选股日期。脚本会为每条候选记录生成策略专属日线图，例如
+`代码_策略_day.jpg`；同时保留 `代码_day.jpg` 兼容旧流程。
 
 ### 步骤 4：Gemini CLI 图表复评
 

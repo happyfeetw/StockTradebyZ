@@ -39,10 +39,16 @@ def resolve(path_text: str | None, default: Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def find_chart(kline_dir: Path, pick_date: str, code: str) -> str:
+def find_chart(kline_dir: Path, pick_date: str, code: str, strategy: str = "") -> str:
     date_dir = kline_dir / pick_date
-    for suffix in ("jpg", "png"):
-        path = date_dir / f"{code}_day.{suffix}"
+    suffix = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(strategy or "").strip())
+    if suffix:
+        for ext in ("jpg", "png"):
+            path = date_dir / f"{code}_{suffix}_day.{ext}"
+            if path.exists():
+                return str(path)
+    for ext in ("jpg", "png"):
+        path = date_dir / f"{code}_day.{ext}"
         if path.exists():
             return str(path)
     return ""
@@ -123,7 +129,7 @@ def build_rows(
                 "extra": candidate.get("extra") or {},
                 "review": review,
                 "rank": recommendation_ranks.get(item_key),
-                "chart": find_chart(kline_dir, pick_date, code),
+                "chart": find_chart(kline_dir, pick_date, code, strategy),
                 "status": result_status(item_key, review, recommendation_ranks),
             }
         )

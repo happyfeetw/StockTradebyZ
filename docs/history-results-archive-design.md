@@ -45,7 +45,7 @@ data/history/
     "comment": "..."
   },
   "rank": 1,
-  "chart": "data/kline/2026-05-06/600105_day.jpg",
+  "chart": "data/kline/2026-05-06/600105_b1_day.jpg",
   "status": "recommended"
 }
 ```
@@ -72,8 +72,9 @@ Gemini CLI 复评
 
 - `data/candidates/candidates_latest.json`
 - `data/review/{pick_date}/suggestion.json`
-- `data/review/{pick_date}/{code}.json`
-- `data/kline/{pick_date}/{code}_day.jpg`
+- `data/review/{pick_date}/{code}_{strategy}.json`
+- `data/kline/{pick_date}/{code}_{strategy}_day.jpg`
+- `data/kline/{pick_date}/{code}_day.jpg`（兼容旧流程）
 
 ## 使用方式
 

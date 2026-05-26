@@ -4,10 +4,13 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..schemas.migrations import (
+    LegacyArchiveImportPlan,
+    LegacyArchiveImportRecord,
     LegacyCandidateImportPlan,
     LegacyCandidateImportRecord,
     LegacyRecommendationImportRecord,
@@ -30,6 +33,10 @@ class LegacyCandidateImportError(ValueError):
 
 
 class LegacyReviewImportError(LegacyCandidateImportError):
+    pass
+
+
+class LegacyArchiveImportError(LegacyCandidateImportError):
     pass
 
 
@@ -282,22 +289,36 @@ class LegacyImportDryRunScanner:
     def _scan_history_rows(self, path: Path) -> None:
         section = "history"
         payload = self._load_json(section, path)
-        if not isinstance(payload, list):
+        if isinstance(payload, dict):
+            if payload.get("date") and str(payload.get("date")) != path.parent.name:
+                self._quarantine(section, path, "history_date_mismatch", "history all.json date does not match its directory")
+                return
+            rows = payload.get("results")
+            if not isinstance(rows, list):
+                self._quarantine(section, path, "invalid_history_rows", "history all.json results must be a list")
+                return
+        elif isinstance(payload, list):
+            rows = payload
+        else:
             if payload is not None:
-                self._quarantine(section, path, "invalid_history_rows", "history all.json root must be a list")
+                self._quarantine(section, path, "invalid_history_rows", "history all.json root must be an object or list")
             return
         self.sections[section].files_valid += 1
         self.sections[section].by_kind["all"] += 1
         seen_keys: set[str] = set()
-        for index, row in enumerate(payload):
+        for index, row in enumerate(rows):
             self.sections[section].records_seen += 1
             if not isinstance(row, dict):
                 self._quarantine(section, path, "invalid_history_row", "history row must be an object", str(index))
                 continue
             code = str(row.get("code") or "")
             strategy = str(row.get("strategy") or "")
+            status = str(row.get("status") or "")
             if not code:
                 self._quarantine(section, path, "missing_history_code", "history row code is required", str(index))
+                continue
+            if status not in {"recommended", "reviewed", "unreviewed"}:
+                self._quarantine(section, path, "invalid_history_status", "history row status must be recommended, reviewed, or unreviewed", str(index))
                 continue
             expected = legacy_review_key(code, strategy)
             stored_key = str(row.get("review_key") or "")
@@ -502,6 +523,92 @@ def build_legacy_review_import_report(plan: LegacyReviewImportPlan) -> LegacyImp
     )
 
 
+def load_legacy_archive_import_plan(data_root: str | Path, pick_date: str) -> LegacyArchiveImportPlan:
+    root = Path(data_root).expanduser()
+    history_dir = root / "history" / pick_date
+    if not history_dir.exists():
+        raise LegacyArchiveImportError("history directory does not exist", status_code=404)
+    if not history_dir.is_dir():
+        raise LegacyArchiveImportError("history path must be a directory")
+
+    summary_path = history_dir / "summary.json"
+    rows_path = history_dir / "all.json"
+    summary = _load_history_object(summary_path)
+    if str(summary.get("date") or "") != pick_date:
+        raise LegacyArchiveImportError("history summary date does not match requested pick_date")
+    legacy_run_id = str(summary.get("run_id") or "")
+    if not legacy_run_id:
+        raise LegacyArchiveImportError("history summary requires run_id")
+
+    rows_payload, rows_run_id = _history_rows_from_payload(rows_path, _load_history_payload(rows_path), pick_date)
+    if rows_run_id and rows_run_id != legacy_run_id:
+        raise LegacyArchiveImportError("history all.json run_id does not match summary run_id")
+
+    rows: list[LegacyArchiveImportRecord] = []
+    seen_keys: set[str] = set()
+    for index, row in enumerate(rows_payload):
+        record = _archive_record_from_row(row, index)
+        if record.review_key in seen_keys:
+            raise LegacyArchiveImportError(f"duplicate history review_key in import file: {record.review_key}")
+        seen_keys.add(record.review_key)
+        rows.append(record)
+
+    strategy_counts = _history_strategy_counts(summary, rows)
+    return LegacyArchiveImportPlan(
+        data_root=root.as_posix(),
+        source_path=_relative_source_path(root, history_dir),
+        pick_date=pick_date,
+        legacy_run_id=legacy_run_id,
+        candidate_run_date=_optional_string(summary.get("candidate_run_date")),
+        candidate_count=_history_nonnegative_int(summary.get("candidate_count"), "history summary candidate_count", default=len(rows)),
+        reviewed_count=_history_nonnegative_int(
+            summary.get("reviewed_count"),
+            "history summary reviewed_count",
+            default=len([row for row in rows if row.status in {"recommended", "reviewed"}]),
+        ),
+        recommended_count=_history_nonnegative_int(
+            summary.get("recommended_count"),
+            "history summary recommended_count",
+            default=len([row for row in rows if row.status == "recommended"]),
+        ),
+        strategy_counts=strategy_counts,
+        executed_strategies=_history_executed_strategies(summary, strategy_counts),
+        min_score_threshold=_candidate_optional_float(summary.get("min_score_threshold"), "history summary min_score_threshold"),
+        source=_history_source(summary),
+        summary=dict(summary),
+        archived_at=_history_optional_datetime(summary.get("archived_at")),
+        rows=rows,
+    )
+
+
+def build_legacy_archive_import_report(plan: LegacyArchiveImportPlan) -> LegacyImportDryRunReport:
+    section_reports = {section: LegacyImportSectionReport() for section in LEGACY_SECTIONS}
+    records_valid = len(plan.rows) + 1
+    section_reports["history"] = LegacyImportSectionReport(
+        files_seen=2,
+        files_valid=2,
+        records_seen=records_valid,
+        records_valid=records_valid,
+        by_kind={"all": 1, "summary": 1},
+    )
+    totals = LegacyImportTotals(
+        files_seen=2,
+        files_valid=2,
+        records_seen=records_valid,
+        records_valid=records_valid,
+        warning_count=0,
+        quarantine_count=0,
+    )
+    return LegacyImportDryRunReport(
+        dry_run=False,
+        data_root=plan.data_root,
+        sections=section_reports,
+        totals=totals,
+        warnings=[],
+        quarantine=[],
+    )
+
+
 def _review_record_from_payload(root: Path, path: Path, payload: dict[str, Any]) -> LegacyReviewImportRecord:
     code = str(payload.get("code") or "")
     if not code:
@@ -582,6 +689,137 @@ def _recommendations_from_suggestion(
     return sorted(records, key=lambda record: record.rank)
 
 
+def _history_rows_from_payload(path: Path, payload: Any, pick_date: str) -> tuple[list[Any], str | None]:
+    if isinstance(payload, dict):
+        if payload.get("date") and str(payload.get("date")) != pick_date:
+            raise LegacyArchiveImportError("history all.json date does not match requested pick_date")
+        rows = payload.get("results")
+        if not isinstance(rows, list):
+            raise LegacyArchiveImportError("history all.json results must be a list")
+        return rows, _optional_string(payload.get("run_id"))
+    if isinstance(payload, list):
+        return payload, None
+    raise LegacyArchiveImportError(f"{path.name} root must be an object or list")
+
+
+def _archive_record_from_row(row: Any, index: int) -> LegacyArchiveImportRecord:
+    if not isinstance(row, dict):
+        raise LegacyArchiveImportError(f"history row {index} must be an object")
+
+    code = str(row.get("code") or "")
+    if not code:
+        raise LegacyArchiveImportError(f"history row {index} requires code")
+    strategy = str(row.get("strategy") or "")
+    status = str(row.get("status") or "")
+    if status not in {"recommended", "reviewed", "unreviewed"}:
+        raise LegacyArchiveImportError(f"history row {index} status must be recommended, reviewed, or unreviewed")
+
+    expected_key = legacy_review_key(code, strategy)
+    stored_key = str(row.get("review_key") or "")
+    if stored_key and stored_key != expected_key:
+        raise LegacyArchiveImportError(f"history row {index} review_key mismatch")
+    review_key = stored_key or expected_key
+
+    extra = _history_extra(row.get("extra"), index)
+    legacy_row_run_id = _optional_string(row.get("run_id"))
+    if legacy_row_run_id:
+        extra.setdefault("legacy_run_id", legacy_row_run_id)
+
+    return LegacyArchiveImportRecord(
+        code=code,
+        strategy=strategy,
+        review_key=review_key,
+        status=status,
+        rank=_archive_optional_positive_int(row.get("rank"), f"history row {index} rank"),
+        close=_candidate_optional_float(row.get("close"), f"history row {index} close"),
+        turnover_n=_candidate_optional_float(row.get("turnover_n"), f"history row {index} turnover_n"),
+        brick_growth=_candidate_optional_float(row.get("brick_growth"), f"history row {index} brick_growth"),
+        extra=extra,
+        review_payload=_history_review_payload(row.get("review"), index),
+        chart=_optional_string(row.get("chart")),
+    )
+
+
+def _history_extra(value: Any, index: int) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise LegacyArchiveImportError(f"history row {index} extra must be an object")
+    return dict(value)
+
+
+def _history_review_payload(value: Any, index: int) -> dict[str, Any] | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise LegacyArchiveImportError(f"history row {index} review must be an object")
+    return dict(value)
+
+
+def _history_strategy_counts(summary: dict[str, Any], rows: list[LegacyArchiveImportRecord]) -> dict[str, Any]:
+    raw_counts = summary.get("strategy_counts")
+    if isinstance(raw_counts, dict):
+        return {str(strategy): value for strategy, value in raw_counts.items()}
+
+    counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        strategy = row.strategy or "unknown"
+        counts.setdefault(strategy, {"total": 0, "recommended": 0, "reviewed": 0, "unreviewed": 0})
+        counts[strategy]["total"] += 1
+        counts[strategy][row.status] += 1
+    return dict(sorted(counts.items()))
+
+
+def _history_executed_strategies(summary: dict[str, Any], strategy_counts: dict[str, Any]) -> list[str]:
+    value = summary.get("executed_strategies")
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return sorted(strategy_counts)
+
+
+def _history_source(summary: dict[str, Any]) -> dict[str, Any]:
+    value = summary.get("source")
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise LegacyArchiveImportError("history summary source must be an object")
+    return dict(value)
+
+
+def _history_nonnegative_int(value: Any, label: str, *, default: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise LegacyArchiveImportError(f"{label} must be a non-negative integer") from exc
+    if result < 0:
+        raise LegacyArchiveImportError(f"{label} must be a non-negative integer")
+    return result
+
+
+def _archive_optional_positive_int(value: Any, label: str) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise LegacyArchiveImportError(f"{label} must be a positive integer") from exc
+    if result <= 0:
+        raise LegacyArchiveImportError(f"{label} must be a positive integer")
+    return result
+
+
+def _history_optional_datetime(value: Any) -> datetime | None:
+    text = _optional_string(value)
+    if text is None:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise LegacyArchiveImportError("history summary archived_at must be an ISO datetime") from exc
+
+
 def _review_provider(payload: dict[str, Any] | None) -> str:
     if payload:
         reviewer = _optional_string(payload.get("reviewer"))
@@ -606,6 +844,24 @@ def _load_review_payload(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise LegacyReviewImportError(f"{path.name} root must be an object")
     return payload
+
+
+def _load_history_object(path: Path) -> dict[str, Any]:
+    payload = _load_history_payload(path)
+    if not isinstance(payload, dict):
+        raise LegacyArchiveImportError(f"{path.name} root must be an object")
+    return payload
+
+
+def _load_history_payload(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise LegacyArchiveImportError(f"{path.name} does not exist", status_code=404) from exc
+    except json.JSONDecodeError as exc:
+        raise LegacyArchiveImportError(f"{path.name} is malformed JSON: {exc}") from exc
+    except OSError as exc:
+        raise LegacyArchiveImportError(f"{path.name} is unreadable: {exc}") from exc
 
 
 def _load_candidate_import_payload(path: Path) -> dict[str, Any]:

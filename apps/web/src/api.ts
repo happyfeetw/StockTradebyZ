@@ -289,12 +289,16 @@ export interface LegacyImportSummary {
   run_id: string
   pick_date: string
   source_file: string
-  strategy_counts: Record<string, number>
+  strategy_counts: Record<string, unknown>
   batch_id: string | null
   review_run_id: string | null
+  archive_snapshot_id: string | null
   candidates_imported: number
   reviews_imported: number
   recommendations_imported: number
+  archive_rows_imported: number
+  archive_reviewed_count: number
+  archive_recommended_count: number
 }
 
 export interface LegacyImportDryRunReport {
@@ -455,6 +459,18 @@ export function importLegacyReviewRun(dataRoot: string, pickDate: string): Promi
       dry_run: false,
       data_root: dataRoot,
       scope: 'reviews',
+      pick_date: pickDate,
+    }),
+  })
+}
+
+export function importLegacyHistorySnapshot(dataRoot: string, pickDate: string): Promise<LegacyImportDryRunReport> {
+  return request<LegacyImportDryRunReport>('/api/migrations/import-legacy', {
+    method: 'POST',
+    body: JSON.stringify({
+      dry_run: false,
+      data_root: dataRoot,
+      scope: 'history',
       pick_date: pickDate,
     }),
   })

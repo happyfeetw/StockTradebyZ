@@ -19,9 +19,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from archive_results import review_key as legacy_archive_review_key  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.services.legacy_import import (  # noqa: E402
+    LegacyArchiveImportError,
     LegacyCandidateImportError,
     LegacyReviewImportError,
     legacy_review_key,
+    load_legacy_archive_import_plan,
     load_legacy_candidate_import_plan,
     load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
@@ -104,12 +106,16 @@ def build_legacy_fixture(root: Path) -> Path:
     )
     write_json(
         data_root / "history" / "2026-05-27" / "all.json",
-        [
-            {"code": "000001", "strategy": "b2", "review_key": "000001_b2", "status": "recommended"},
-            {"code": "000001", "strategy": "b2", "review_key": "000001_b2", "status": "reviewed"},
-            {"code": "000003", "strategy": "brick", "review_key": "000003_b2", "status": "reviewed"},
-            {"strategy": "b2", "review_key": "missing_b2", "status": "unreviewed"},
-        ],
+        {
+            "date": "2026-05-27",
+            "run_id": "run-1",
+            "results": [
+                {"code": "000001", "strategy": "b2", "review_key": "000001_b2", "status": "recommended"},
+                {"code": "000001", "strategy": "b2", "review_key": "000001_b2", "status": "reviewed"},
+                {"code": "000003", "strategy": "brick", "review_key": "000003_b2", "status": "reviewed"},
+                {"strategy": "b2", "review_key": "missing_b2", "status": "unreviewed"},
+            ],
+        },
     )
     write_json(data_root / "history" / "2026-05-27" / "other.json", {"ignored": True})
     (data_root / "history" / "2026-05-27" / "notes.txt").write_text("not imported", encoding="utf-8")
@@ -186,6 +192,79 @@ def build_valid_review_import_fixture(root: Path) -> Path:
                     "total_score": 4.7,
                     "comment": "score threshold",
                 }
+            ],
+        },
+    )
+    return data_root
+
+
+def build_valid_history_import_fixture(root: Path) -> Path:
+    data_root = root / "data"
+    history_dir = data_root / "history" / "2026-05-26"
+    write_json(
+        history_dir / "summary.json",
+        {
+            "date": "2026-05-26",
+            "run_id": "legacy-archive-run-1",
+            "archived_at": "2026-05-26T15:30:00",
+            "candidate_run_date": "2026-05-26",
+            "candidate_count": 3,
+            "reviewed_count": 2,
+            "recommended_count": 1,
+            "strategy_counts": {
+                "b2": {"total": 2, "recommended": 1, "reviewed": 0, "unreviewed": 1},
+                "brick": {"total": 1, "recommended": 0, "reviewed": 1, "unreviewed": 0},
+            },
+            "executed_strategies": ["b2", "brick"],
+            "min_score_threshold": 4.5,
+            "source": {
+                "candidates": "data/candidates/candidates_latest.json",
+                "review": "data/review/2026-05-26",
+                "kline": "data/kline/2026-05-26",
+            },
+        },
+    )
+    write_json(
+        history_dir / "all.json",
+        {
+            "date": "2026-05-26",
+            "run_id": "legacy-archive-run-1",
+            "results": [
+                {
+                    "date": "2026-05-26",
+                    "run_id": "legacy-archive-run-1",
+                    "code": "000010",
+                    "strategy": "b2",
+                    "review_key": "000010_b2",
+                    "status": "recommended",
+                    "rank": 1,
+                    "close": 10.5,
+                    "turnover_n": 105.0,
+                    "extra": {"signal": "breakout"},
+                    "review": {"comment": "clean breakout", "total_score": 4.7},
+                    "chart": "data/kline/2026-05-26/000010_day.png",
+                },
+                {
+                    "date": "2026-05-26",
+                    "run_id": "legacy-archive-run-1",
+                    "code": "000011",
+                    "strategy": "brick",
+                    "review_key": "000011_brick",
+                    "status": "reviewed",
+                    "close": "8.2",
+                    "brick_growth": "1.25",
+                    "review": {"comment": "watch volume"},
+                },
+                {
+                    "date": "2026-05-26",
+                    "run_id": "legacy-archive-run-1",
+                    "code": "000012",
+                    "strategy": "b2",
+                    "review_key": "000012_b2",
+                    "status": "unreviewed",
+                    "close": 9.1,
+                    "review": {},
+                },
             ],
         },
     )
@@ -282,6 +361,35 @@ class LegacyImportDryRunTests(unittest.TestCase):
 
             with self.assertRaisesRegex(LegacyReviewImportError, "review_key does not match"):
                 load_legacy_review_import_plan(data_root, "2026-05-27")
+
+    def test_archive_import_plan_loads_one_dated_history_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_valid_history_import_fixture(Path(tmpdir))
+
+            plan = load_legacy_archive_import_plan(data_root, "2026-05-26")
+
+            self.assertEqual(plan.source_path, "history/2026-05-26")
+            self.assertEqual(plan.pick_date, "2026-05-26")
+            self.assertEqual(plan.legacy_run_id, "legacy-archive-run-1")
+            self.assertEqual(plan.candidate_count, 3)
+            self.assertEqual(plan.reviewed_count, 2)
+            self.assertEqual(plan.recommended_count, 1)
+            self.assertEqual(plan.executed_strategies, ["b2", "brick"])
+            self.assertEqual(plan.min_score_threshold, 4.5)
+            self.assertEqual(plan.rows[0].review_key, "000010_b2")
+            self.assertEqual(plan.rows[0].rank, 1)
+            self.assertEqual(plan.rows[0].extra["signal"], "breakout")
+            self.assertEqual(plan.rows[0].extra["legacy_run_id"], "legacy-archive-run-1")
+            self.assertEqual(plan.rows[0].review_payload["comment"], "clean breakout")
+            self.assertEqual(plan.rows[0].chart, "data/kline/2026-05-26/000010_day.png")
+            self.assertEqual(plan.rows[1].brick_growth, 1.25)
+
+    def test_archive_import_plan_rejects_duplicate_review_key_before_db_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_legacy_fixture(Path(tmpdir))
+
+            with self.assertRaisesRegex(LegacyArchiveImportError, "duplicate history review_key"):
+                load_legacy_archive_import_plan(data_root, "2026-05-27")
 
     def test_service_and_route_imports_do_not_pull_heavy_legacy_modules(self) -> None:
         script = f"""
@@ -500,6 +608,102 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                         "dry_run": False,
                         "data_root": str(data_root),
                         "scope": "reviews",
+                        "pick_date": "2026-05-27",
+                    },
+                )
+                self.assertEqual(imported.status_code, 422)
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                self.assertEqual(runs.json()["runs"], [])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_imports_history_snapshot_when_scope_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_history_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "history",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                imported_payload = imported.json()
+                migration_id = imported_payload["migration_id"]
+                import_summary = imported_payload["import_summary"]
+                self.assertFalse(imported_payload["dry_run"])
+                self.assertEqual(import_summary["run_id"], migration_id)
+                self.assertEqual(import_summary["pick_date"], "2026-05-26")
+                self.assertEqual(import_summary["source_file"], "history/2026-05-26")
+                self.assertEqual(import_summary["archive_rows_imported"], 3)
+                self.assertEqual(import_summary["archive_reviewed_count"], 2)
+                self.assertEqual(import_summary["archive_recommended_count"], 1)
+                self.assertIsNotNone(import_summary["archive_snapshot_id"])
+                self.assertEqual(import_summary["strategy_counts"]["b2"]["recommended"], 1)
+
+                archive = await client.get("/api/archive/2026-05-26", params={"run_id": migration_id})
+                self.assertEqual(archive.status_code, 200)
+                archive_payload = archive.json()
+                self.assertEqual(archive_payload["total"], 3)
+                self.assertEqual(archive_payload["snapshots"][0]["id"], import_summary["archive_snapshot_id"])
+                self.assertEqual(archive_payload["snapshots"][0]["run_id"], migration_id)
+                self.assertEqual(archive_payload["snapshots"][0]["source"]["legacy_run_id"], "legacy-archive-run-1")
+                self.assertEqual(archive_payload["snapshots"][0]["summary"]["run_id"], "legacy-archive-run-1")
+                first = archive_payload["rows"][0]
+                self.assertEqual((first["code"], first["strategy"], first["review_key"]), ("000010", "b2", "000010_b2"))
+                self.assertEqual(first["run_id"], migration_id)
+                self.assertEqual(first["status"], "recommended")
+                self.assertEqual(first["rank"], 1)
+                self.assertEqual(first["extra"]["signal"], "breakout")
+                self.assertEqual(first["extra"]["legacy_run_id"], "legacy-archive-run-1")
+                self.assertEqual(first["review_payload"]["comment"], "clean breakout")
+                self.assertEqual(first["chart"], "data/kline/2026-05-26/000010_day.png")
+
+                recommended = await client.get(
+                    "/api/archive/2026-05-26",
+                    params={"run_id": migration_id, "status": "recommended"},
+                )
+                self.assertEqual(recommended.status_code, 200)
+                self.assertEqual([item["review_key"] for item in recommended.json()["rows"]], ["000010_b2"])
+
+                persisted = await client.get(f"/api/migrations/{migration_id}")
+                self.assertEqual(persisted.status_code, 200)
+                self.assertEqual(
+                    persisted.json()["report"]["import_summary"]["archive_snapshot_id"],
+                    import_summary["archive_snapshot_id"],
+                )
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_rejects_invalid_history_import_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_legacy_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "history",
                         "pick_date": "2026-05-27",
                     },
                 )

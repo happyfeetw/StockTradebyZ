@@ -294,6 +294,16 @@ export interface LegacyCandidateImportSummary {
   strategy_counts: Record<string, number>
 }
 
+export interface LegacyReviewImportSummary {
+  run_id: string
+  review_run_id: string
+  pick_date: string
+  source_directory: string
+  reviews_imported: number
+  recommendations_imported: number
+  provider: string
+}
+
 export interface LegacyImportDryRunReport {
   migration_id: string | null
   dry_run: boolean
@@ -302,7 +312,7 @@ export interface LegacyImportDryRunReport {
   totals: LegacyImportTotals
   warnings: LegacyImportIssue[]
   quarantine: LegacyImportIssue[]
-  import_summary: LegacyCandidateImportSummary | null
+  import_summary: LegacyCandidateImportSummary | LegacyReviewImportSummary | null
 }
 
 export class ApiError extends Error {

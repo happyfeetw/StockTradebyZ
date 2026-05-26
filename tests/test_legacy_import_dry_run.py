@@ -22,6 +22,7 @@ from stocktrade_api.services.legacy_import import (  # noqa: E402
     LegacyCandidateImportError,
     legacy_review_key,
     load_legacy_candidate_import_plan,
+    load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
 )
 
@@ -144,6 +145,52 @@ def build_valid_candidate_import_fixture(root: Path) -> Path:
     return data_root
 
 
+def build_valid_review_import_fixture(root: Path) -> Path:
+    data_root = root / "data"
+    review_dir = data_root / "review" / "2026-05-26"
+    write_json(
+        review_dir / "000010_b2.json",
+        {
+            "code": "000010",
+            "strategy": "b2",
+            "review_key": "000010_b2",
+            "verdict": "PASS",
+            "total_score": 4.8,
+            "reviewer": "gemini-cli",
+            "comment": "clean breakout",
+        },
+    )
+    write_json(
+        review_dir / "000011_brick.json",
+        {
+            "code": "000011",
+            "strategy": "brick",
+            "total_score": "3.2",
+            "comment": "watch only",
+        },
+    )
+    write_json(
+        review_dir / "suggestion.json",
+        {
+            "date": "2026-05-26",
+            "provider": "gemini-cli",
+            "total_reviewed": 2,
+            "recommendations": [
+                {
+                    "rank": 1,
+                    "code": "000010",
+                    "strategy": "b2",
+                    "review_key": "000010_b2",
+                    "verdict": "PASS",
+                    "total_score": 4.8,
+                    "comment": "score threshold",
+                }
+            ],
+        },
+    )
+    return data_root
+
+
 class LegacyImportDryRunTests(unittest.TestCase):
     def test_dry_run_returns_deterministic_structured_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -213,6 +260,27 @@ class LegacyImportDryRunTests(unittest.TestCase):
 
             with self.assertRaisesRegex(LegacyCandidateImportError, "duplicate candidate identity"):
                 load_legacy_candidate_import_plan(data_root, "2026-05-27")
+
+    def test_review_import_plan_loads_one_dated_review_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_valid_review_import_fixture(Path(tmpdir))
+
+            plan = load_legacy_review_import_plan(data_root, "2026-05-26")
+
+            self.assertEqual(plan.source_path, "review/2026-05-26")
+            self.assertEqual(plan.pick_date, "2026-05-26")
+            self.assertEqual(plan.provider, "gemini-cli")
+            self.assertEqual([review.review_key for review in plan.reviews], ["000010_b2", "000011_brick"])
+            self.assertEqual(plan.reviews[1].total_score, 3.2)
+            self.assertEqual(plan.recommendations[0].review_key, "000010_b2")
+            self.assertEqual(plan.summary["total_reviewed"], 2)
+
+    def test_review_import_plan_rejects_key_mismatch_before_db_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_legacy_fixture(Path(tmpdir))
+
+            with self.assertRaisesRegex(LegacyCandidateImportError, "review_key does not match"):
+                load_legacy_review_import_plan(data_root, "2026-05-27")
 
     def test_service_and_route_imports_do_not_pull_heavy_legacy_modules(self) -> None:
         script = f"""
@@ -331,6 +399,62 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
+    async def test_import_legacy_api_imports_review_batch_when_scope_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_review_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "reviews",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                imported_payload = imported.json()
+                migration_id = imported_payload["migration_id"]
+                import_summary = imported_payload["import_summary"]
+                self.assertFalse(imported_payload["dry_run"])
+                self.assertEqual(import_summary["run_id"], migration_id)
+                self.assertEqual(import_summary["pick_date"], "2026-05-26")
+                self.assertEqual(import_summary["source_directory"], "review/2026-05-26")
+                self.assertEqual(import_summary["reviews_imported"], 2)
+                self.assertEqual(import_summary["recommendations_imported"], 1)
+
+                reviews = await client.get("/api/reviews", params={"run_id": migration_id})
+                self.assertEqual(reviews.status_code, 200)
+                reviews_payload = reviews.json()
+                self.assertEqual(reviews_payload["total"], 2)
+                first = reviews_payload["reviews"][0]
+                self.assertEqual((first["review_key"], first["code"], first["strategy"]), ("000010_b2", "000010", "b2"))
+                self.assertEqual(first["review_run"]["provider"], "gemini-cli")
+                self.assertEqual(first["review_run"]["summary"]["total_reviewed"], 2)
+                self.assertEqual(first["payload"]["comment"], "clean breakout")
+                self.assertEqual(first["recommendation"]["rank"], 1)
+                self.assertEqual(first["recommendation"]["payload"]["comment"], "score threshold")
+
+                recommended = await client.get(
+                    "/api/reviews",
+                    params={"run_id": migration_id, "recommendation_status": "recommended"},
+                )
+                self.assertEqual(recommended.status_code, 200)
+                self.assertEqual(recommended.json()["total"], 1)
+
+                persisted = await client.get(f"/api/migrations/{migration_id}")
+                self.assertEqual(persisted.status_code, 200)
+                self.assertEqual(persisted.json()["report"]["import_summary"]["review_run_id"], import_summary["review_run_id"])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
     async def test_import_legacy_api_rejects_invalid_candidate_import_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -347,6 +471,34 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                         "dry_run": False,
                         "data_root": str(data_root),
                         "scope": "candidates",
+                        "pick_date": "2026-05-27",
+                    },
+                )
+                self.assertEqual(imported.status_code, 422)
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                self.assertEqual(runs.json()["runs"], [])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_rejects_invalid_review_import_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_legacy_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "reviews",
                         "pick_date": "2026-05-27",
                     },
                 )

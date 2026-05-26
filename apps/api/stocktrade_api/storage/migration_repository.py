@@ -12,8 +12,19 @@ from ..schemas.migrations import (
     LegacyCandidateImportSummary,
     LegacyImportDryRunReport,
     LegacyImportIssue,
+    LegacyReviewImportPlan,
+    LegacyReviewImportSummary,
 )
-from .sqlite_models import Candidate, CandidateBatch, MigrationQuarantine, MigrationRun, Run
+from .sqlite_models import (
+    Candidate,
+    CandidateBatch,
+    MigrationQuarantine,
+    MigrationRun,
+    Recommendation,
+    Review,
+    ReviewRun,
+    Run,
+)
 
 
 def utc_now() -> datetime:
@@ -143,6 +154,109 @@ class MigrationRepository:
                         turnover_n=candidate.turnover_n,
                         brick_growth=candidate.brick_growth,
                         extra_json=candidate.extra,
+                    )
+                )
+            self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.commit()
+            migration_run = self._load_migration_run(session, run_id)
+            if migration_run is None:
+                raise MigrationRunNotFoundError(run_id)
+            return migration_run
+
+    def record_review_import(
+        self,
+        report: LegacyImportDryRunReport,
+        plan: LegacyReviewImportPlan,
+        *,
+        migration_id: str | None = None,
+        review_run_id: str | None = None,
+    ) -> MigrationRun:
+        run_id = migration_id or uuid4().hex
+        review_batch_id = review_run_id or uuid4().hex
+        now = utc_now()
+        import_summary = LegacyReviewImportSummary(
+            run_id=run_id,
+            review_run_id=review_batch_id,
+            pick_date=plan.pick_date,
+            source_directory=plan.source_path,
+            reviews_imported=len(plan.reviews),
+            recommendations_imported=len(plan.recommendations),
+            provider=plan.provider,
+        )
+        stored_report = report.model_copy(
+            update={
+                "migration_id": run_id,
+                "dry_run": False,
+                "import_summary": import_summary,
+            }
+        )
+        report_payload = stored_report.model_dump(mode="json")
+        summary = {
+            "dry_run": False,
+            "data_root": report.data_root,
+            "totals": report_payload["totals"],
+            "import_summary": report_payload["import_summary"],
+        }
+
+        with self.session_factory() as session:
+            session.add(
+                Run(
+                    id=run_id,
+                    kind="legacy_import",
+                    status="succeeded",
+                    pick_date=plan.pick_date,
+                    started_at=now,
+                    finished_at=now,
+                    summary_json=summary,
+                )
+            )
+            session.add(
+                MigrationRun(
+                    id=run_id,
+                    source_root=report.data_root,
+                    status="succeeded",
+                    started_at=now,
+                    finished_at=now,
+                    report_json=report_payload,
+                )
+            )
+            session.add(
+                ReviewRun(
+                    id=review_batch_id,
+                    run_id=run_id,
+                    pick_date=plan.pick_date,
+                    provider=plan.provider,
+                    status="succeeded",
+                    summary_json=plan.summary,
+                )
+            )
+            review_by_key: dict[str, Review] = {}
+            for item in plan.reviews:
+                review = Review(
+                    review_run_id=review_batch_id,
+                    code=item.code,
+                    strategy=item.strategy,
+                    review_key=item.review_key,
+                    verdict=item.verdict,
+                    total_score=item.total_score,
+                    reviewer=item.reviewer or plan.provider,
+                    payload_json=item.payload,
+                )
+                session.add(review)
+                review_by_key[item.review_key] = review
+            session.flush()
+            for item in plan.recommendations:
+                session.add(
+                    Recommendation(
+                        review_run_id=review_batch_id,
+                        review=review_by_key.get(item.review_key),
+                        rank=item.rank,
+                        code=item.code,
+                        strategy=item.strategy,
+                        review_key=item.review_key,
+                        verdict=item.verdict,
+                        total_score=item.total_score,
+                        payload_json=item.payload,
                     )
                 )
             self._add_quarantine_rows(session, run_id, report.quarantine)

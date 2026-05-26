@@ -23,25 +23,30 @@ import './App.css'
 import {
   cancelRun,
   createDiagnosticRun,
+  getCandidate,
   getHealth,
+  getReview,
   getRun,
   getRunArtifacts,
   getRunEvents,
+  listCandidates,
   listRuns,
+  listReviews,
   type Artifact,
   type Candidate,
   type CandidateFilters,
   type JobEvent,
+  type RecommendationStatus,
+  type Review,
+  type ReviewFilters,
   type RunStatus,
   type RunSummary,
-  getCandidate,
-  listCandidates,
 } from './api'
 
 const navItems = [
   { to: '/runs', label: 'Runs', icon: Activity, state: 'active' },
   { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
-  { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'pending' },
+  { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
   { to: '/archive', label: 'Archive', icon: Archive, state: 'pending' },
   { to: '/migrations', label: 'Migrations', icon: Database, state: 'pending' },
 ]
@@ -85,7 +90,7 @@ function App() {
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsView />} />
           <Route path="/candidates" element={<CandidatesView />} />
-          <Route path="/reviews" element={<Placeholder title="Reviews" />} />
+          <Route path="/reviews" element={<ReviewsView />} />
           <Route path="/archive" element={<Placeholder title="Archive" />} />
           <Route path="/migrations" element={<Placeholder title="Migrations" />} />
         </Routes>
@@ -242,6 +247,212 @@ function CandidatesView() {
             </div>
           ) : null}
           {detailQuery.data ? <CandidateDetailPanel candidate={detailQuery.data.candidate} /> : null}
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function ReviewsView() {
+  const queryClient = useQueryClient()
+  const [filters, setFilters] = useState<Required<ReviewFilters>>({
+    pick_date: '',
+    run_id: '',
+    review_run_id: '',
+    candidate_batch_id: '',
+    strategy: '',
+    code: '',
+    review_key: '',
+    reviewer: '',
+    recommendation_status: 'all',
+  })
+  const [selectedReviewId, setSelectedReviewId] = useState<number | null>(null)
+
+  const normalizedFilters = {
+    pick_date: filters.pick_date.trim(),
+    run_id: filters.run_id.trim(),
+    review_run_id: filters.review_run_id.trim(),
+    candidate_batch_id: filters.candidate_batch_id.trim(),
+    strategy: filters.strategy.trim(),
+    code: filters.code.trim(),
+    review_key: filters.review_key.trim(),
+    reviewer: filters.reviewer.trim(),
+    recommendation_status: filters.recommendation_status,
+  }
+
+  const reviewsQuery = useQuery({
+    queryKey: ['reviews', normalizedFilters],
+    queryFn: () => listReviews(normalizedFilters),
+  })
+  const reviews = reviewsQuery.data?.reviews ?? []
+  const selectedStillVisible = selectedReviewId !== null && reviews.some((review) => review.id === selectedReviewId)
+  const activeReviewId = selectedStillVisible ? selectedReviewId : reviews[0]?.id
+
+  const detailQuery = useQuery({
+    queryKey: ['review', activeReviewId],
+    queryFn: () => getReview(activeReviewId as number),
+    enabled: typeof activeReviewId === 'number',
+  })
+
+  const hasFilters = Object.entries(filters).some(([key, value]) => {
+    if (key === 'recommendation_status') return value !== 'all'
+    return value.trim()
+  })
+
+  function updateFilter(key: Exclude<keyof ReviewFilters, 'recommendation_status'>, value: string) {
+    setFilters((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateRecommendationStatus(value: RecommendationStatus) {
+    setFilters((current) => ({ ...current, recommendation_status: value }))
+  }
+
+  function resetFilters() {
+    setFilters({
+      pick_date: '',
+      run_id: '',
+      review_run_id: '',
+      candidate_batch_id: '',
+      strategy: '',
+      code: '',
+      review_key: '',
+      reviewer: '',
+      recommendation_status: 'all',
+    })
+    setSelectedReviewId(null)
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Review evidence</p>
+          <h1>Reviews</h1>
+        </div>
+        <button
+          type="button"
+          className="icon-button secondary"
+          aria-label="Refresh reviews"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['reviews'] })
+            queryClient.invalidateQueries({ queryKey: ['review'] })
+          }}
+        >
+          <RefreshCw size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      <form className="filter-bar review-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Review filters">
+        <FilterInput
+          label="Pick date"
+          placeholder="2026-05-27"
+          type="date"
+          value={filters.pick_date}
+          onChange={(value) => updateFilter('pick_date', value)}
+        />
+        <FilterInput label="Run id" placeholder="run id" value={filters.run_id} onChange={(value) => updateFilter('run_id', value)} />
+        <FilterInput
+          label="Review run"
+          placeholder="review batch"
+          value={filters.review_run_id}
+          onChange={(value) => updateFilter('review_run_id', value)}
+        />
+        <FilterInput
+          label="Batch"
+          placeholder="candidate batch"
+          value={filters.candidate_batch_id}
+          onChange={(value) => updateFilter('candidate_batch_id', value)}
+        />
+        <FilterInput
+          label="Strategy"
+          placeholder="b2 / brick"
+          value={filters.strategy}
+          onChange={(value) => updateFilter('strategy', value)}
+        />
+        <FilterInput label="Code" placeholder="000001" value={filters.code} onChange={(value) => updateFilter('code', value)} />
+        <FilterInput
+          label="Review key"
+          placeholder="000001_b2"
+          value={filters.review_key}
+          onChange={(value) => updateFilter('review_key', value)}
+        />
+        <FilterInput
+          label="Reviewer"
+          placeholder="gemini-cli"
+          value={filters.reviewer}
+          onChange={(value) => updateFilter('reviewer', value)}
+        />
+        <FilterSelect label="Status" value={filters.recommendation_status} onChange={updateRecommendationStatus} />
+        <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
+          <XCircle size={17} aria-hidden="true" />
+          <span>Clear</span>
+        </button>
+      </form>
+
+      {reviewsQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(reviewsQuery.error)}</span>
+        </div>
+      ) : null}
+
+      <div className="review-grid">
+        <section className="review-list-panel" aria-label="Review list">
+          <div className="panel-heading">
+            <div>
+              <h2>Review rows</h2>
+              <p>{reviewsQuery.isLoading ? 'Loading review rows' : `${reviewsQuery.data?.total ?? 0} records`}</p>
+            </div>
+          </div>
+
+          {reviewsQuery.isLoading ? <RunSkeleton /> : null}
+          {!reviewsQuery.isLoading && reviews.length === 0 ? (
+            <div className="empty-state">
+              <FileSearch size={24} aria-hidden="true" />
+              <h3>{hasFilters ? 'No reviews match the filters' : 'No review rows yet'}</h3>
+            </div>
+          ) : null}
+
+          <div className="review-list">
+            {reviews.map((review) => (
+              <button
+                key={review.id}
+                type="button"
+                className={review.id === activeReviewId ? 'review-row selected' : 'review-row'}
+                onClick={() => setSelectedReviewId(review.id)}
+                aria-label={`${review.code} ${review.strategy} review ${review.review_key}`}
+              >
+                <span className="review-row-head">
+                  <span className="candidate-code">{review.code}</span>
+                  <span className="strategy-chip">{review.strategy}</span>
+                </span>
+                <span className={`verdict-chip ${verdictClass(review.verdict)}`}>{review.verdict ?? 'No verdict'}</span>
+                <CandidateCell label="Score" value={formatNumber(review.total_score)} strong />
+                <CandidateCell label="Rank" value={formatRank(review)} />
+                <CandidateCell label="Pick date" value={review.pick_date} />
+                <CandidateCell label="Review key" value={review.review_key} mono wide extra />
+                <CandidateCell label="Run" value={review.run_id} mono wide />
+                <CandidateCell label="Reviewer" value={reviewerName(review)} />
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="detail-panel" aria-label="Review detail">
+          {detailQuery.isError ? (
+            <div className="alert detail-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(detailQuery.error)}</span>
+            </div>
+          ) : null}
+          {detailQuery.isLoading && activeReviewId ? <RunDetailSkeleton /> : null}
+          {!activeReviewId && !reviewsQuery.isLoading ? (
+            <div className="empty-state detail-empty">
+              <FileSearch size={24} aria-hidden="true" />
+              <h3>Select a review</h3>
+            </div>
+          ) : null}
+          {detailQuery.data ? <ReviewDetailPanel review={detailQuery.data.review} /> : null}
         </section>
       </div>
     </div>
@@ -528,6 +739,62 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
   )
 }
 
+function ReviewDetailPanel({ review }: { review: Review }) {
+  return (
+    <div className="detail-content">
+      <div className="detail-header">
+        <div>
+          <p className="eyebrow">Selected review</p>
+          <h2>{review.code}</h2>
+          <p className="muted run-id-wrap">{review.review_key}</p>
+        </div>
+        <div className="review-detail-actions">
+          <span className="strategy-chip large">{review.strategy}</span>
+          <span className={`verdict-chip large ${verdictClass(review.verdict)}`}>{review.verdict ?? 'No verdict'}</span>
+        </div>
+      </div>
+
+      <div className="detail-meta review-metrics">
+        <Metric label="Pick date" value={review.pick_date} />
+        <Metric label="Score" value={formatNumber(review.total_score)} />
+        <Metric label="Rank" value={formatRank(review)} />
+        <Metric label="Provider" value={reviewerName(review)} />
+      </div>
+
+      <section className="subsection">
+        <h3>Lineage</h3>
+        <div className="lineage-grid">
+          <DataPair label="Review id" value={review.id.toString()} />
+          <DataPair label="Review run" value={review.review_run_id} />
+          <DataPair label="Run id" value={review.run_id} />
+          <DataPair label="Candidate batch" value={review.candidate_batch_id ?? 'Not linked'} />
+          <DataPair label="Candidate id" value={review.candidate_id?.toString() ?? 'Not linked'} />
+          <DataPair label="Created" value={formatDateTime(review.created_at)} />
+        </div>
+      </section>
+
+      <section className="subsection">
+        <h3>Review payload</h3>
+        <pre className="json-block">{jsonPreview(review.payload)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Review run summary</h3>
+        <pre className="json-block">{jsonPreview(review.review_run.summary)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Recommendation payload</h3>
+        {review.recommendation ? (
+          <pre className="json-block">{jsonPreview(review.recommendation.payload)}</pre>
+        ) : (
+          <p className="muted">This review is not in the recommendation list.</p>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function FilterInput({
   label,
   value,
@@ -545,6 +812,27 @@ function FilterInput({
     <label className="filter-field">
       <span>{label}</span>
       <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: RecommendationStatus
+  onChange: (value: RecommendationStatus) => void
+}) {
+  return (
+    <label className="filter-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value as RecommendationStatus)}>
+        <option value="all">All reviews</option>
+        <option value="recommended">Recommended</option>
+        <option value="reviewed">Reviewed only</option>
+      </select>
     </label>
   )
 }
@@ -656,6 +944,22 @@ function formatDateTime(value: string | null) {
 function formatNumber(value: number | null) {
   if (value === null || Number.isNaN(value)) return 'Not set'
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value)
+}
+
+function formatRank(review: Review) {
+  return review.recommendation ? `#${review.recommendation.rank}` : 'No rank'
+}
+
+function reviewerName(review: Review) {
+  return review.reviewer || review.review_run.provider || 'Not set'
+}
+
+function verdictClass(verdict: string | null) {
+  const normalized = verdict?.toLowerCase()
+  if (normalized === 'pass') return 'pass'
+  if (normalized === 'fail') return 'fail'
+  if (normalized === 'watch') return 'watch'
+  return 'neutral'
 }
 
 function jsonPreview(value: Record<string, unknown> | null) {

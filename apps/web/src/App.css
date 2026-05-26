@@ -237,8 +237,17 @@ h3 {
   align-items: start;
 }
 
+.review-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(460px, 1fr) minmax(360px, 0.86fr);
+  gap: 18px;
+  align-items: start;
+}
+
 .run-list-panel,
 .candidate-list-panel,
+.review-list-panel,
 .detail-panel,
 .placeholder-panel {
   background: var(--surface);
@@ -248,12 +257,14 @@ h3 {
 
 .run-list-panel,
 .candidate-list-panel,
+.review-list-panel,
 .detail-panel {
   min-height: 520px;
 }
 
 .run-list-panel,
-.candidate-list-panel {
+.candidate-list-panel,
+.review-list-panel {
   padding: 16px;
 }
 
@@ -345,7 +356,8 @@ button {
   font-weight: 650;
 }
 
-.filter-field input {
+.filter-field input,
+.filter-field select {
   width: 100%;
   min-height: 40px;
   border-radius: 8px;
@@ -356,7 +368,8 @@ button {
   font: inherit;
 }
 
-.filter-field input:focus {
+.filter-field input:focus,
+.filter-field select:focus {
   outline: 3px solid rgba(15, 118, 110, 0.18);
   border-color: var(--primary-line);
 }
@@ -367,6 +380,12 @@ button {
 }
 
 .candidate-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.review-list {
   margin-top: 14px;
   display: grid;
   gap: 8px;
@@ -387,14 +406,33 @@ button {
   cursor: pointer;
 }
 
+.review-row {
+  width: 100%;
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: minmax(132px, 0.9fr) minmax(104px, 0.62fr) repeat(3, minmax(92px, 0.72fr));
+  align-items: stretch;
+  gap: 8px;
+  padding: 11px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .candidate-row:hover,
 .candidate-row:focus-visible,
-.candidate-row.selected {
+.candidate-row.selected,
+.review-row:hover,
+.review-row:focus-visible,
+.review-row.selected {
   border-color: var(--primary-line);
   background: var(--surface-strong);
 }
 
-.candidate-row-head {
+.candidate-row-head,
+.review-row-head {
   min-width: 0;
   display: grid;
   align-content: center;
@@ -470,6 +508,51 @@ button {
 .strategy-chip.large {
   min-height: 32px;
   font-size: 13px;
+}
+
+.verdict-chip {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.verdict-chip.large {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.verdict-chip.pass {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: var(--success-line);
+}
+
+.verdict-chip.fail {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger-line);
+}
+
+.verdict-chip.watch {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.review-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .run-row {
@@ -583,6 +666,10 @@ code {
 }
 
 .candidate-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.review-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
@@ -821,6 +908,10 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .review-grid {
+    grid-template-columns: 1fr;
+  }
+
   .filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -840,6 +931,7 @@ code {
   .summary-strip,
   .detail-meta,
   .candidate-metrics,
+  .review-metrics,
   .skeleton-grid {
     grid-template-columns: 1fr;
   }
@@ -865,14 +957,24 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .candidate-row-head {
+  .review-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .candidate-row-head,
+  .review-row-head {
     grid-column: 1 / -1;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
 
-  .candidate-row .strategy-chip {
+  .candidate-row .strategy-chip,
+  .review-row .strategy-chip {
     justify-self: end;
+  }
+
+  .review-row .verdict-chip {
+    justify-self: start;
   }
 
   .candidate-cell.extra {
@@ -890,11 +992,17 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .candidate-row-head {
+  .review-row {
     grid-template-columns: 1fr;
   }
 
-  .candidate-row .strategy-chip {
+  .candidate-row-head,
+  .review-row-head {
+    grid-template-columns: 1fr;
+  }
+
+  .candidate-row .strategy-chip,
+  .review-row .strategy-chip {
     justify-self: start;
   }
 

@@ -9,7 +9,12 @@ from ..schemas.migrations import (
     LegacyMigrationRunResponse,
     MigrationQuarantineRecord,
 )
-from ..services.legacy_import import scan_legacy_import_dry_run
+from ..services.legacy_import import (
+    LegacyCandidateImportError,
+    build_legacy_candidate_import_report,
+    load_legacy_candidate_import_plan,
+    scan_legacy_import_dry_run,
+)
 from ..storage.migration_repository import MigrationRepository, MigrationRunNotFoundError
 from ..storage.sqlite_models import MigrationQuarantine, MigrationRun
 
@@ -21,11 +26,27 @@ def import_legacy(
     request: LegacyImportDryRunRequest,
     repository: MigrationRepository = Depends(get_migration_repository),
 ) -> LegacyImportDryRunReport:
-    if not request.dry_run:
-        raise HTTPException(status_code=409, detail="legacy import writes are not enabled yet")
-    report = scan_legacy_import_dry_run(request.data_root)
-    migration_run = repository.record_dry_run(report)
-    return report.model_copy(update={"migration_id": migration_run.id})
+    if not request.dry_run and (request.scope != "candidates" or not request.pick_date):
+        raise HTTPException(
+            status_code=409,
+            detail="legacy import writes require scope='candidates' and pick_date",
+        )
+
+    if request.dry_run:
+        report = scan_legacy_import_dry_run(request.data_root)
+        migration_run = repository.record_dry_run(report)
+        return report.model_copy(update={"migration_id": migration_run.id})
+
+    try:
+        import_plan = load_legacy_candidate_import_plan(request.data_root, request.pick_date)
+    except LegacyCandidateImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    migration_run = repository.record_candidate_import(
+        build_legacy_candidate_import_report(import_plan),
+        import_plan,
+    )
+    return LegacyImportDryRunReport.model_validate(migration_run.report_json or {})
 
 
 def quarantine_record(row: MigrationQuarantine, repository: MigrationRepository) -> MigrationQuarantineRecord:

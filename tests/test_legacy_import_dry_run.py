@@ -18,7 +18,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from archive_results import review_key as legacy_archive_review_key  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
-from stocktrade_api.services.legacy_import import legacy_review_key, scan_legacy_import_dry_run  # noqa: E402
+from stocktrade_api.services.legacy_import import (  # noqa: E402
+    LegacyCandidateImportError,
+    legacy_review_key,
+    load_legacy_candidate_import_plan,
+    scan_legacy_import_dry_run,
+)
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -109,6 +114,36 @@ def build_legacy_fixture(root: Path) -> Path:
     return data_root
 
 
+def build_valid_candidate_import_fixture(root: Path) -> Path:
+    data_root = root / "data"
+    write_json(
+        data_root / "candidates" / "candidates_2026-05-26.json",
+        {
+            "run_date": "2026-05-27",
+            "pick_date": "2026-05-26",
+            "candidates": [
+                {
+                    "code": "000010",
+                    "date": "2026-05-26",
+                    "strategy": "b2",
+                    "close": 10.5,
+                    "turnover_n": 105.0,
+                    "signal": "breakout",
+                },
+                {
+                    "code": "000011",
+                    "date": "2026-05-26",
+                    "strategy": "brick",
+                    "close": "8.2",
+                    "turnover_n": "82.0",
+                    "brick_growth": "1.25",
+                },
+            ],
+        },
+    )
+    return data_root
+
+
 class LegacyImportDryRunTests(unittest.TestCase):
     def test_dry_run_returns_deterministic_structured_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -158,6 +193,26 @@ class LegacyImportDryRunTests(unittest.TestCase):
         ]
         for code, strategy in cases:
             self.assertEqual(legacy_review_key(code, strategy), legacy_archive_review_key(code, strategy))
+
+    def test_candidate_import_plan_loads_one_dated_candidate_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_valid_candidate_import_fixture(Path(tmpdir))
+
+            plan = load_legacy_candidate_import_plan(data_root, "2026-05-26")
+
+            self.assertEqual(plan.source_path, "candidates/candidates_2026-05-26.json")
+            self.assertEqual(plan.pick_date, "2026-05-26")
+            self.assertEqual(plan.strategy_counts, {"b2": 1, "brick": 1})
+            self.assertEqual([(candidate.code, candidate.strategy) for candidate in plan.candidates], [("000010", "b2"), ("000011", "brick")])
+            self.assertEqual(plan.candidates[0].extra["signal"], "breakout")
+            self.assertEqual(plan.candidates[1].brick_growth, 1.25)
+
+    def test_candidate_import_plan_rejects_duplicate_identity_before_db_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_root = build_legacy_fixture(Path(tmpdir))
+
+            with self.assertRaisesRegex(LegacyCandidateImportError, "duplicate candidate identity"):
+                load_legacy_candidate_import_plan(data_root, "2026-05-27")
 
     def test_service_and_route_imports_do_not_pull_heavy_legacy_modules(self) -> None:
         script = f"""
@@ -225,6 +280,81 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
 
                 missing = await client.get("/api/migrations/not-found")
                 self.assertEqual(missing.status_code, 404)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_imports_candidate_batch_when_scope_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_candidate_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "candidates",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                imported_payload = imported.json()
+                migration_id = imported_payload["migration_id"]
+                import_summary = imported_payload["import_summary"]
+                self.assertFalse(imported_payload["dry_run"])
+                self.assertEqual(import_summary["run_id"], migration_id)
+                self.assertEqual(import_summary["pick_date"], "2026-05-26")
+                self.assertEqual(import_summary["source_file"], "candidates/candidates_2026-05-26.json")
+                self.assertEqual(import_summary["candidates_imported"], 2)
+                self.assertEqual(import_summary["strategy_counts"], {"b2": 1, "brick": 1})
+
+                candidates = await client.get("/api/candidates", params={"run_id": migration_id})
+                self.assertEqual(candidates.status_code, 200)
+                candidates_payload = candidates.json()
+                self.assertEqual(candidates_payload["total"], 2)
+                first = candidates_payload["candidates"][0]
+                self.assertEqual((first["code"], first["strategy"], first["pick_date"]), ("000010", "b2", "2026-05-26"))
+                self.assertEqual(first["batch"]["source"], "legacy:candidates")
+                self.assertEqual(first["batch"]["strategy_counts"], {"b2": 1, "brick": 1})
+                self.assertEqual(first["extra"]["signal"], "breakout")
+
+                persisted = await client.get(f"/api/migrations/{migration_id}")
+                self.assertEqual(persisted.status_code, 200)
+                self.assertEqual(persisted.json()["report"]["import_summary"]["batch_id"], import_summary["batch_id"])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_rejects_invalid_candidate_import_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_legacy_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "candidates",
+                        "pick_date": "2026-05-27",
+                    },
+                )
+                self.assertEqual(imported.status_code, 422)
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                self.assertEqual(runs.json()["runs"], [])
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

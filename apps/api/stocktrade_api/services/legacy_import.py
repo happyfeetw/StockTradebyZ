@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from ..schemas.migrations import (
+    LegacyCandidateImportPlan,
+    LegacyCandidateImportRecord,
     LegacyImportDryRunReport,
     LegacyImportIssue,
     LegacyImportSectionReport,
@@ -15,6 +17,13 @@ from ..schemas.migrations import (
 )
 
 LEGACY_SECTIONS = ("candidates", "reviews", "history")
+LEGACY_CANDIDATE_FIELDS = {"code", "date", "strategy", "close", "turnover_n", "brick_growth"}
+
+
+class LegacyCandidateImportError(ValueError):
+    def __init__(self, message: str, *, status_code: int = 422):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def legacy_review_key(code: str, strategy: str = "") -> str:
@@ -317,3 +326,132 @@ class LegacyImportDryRunScanner:
 
 def scan_legacy_import_dry_run(data_root: str | Path) -> LegacyImportDryRunReport:
     return LegacyImportDryRunScanner(data_root).scan()
+
+
+def load_legacy_candidate_import_plan(data_root: str | Path, pick_date: str) -> LegacyCandidateImportPlan:
+    root = Path(data_root).expanduser()
+    source_path = root / "candidates" / f"candidates_{pick_date}.json"
+    payload = _load_candidate_import_payload(source_path)
+    if payload.get("pick_date") != pick_date:
+        raise LegacyCandidateImportError("candidate file pick_date does not match requested pick_date")
+
+    run_date = str(payload.get("run_date") or "")
+    if not run_date:
+        raise LegacyCandidateImportError("candidate file requires run_date")
+
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        raise LegacyCandidateImportError("candidate file must contain a candidates list")
+
+    records: list[LegacyCandidateImportRecord] = []
+    seen_keys: set[tuple[str, str]] = set()
+    strategy_counts: Counter[str] = Counter()
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            raise LegacyCandidateImportError(f"candidate row {index} must be an object")
+
+        missing = [
+            field
+            for field in ("code", "date", "strategy", "close", "turnover_n")
+            if candidate.get(field) in (None, "")
+        ]
+        if missing:
+            raise LegacyCandidateImportError(f"candidate row {index} missing fields: {', '.join(missing)}")
+
+        code = str(candidate["code"])
+        strategy = str(candidate["strategy"])
+        identity = (code, strategy)
+        if identity in seen_keys:
+            raise LegacyCandidateImportError(f"duplicate candidate identity in import file: {code}:{strategy}")
+        seen_keys.add(identity)
+
+        candidate_date = str(candidate["date"])
+        if candidate_date != pick_date:
+            raise LegacyCandidateImportError(f"candidate row {index} date does not match requested pick_date")
+
+        extra = {str(key): value for key, value in candidate.items() if key not in LEGACY_CANDIDATE_FIELDS}
+        records.append(
+            LegacyCandidateImportRecord(
+                code=code,
+                date=candidate_date,
+                strategy=strategy,
+                close=_candidate_float(candidate["close"], f"candidate row {index} close"),
+                turnover_n=_candidate_float(candidate["turnover_n"], f"candidate row {index} turnover_n"),
+                brick_growth=_candidate_optional_float(
+                    candidate.get("brick_growth"),
+                    f"candidate row {index} brick_growth",
+                ),
+                extra=extra,
+            )
+        )
+        strategy_counts[strategy] += 1
+
+    return LegacyCandidateImportPlan(
+        data_root=root.as_posix(),
+        source_path=_relative_source_path(root, source_path),
+        run_date=run_date,
+        pick_date=pick_date,
+        strategy_counts=dict(sorted(strategy_counts.items())),
+        candidates=records,
+    )
+
+
+def build_legacy_candidate_import_report(plan: LegacyCandidateImportPlan) -> LegacyImportDryRunReport:
+    section_reports = {section: LegacyImportSectionReport() for section in LEGACY_SECTIONS}
+    section_reports["candidates"] = LegacyImportSectionReport(
+        files_seen=1,
+        files_valid=1,
+        records_seen=len(plan.candidates),
+        records_valid=len(plan.candidates),
+        by_kind={"dated": 1},
+    )
+    totals = LegacyImportTotals(
+        files_seen=1,
+        files_valid=1,
+        records_seen=len(plan.candidates),
+        records_valid=len(plan.candidates),
+        warning_count=0,
+        quarantine_count=0,
+    )
+    return LegacyImportDryRunReport(
+        dry_run=False,
+        data_root=plan.data_root,
+        sections=section_reports,
+        totals=totals,
+        warnings=[],
+        quarantine=[],
+    )
+
+
+def _load_candidate_import_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise LegacyCandidateImportError("candidate file does not exist", status_code=404) from exc
+    except json.JSONDecodeError as exc:
+        raise LegacyCandidateImportError(f"candidate file is malformed JSON: {exc}") from exc
+    except OSError as exc:
+        raise LegacyCandidateImportError(f"candidate file is unreadable: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise LegacyCandidateImportError("candidate file root must be an object")
+    return payload
+
+
+def _candidate_float(value: Any, label: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise LegacyCandidateImportError(f"{label} must be numeric") from exc
+
+
+def _candidate_optional_float(value: Any, label: str) -> float | None:
+    if value in (None, ""):
+        return None
+    return _candidate_float(value, label)
+
+
+def _relative_source_path(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()

@@ -7,8 +7,13 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from ..schemas.migrations import LegacyImportDryRunReport, LegacyImportIssue
-from .sqlite_models import MigrationQuarantine, MigrationRun, Run
+from ..schemas.migrations import (
+    LegacyCandidateImportPlan,
+    LegacyCandidateImportSummary,
+    LegacyImportDryRunReport,
+    LegacyImportIssue,
+)
+from .sqlite_models import Candidate, CandidateBatch, MigrationQuarantine, MigrationRun, Run
 
 
 def utc_now() -> datetime:
@@ -55,15 +60,92 @@ class MigrationRepository:
                     report_json=report_payload,
                 )
             )
-            for issue in report.quarantine:
+            self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.commit()
+            migration_run = self._load_migration_run(session, run_id)
+            if migration_run is None:
+                raise MigrationRunNotFoundError(run_id)
+            return migration_run
+
+    def record_candidate_import(
+        self,
+        report: LegacyImportDryRunReport,
+        plan: LegacyCandidateImportPlan,
+        *,
+        migration_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> MigrationRun:
+        run_id = migration_id or uuid4().hex
+        candidate_batch_id = batch_id or uuid4().hex
+        now = utc_now()
+        import_summary = LegacyCandidateImportSummary(
+            run_id=run_id,
+            batch_id=candidate_batch_id,
+            pick_date=plan.pick_date,
+            source_file=plan.source_path,
+            candidates_imported=len(plan.candidates),
+            strategy_counts=plan.strategy_counts,
+        )
+        stored_report = report.model_copy(
+            update={
+                "migration_id": run_id,
+                "dry_run": False,
+                "import_summary": import_summary,
+            }
+        )
+        report_payload = stored_report.model_dump(mode="json")
+        summary = {
+            "dry_run": False,
+            "data_root": report.data_root,
+            "totals": report_payload["totals"],
+            "import_summary": report_payload["import_summary"],
+        }
+
+        with self.session_factory() as session:
+            session.add(
+                Run(
+                    id=run_id,
+                    kind="legacy_import",
+                    status="succeeded",
+                    pick_date=plan.pick_date,
+                    started_at=now,
+                    finished_at=now,
+                    summary_json=summary,
+                )
+            )
+            session.add(
+                MigrationRun(
+                    id=run_id,
+                    source_root=report.data_root,
+                    status="succeeded",
+                    started_at=now,
+                    finished_at=now,
+                    report_json=report_payload,
+                )
+            )
+            session.add(
+                CandidateBatch(
+                    id=candidate_batch_id,
+                    run_id=run_id,
+                    pick_date=plan.pick_date,
+                    source="legacy:candidates",
+                    strategy_counts_json=plan.strategy_counts,
+                )
+            )
+            for candidate in plan.candidates:
                 session.add(
-                    MigrationQuarantine(
-                        migration_run_id=run_id,
-                        source_path=issue.source_path,
-                        reason=issue.reason,
-                        payload_json=issue.model_dump(mode="json"),
+                    Candidate(
+                        batch_id=candidate_batch_id,
+                        code=candidate.code,
+                        strategy=candidate.strategy,
+                        pick_date=candidate.date,
+                        close=candidate.close,
+                        turnover_n=candidate.turnover_n,
+                        brick_growth=candidate.brick_growth,
+                        extra_json=candidate.extra,
                     )
                 )
+            self._add_quarantine_rows(session, run_id, report.quarantine)
             session.commit()
             migration_run = self._load_migration_run(session, run_id)
             if migration_run is None:
@@ -90,3 +172,19 @@ class MigrationRepository:
             .options(selectinload(MigrationRun.quarantine_rows))
         )
         return session.execute(statement).scalar_one_or_none()
+
+    def _add_quarantine_rows(
+        self,
+        session: Session,
+        migration_id: str,
+        issues: list[LegacyImportIssue],
+    ) -> None:
+        for issue in issues:
+            session.add(
+                MigrationQuarantine(
+                    migration_run_id=migration_id,
+                    source_path=issue.source_path,
+                    reason=issue.reason,
+                    payload_json=issue.model_dump(mode="json"),
+                )
+            )

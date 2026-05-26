@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from .jobs.runtime import JobRuntime
+from .storage.candidate_repository import CandidateRepository
 from .storage.run_repository import RunRepository
 
 
@@ -12,3 +13,7 @@ def get_run_repository(request: Request) -> RunRepository:
 
 def get_job_runtime(request: Request) -> JobRuntime:
     return request.app.state.job_runtime
+
+
+def get_candidate_repository(request: Request) -> CandidateRepository:
+    return request.app.state.candidate_repository

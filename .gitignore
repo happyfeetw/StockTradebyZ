@@ -4,6 +4,7 @@
 *.pyd
 *.py,cover
 __pycache__/
+var/
 
 # Project folders
 .vscode/

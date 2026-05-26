@@ -1,0 +1,118 @@
+{
+  "pick_date": "2026-05-22",
+  "min_score": 4.0,
+  "classic_pattern_config": {
+    "classic_pattern_enabled": true
+  },
+  "candidates": [
+    {
+      "code": "000001",
+      "strategy": "b1"
+    },
+    {
+      "code": "000002",
+      "strategy": "b2"
+    },
+    {
+      "code": "000003",
+      "strategy": "brick"
+    }
+  ],
+  "results": [
+    {
+      "code": "000001",
+      "strategy": "b1",
+      "review_key": "000001_b1",
+      "signal_type": "breakout",
+      "classic_pattern_type": "b1_type1_low_breakout_pullback",
+      "classic_pattern_reasoning": "fixture classic pattern match",
+      "comment": "high quality setup",
+      "scores": {
+        "trend_structure": 5,
+        "price_position": 5,
+        "volume_behavior": 5,
+        "previous_abnormal_move": 5,
+        "classic_pattern_match": 5
+      }
+    },
+    {
+      "code": "000002",
+      "strategy": "b2",
+      "review_key": "000002_b2",
+      "signal_type": "volume_failure",
+      "classic_pattern_type": "b2_pullback",
+      "classic_pattern_reasoning": "volume too weak",
+      "comment": "reject weak volume",
+      "scores": {
+        "trend_structure": 4,
+        "price_position": 4,
+        "volume_behavior": 1,
+        "previous_abnormal_move": 4,
+        "classic_pattern_match": 5
+      }
+    },
+    {
+      "code": "000003",
+      "strategy": "brick",
+      "review_key": "000003_brick",
+      "signal_type": "watch",
+      "classic_pattern_type": "brick_green_to_red_reversal",
+      "classic_pattern_reasoning": "near miss",
+      "comment": "watch only",
+      "scores": {
+        "trend_structure": 4,
+        "price_position": 3,
+        "volume_behavior": 5,
+        "previous_abnormal_move": 2,
+        "classic_pattern_match": 5
+      }
+    }
+  ],
+  "expected_suggestion": {
+    "date": "2026-05-22",
+    "min_score_threshold": 4.0,
+    "total_reviewed": 3,
+    "recommendations": [
+      {
+        "rank": 1,
+        "code": "000001",
+        "strategy": "b1",
+        "review_key": "000001_b1",
+        "verdict": "PASS",
+        "total_score": 5.0,
+        "signal_type": "breakout",
+        "classic_pattern_type": "b1_type1_low_breakout_pullback",
+        "classic_pattern_match": 5.0,
+        "classic_pattern_reasoning": "fixture classic pattern match",
+        "comment": "high quality setup"
+      }
+    ],
+    "excluded": [
+      "000002_b2",
+      "000003_brick"
+    ],
+    "strategy_counts": {
+      "b1": {
+        "total": 1,
+        "reviewed": 1,
+        "recommended": 1,
+        "excluded": 0,
+        "pending": 0
+      },
+      "b2": {
+        "total": 1,
+        "reviewed": 1,
+        "recommended": 0,
+        "excluded": 1,
+        "pending": 0
+      },
+      "brick": {
+        "total": 1,
+        "reviewed": 1,
+        "recommended": 0,
+        "excluded": 1,
+        "pending": 0
+      }
+    }
+  }
+}

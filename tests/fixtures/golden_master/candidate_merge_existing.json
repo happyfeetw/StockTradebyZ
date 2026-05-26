@@ -1,0 +1,41 @@
+{
+  "run_date": "2026-05-22",
+  "pick_date": "2026-05-22",
+  "candidates": [
+    {
+      "code": "000001",
+      "date": "2026-05-22",
+      "strategy": "b1",
+      "close": 10.5,
+      "turnover_n": 123000000.0
+    },
+    {
+      "code": "000777",
+      "date": "2026-05-22",
+      "strategy": "brick",
+      "close": 7.8,
+      "turnover_n": 99000000.0,
+      "brick_growth": 1.8
+    },
+    {
+      "code": "000888",
+      "date": "2026-05-22",
+      "strategy": "b2",
+      "close": 5.2,
+      "turnover_n": 45000000.0
+    }
+  ],
+  "meta": {
+    "executed_strategies": [
+      "b1",
+      "brick",
+      "b2"
+    ],
+    "strategy_candidate_counts": {
+      "b1": 1,
+      "brick": 1,
+      "b2": 1
+    },
+    "source": "existing"
+  }
+}

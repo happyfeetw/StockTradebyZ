@@ -21,6 +21,8 @@ from stocktrade_api.storage.sqlite_models import (  # noqa: E402
     ArchiveSnapshot,
     Candidate,
     CandidateBatch,
+    MigrationQuarantine,
+    MigrationRun,
     Recommendation,
     Review,
     ReviewRun,
@@ -79,6 +81,8 @@ print("agent.gemini_cli_review" in sys.modules)
                     "recommendations",
                     "archive_snapshots",
                     "archive_rows",
+                    "migration_runs",
+                    "migration_quarantine",
                 }.issubset(tables)
             )
 
@@ -128,6 +132,20 @@ print("agent.gemini_cli_review" in sys.modules)
 
             archive_row_columns = {column["name"] for column in inspector.get_columns("archive_rows")}
             self.assertIn("chart_artifact_id", archive_row_columns)
+
+            migration_run_columns = {column["name"] for column in inspector.get_columns("migration_runs")}
+            self.assertTrue(
+                {"id", "source_root", "status", "started_at", "finished_at", "report_json"}.issubset(
+                    migration_run_columns
+                )
+            )
+
+            migration_quarantine_columns = {column["name"] for column in inspector.get_columns("migration_quarantine")}
+            self.assertTrue(
+                {"id", "migration_run_id", "source_path", "reason", "payload_json"}.issubset(
+                    migration_quarantine_columns
+                )
+            )
             engine.dispose()
 
     def test_candidate_identity_is_unique_per_batch_code_strategy(self) -> None:
@@ -313,6 +331,49 @@ print("agent.gemini_cli_review" in sys.modules)
                 with self.assertRaises(IntegrityError):
                     session.commit()
                 session.rollback()
+            engine.dispose()
+
+    def test_migration_audit_rows_are_linked_to_legacy_import_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+
+            with session_factory() as session:
+                run = Run(
+                    id="migration-1",
+                    kind="legacy_import",
+                    status="succeeded",
+                    summary_json={"dry_run": True},
+                )
+                migration_run = MigrationRun(
+                    id="migration-1",
+                    run=run,
+                    source_root="data",
+                    status="succeeded",
+                    report_json={"dry_run": True, "data_root": "data"},
+                )
+                session.add(migration_run)
+                session.add(
+                    MigrationQuarantine(
+                        migration_run=migration_run,
+                        source_path="candidates/bad.json",
+                        reason="malformed_json",
+                        payload_json={
+                            "section": "candidates",
+                            "source_path": "candidates/bad.json",
+                            "reason": "malformed_json",
+                            "message": "invalid JSON",
+                        },
+                    )
+                )
+                session.commit()
+
+                saved = session.get(MigrationRun, "migration-1")
+                self.assertIsNotNone(saved)
+                self.assertEqual(saved.run.kind, "legacy_import")
+                self.assertEqual(saved.quarantine_rows[0].reason, "malformed_json")
             engine.dispose()
 
 

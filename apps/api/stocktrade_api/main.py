@@ -15,6 +15,7 @@ from .routes.runs import router as runs_router
 from .jobs.runtime import JobRuntime
 from .storage.archive_repository import ArchiveRepository
 from .storage.candidate_repository import CandidateRepository
+from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
 from .storage.sqlite import DEFAULT_SQLITE_PATH, create_session_factory, create_sqlite_engine
@@ -40,6 +41,7 @@ def create_app(
     app.state.candidate_repository = CandidateRepository(session_factory)
     app.state.review_repository = ReviewRepository(session_factory)
     app.state.archive_repository = ArchiveRepository(session_factory)
+    app.state.migration_repository = MigrationRepository(session_factory)
     app.state.job_runtime = JobRuntime(run_repository)
     app.state.session_factory = session_factory
     app.state.sqlite_engine = sqlite_engine

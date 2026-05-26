@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -34,9 +36,30 @@ class LegacyImportTotals(BaseModel):
 
 
 class LegacyImportDryRunReport(BaseModel):
+    migration_id: str | None = None
     dry_run: bool
     data_root: str
     sections: dict[str, LegacyImportSectionReport]
     totals: LegacyImportTotals
     warnings: list[LegacyImportIssue]
     quarantine: list[LegacyImportIssue]
+
+
+class MigrationQuarantineRecord(BaseModel):
+    id: int
+    migration_run_id: str
+    source_path: str
+    reason: str
+    payload: LegacyImportIssue
+    created_at: datetime
+
+
+class LegacyMigrationRunResponse(BaseModel):
+    id: str
+    source_root: str
+    status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    report: LegacyImportDryRunReport
+    quarantine: list[MigrationQuarantineRecord]
+    created_at: datetime

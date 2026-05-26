@@ -6,12 +6,14 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from .routes.archive import router as archive_router
 from .routes.candidates import router as candidates_router
 from .routes.health import router as health_router
 from .routes.migrations import router as migrations_router
 from .routes.reviews import router as reviews_router
 from .routes.runs import router as runs_router
 from .jobs.runtime import JobRuntime
+from .storage.archive_repository import ArchiveRepository
 from .storage.candidate_repository import CandidateRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
@@ -37,6 +39,7 @@ def create_app(
     app.state.run_repository = run_repository
     app.state.candidate_repository = CandidateRepository(session_factory)
     app.state.review_repository = ReviewRepository(session_factory)
+    app.state.archive_repository = ArchiveRepository(session_factory)
     app.state.job_runtime = JobRuntime(run_repository)
     app.state.session_factory = session_factory
     app.state.sqlite_engine = sqlite_engine
@@ -45,6 +48,7 @@ def create_app(
     app.include_router(runs_router, prefix="/api")
     app.include_router(candidates_router, prefix="/api")
     app.include_router(reviews_router, prefix="/api")
+    app.include_router(archive_router, prefix="/api")
     app.include_router(migrations_router, prefix="/api")
 
     @app.on_event("shutdown")

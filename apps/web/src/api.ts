@@ -185,6 +185,81 @@ export interface ReviewFilters {
   recommendation_status?: RecommendationStatus
 }
 
+export type ArchiveStatus = 'all' | 'recommended' | 'reviewed' | 'unreviewed'
+
+export interface ArchiveSnapshot {
+  id: string
+  pick_date: string
+  run_id: string
+  candidate_batch_id: string | null
+  review_run_id: string | null
+  candidate_run_date: string | null
+  candidate_count: number
+  reviewed_count: number
+  recommended_count: number
+  strategy_counts: Record<string, unknown> | null
+  executed_strategies: string[] | null
+  min_score_threshold: number | null
+  source: Record<string, unknown> | null
+  summary: Record<string, unknown> | null
+  archived_at: string | null
+  created_at: string
+}
+
+export interface ArchiveRow {
+  id: number
+  snapshot_id: string
+  pick_date: string
+  run_id: string
+  candidate_batch_id: string | null
+  review_run_id: string | null
+  candidate_id: number | null
+  review_id: number | null
+  recommendation_id: number | null
+  chart_artifact_id: string | null
+  code: string
+  strategy: string
+  review_key: string
+  status: Exclude<ArchiveStatus, 'all'>
+  rank: number | null
+  close: number | null
+  turnover_n: number | null
+  brick_growth: number | null
+  extra: Record<string, unknown> | null
+  review_payload: Record<string, unknown> | null
+  chart: string | null
+  created_at: string
+  snapshot: ArchiveSnapshot
+}
+
+export interface ArchiveSnapshotListResponse {
+  snapshots: ArchiveSnapshot[]
+  total: number
+}
+
+export interface ArchiveDateResponse {
+  snapshots: ArchiveSnapshot[]
+  rows: ArchiveRow[]
+  total: number
+}
+
+export interface ArchiveRowDetailResponse {
+  row: ArchiveRow
+}
+
+export interface ArchiveSnapshotFilters {
+  pick_date?: string
+  run_id?: string
+}
+
+export interface ArchiveRowFilters extends ArchiveSnapshotFilters {
+  strategy?: string
+  code?: string
+  review_key?: string
+  status?: ArchiveStatus
+  rank?: string
+}
+
 export interface LegacyImportDryRunReport {
   dry_run: boolean
   data_root: string
@@ -290,6 +365,33 @@ export function listReviews(filters: ReviewFilters = {}): Promise<ReviewListResp
 
 export function getReview(reviewId: number): Promise<ReviewDetailResponse> {
   return request<ReviewDetailResponse>(`/api/reviews/${reviewId}`)
+}
+
+export function listArchiveSnapshots(filters: ArchiveSnapshotFilters = {}): Promise<ArchiveSnapshotListResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value?.trim()) {
+      params.set(key, value.trim())
+    }
+  }
+  const query = params.toString()
+  return request<ArchiveSnapshotListResponse>(`/api/archive${query ? `?${query}` : ''}`)
+}
+
+export function listArchiveRows(pickDate: string, filters: ArchiveRowFilters = {}): Promise<ArchiveDateResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (!value?.trim()) continue
+    if (key === 'pick_date') continue
+    if (key === 'status' && value === 'all') continue
+    params.set(key, value.trim())
+  }
+  const query = params.toString()
+  return request<ArchiveDateResponse>(`/api/archive/${pickDate}${query ? `?${query}` : ''}`)
+}
+
+export function getArchiveRow(rowId: number): Promise<ArchiveRowDetailResponse> {
+  return request<ArchiveRowDetailResponse>(`/api/archive/rows/${rowId}`)
 }
 
 export function dryRunLegacyImport(dataRoot: string): Promise<LegacyImportDryRunReport> {

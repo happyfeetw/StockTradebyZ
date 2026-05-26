@@ -20,6 +20,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 RUN_STATUSES = ("queued", "running", "succeeded", "failed", "cancelling", "cancelled")
 RUN_KINDS = ("preselect", "review", "archive", "legacy_import", "backup", "restore", "diagnostic")
+ARCHIVE_STATUSES = ("recommended", "reviewed", "unreviewed")
 
 
 def _sql_values(values: tuple[str, ...]) -> str:
@@ -51,6 +52,7 @@ class Run(Base):
     artifacts: Mapped[list[Artifact]] = relationship(back_populates="run", cascade="all, delete-orphan")
     candidate_batches: Mapped[list[CandidateBatch]] = relationship(back_populates="run", cascade="all, delete-orphan")
     review_runs: Mapped[list[ReviewRun]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    archive_snapshots: Mapped[list[ArchiveSnapshot]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class JobStep(Base):
@@ -104,6 +106,7 @@ class Artifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
 
     run: Mapped[Run] = relationship(back_populates="artifacts")
+    archive_rows: Mapped[list[ArchiveRow]] = relationship(back_populates="chart_artifact")
 
 
 class CandidateBatch(Base):
@@ -127,6 +130,7 @@ class CandidateBatch(Base):
         order_by="Candidate.id",
     )
     review_runs: Mapped[list[ReviewRun]] = relationship(back_populates="candidate_batch")
+    archive_snapshots: Mapped[list[ArchiveSnapshot]] = relationship(back_populates="candidate_batch")
 
 
 class Candidate(Base):
@@ -150,6 +154,7 @@ class Candidate(Base):
 
     batch: Mapped[CandidateBatch] = relationship(back_populates="candidates")
     reviews: Mapped[list[Review]] = relationship(back_populates="candidate")
+    archive_rows: Mapped[list[ArchiveRow]] = relationship(back_populates="candidate")
 
 
 class ReviewRun(Base):
@@ -172,6 +177,7 @@ class ReviewRun(Base):
 
     run: Mapped[Run] = relationship(back_populates="review_runs")
     candidate_batch: Mapped[CandidateBatch | None] = relationship(back_populates="review_runs")
+    archive_snapshots: Mapped[list[ArchiveSnapshot]] = relationship(back_populates="review_run")
     reviews: Mapped[list[Review]] = relationship(
         back_populates="review_run",
         cascade="all, delete-orphan",
@@ -207,6 +213,7 @@ class Review(Base):
     review_run: Mapped[ReviewRun] = relationship(back_populates="reviews")
     candidate: Mapped[Candidate | None] = relationship(back_populates="reviews")
     recommendation: Mapped[Recommendation | None] = relationship(back_populates="review")
+    archive_rows: Mapped[list[ArchiveRow]] = relationship(back_populates="review")
 
 
 class Recommendation(Base):
@@ -232,3 +239,70 @@ class Recommendation(Base):
 
     review_run: Mapped[ReviewRun] = relationship(back_populates="recommendations")
     review: Mapped[Review | None] = relationship(back_populates="recommendation")
+    archive_rows: Mapped[list[ArchiveRow]] = relationship(back_populates="recommendation")
+
+
+class ArchiveSnapshot(Base):
+    __tablename__ = "archive_snapshots"
+    __table_args__ = (
+        Index("ix_archive_snapshots_pick_created", "pick_date", "created_at"),
+        Index("ix_archive_snapshots_run_id", "run_id"),
+        Index("ix_archive_snapshots_candidate_batch", "candidate_batch_id"),
+        Index("ix_archive_snapshots_review_run", "review_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    pick_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), nullable=False)
+    candidate_batch_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_batches.id", ondelete="SET NULL"))
+    review_run_id: Mapped[str | None] = mapped_column(ForeignKey("review_runs.id", ondelete="SET NULL"))
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="product")
+    summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    run: Mapped[Run] = relationship(back_populates="archive_snapshots")
+    candidate_batch: Mapped[CandidateBatch | None] = relationship(back_populates="archive_snapshots")
+    review_run: Mapped[ReviewRun | None] = relationship(back_populates="archive_snapshots")
+    rows: Mapped[list[ArchiveRow]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        order_by="ArchiveRow.id",
+    )
+
+
+class ArchiveRow(Base):
+    __tablename__ = "archive_rows"
+    __table_args__ = (
+        CheckConstraint(f"status in ({_sql_values(ARCHIVE_STATUSES)})", name="ck_archive_rows_status"),
+        UniqueConstraint("snapshot_id", "review_key", name="uq_archive_rows_snapshot_review_key"),
+        Index("ix_archive_rows_pick_status", "pick_date", "status"),
+        Index("ix_archive_rows_code_strategy", "code", "strategy"),
+        Index("ix_archive_rows_run_id", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("archive_snapshots.id", ondelete="CASCADE"), nullable=False)
+    candidate_id: Mapped[int | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"))
+    review_id: Mapped[int | None] = mapped_column(ForeignKey("reviews.id", ondelete="SET NULL"))
+    recommendation_id: Mapped[int | None] = mapped_column(ForeignKey("recommendations.id", ondelete="SET NULL"))
+    chart_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifacts.id", ondelete="SET NULL"))
+    pick_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(80), nullable=False)
+    review_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    close: Mapped[float | None] = mapped_column(Float)
+    turnover_n: Mapped[float | None] = mapped_column(Float)
+    brick_growth: Mapped[float | None] = mapped_column(Float)
+    extra_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    review_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    chart_path: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    snapshot: Mapped[ArchiveSnapshot] = relationship(back_populates="rows")
+    candidate: Mapped[Candidate | None] = relationship(back_populates="archive_rows")
+    review: Mapped[Review | None] = relationship(back_populates="archive_rows")
+    recommendation: Mapped[Recommendation | None] = relationship(back_populates="archive_rows")
+    chart_artifact: Mapped[Artifact | None] = relationship(back_populates="archive_rows")

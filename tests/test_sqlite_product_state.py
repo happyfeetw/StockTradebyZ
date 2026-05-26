@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "apps" / "api"))
+sys.path.insert(0, str(ROOT / "src"))
+
+from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
+from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Run  # noqa: E402
+
+SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
+
+
+def alembic_config(db_path: Path) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(SQLITE_MIGRATIONS))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    return config
+
+
+class SQLiteProductStateTests(unittest.TestCase):
+    def migrate(self, db_path: Path) -> None:
+        command.upgrade(alembic_config(db_path), "head")
+
+    def test_storage_imports_do_not_pull_heavy_legacy_modules(self) -> None:
+        script = f"""
+import sys
+from pathlib import Path
+root = Path({str(ROOT)!r})
+sys.path.insert(0, str(root / "apps" / "api"))
+import stocktrade_api.storage.sqlite
+import stocktrade_api.storage.sqlite_models
+print("pipeline.select_stock" in sys.modules)
+print("agent.gemini_cli_review" in sys.modules)
+"""
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines(), ["False", "False"])
+
+    def test_alembic_migration_creates_initial_product_state_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+
+            inspector = inspect(engine)
+            tables = set(inspector.get_table_names())
+            self.assertTrue(
+                {
+                    "alembic_version",
+                    "runs",
+                    "job_steps",
+                    "job_events",
+                    "artifacts",
+                    "candidate_batches",
+                    "candidates",
+                }.issubset(tables)
+            )
+
+            run_columns = {column["name"] for column in inspector.get_columns("runs")}
+            self.assertTrue(
+                {"id", "kind", "status", "pick_date", "started_at", "finished_at", "summary_json"}.issubset(
+                    run_columns
+                )
+            )
+
+            job_step_columns = {column["name"] for column in inspector.get_columns("job_steps")}
+            self.assertTrue({"id", "run_id", "name", "status", "error_json"}.issubset(job_step_columns))
+
+            artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")}
+            self.assertTrue({"id", "run_id", "kind", "path", "content_type", "metadata_json"}.issubset(artifact_columns))
+
+            candidate_uniques = {
+                tuple(unique["column_names"])
+                for unique in inspector.get_unique_constraints("candidates")
+            }
+            self.assertIn(("batch_id", "code", "strategy"), candidate_uniques)
+            engine.dispose()
+
+    def test_candidate_identity_is_unique_per_batch_code_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+
+            with engine.connect() as connection:
+                self.assertEqual(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one(), 1)
+
+            with session_factory() as session:
+                run = Run(id="run-1", kind="preselect", status="succeeded", pick_date="2026-05-27")
+                batch = CandidateBatch(
+                    id="batch-1",
+                    run=run,
+                    pick_date="2026-05-27",
+                    source="legacy-golden-master",
+                    strategy_counts_json={"B2": 1},
+                )
+                session.add(batch)
+                session.add(
+                    Candidate(
+                        batch=batch,
+                        code="000001.SZ",
+                        strategy="B2",
+                        pick_date="2026-05-27",
+                        close=10.5,
+                    )
+                )
+                session.commit()
+
+                session.add(
+                    Candidate(
+                        batch_id="batch-1",
+                        code="000001.SZ",
+                        strategy="B2",
+                        pick_date="2026-05-27",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    session.commit()
+                session.rollback()
+            engine.dispose()
+
+
+if __name__ == "__main__":
+    unittest.main()

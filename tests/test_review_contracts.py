@@ -65,7 +65,7 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(recommendation["classic_pattern_match"], 5.0)
         self.assertEqual(recommendation["classic_pattern_reasoning"], "缩量回踩匹配第一类")
 
-    def test_classic_pattern_strategy_uses_five_dimension_weight(self) -> None:
+    def test_classic_pattern_strategy_adds_bonus_to_base_score(self) -> None:
         result = {
             "strategy": "brick",
             "total_score": 1.0,
@@ -83,8 +83,46 @@ class ReviewContractTests(unittest.TestCase):
 
         self.assertEqual(normalized["scores"]["previous_abnormal_move"], 2.0)
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 5.0)
-        self.assertEqual(normalized["total_score"], 3.8)
+        self.assertEqual(normalized["total_score"], 3.9)
         self.assertEqual(normalized["verdict"], "WATCH")
+
+    def test_classic_pattern_non_match_does_not_lower_base_score(self) -> None:
+        result = {
+            "strategy": "b2",
+            "total_score": 1.0,
+            "scores": {
+                "trend_structure": 4,
+                "price_position": 4,
+                "volume_behavior": 4,
+                "previous_abnormal_move": 4,
+                "classic_pattern_match": 1,
+            },
+        }
+
+        enabled = BaseReviewer.normalize_scores(deepcopy(result), {"classic_pattern_enabled": True})
+        disabled = BaseReviewer.normalize_scores(deepcopy(result), {"classic_pattern_enabled": False})
+
+        self.assertEqual(enabled["total_score"], 4.0)
+        self.assertEqual(disabled["total_score"], 4.0)
+        self.assertEqual(enabled["verdict"], "PASS")
+
+    def test_classic_pattern_active_zero_is_normalized_to_no_bonus(self) -> None:
+        result = {
+            "strategy": "b1",
+            "total_score": 1.0,
+            "scores": {
+                "trend_structure": 4,
+                "price_position": 4,
+                "volume_behavior": 4,
+                "previous_abnormal_move": 4,
+                "classic_pattern_match": 0,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
+
+        self.assertEqual(normalized["scores"]["classic_pattern_match"], 1.0)
+        self.assertEqual(normalized["total_score"], 4.0)
 
     def test_composite_strategy_uses_base_four_dimension_weight(self) -> None:
         result = {
@@ -137,7 +175,7 @@ class ReviewContractTests(unittest.TestCase):
         disabled = BaseReviewer.normalize_scores(deepcopy(brick_result), {"classic_pattern_enabled": False})
         unknown = BaseReviewer.normalize_scores(deepcopy(unknown_result), {"classic_pattern_enabled": True})
 
-        self.assertEqual(enabled["total_score"], 3.8)
+        self.assertEqual(enabled["total_score"], 3.9)
         self.assertEqual(disabled["total_score"], 3.5)
         self.assertEqual(disabled["scores"]["classic_pattern_match"], 0.0)
         self.assertEqual(unknown["total_score"], 3.8)

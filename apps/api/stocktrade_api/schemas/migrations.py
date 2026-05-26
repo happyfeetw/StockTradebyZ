@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-LegacyImportScope = Literal["all", "candidates"]
+LegacyImportScope = Literal["all", "candidates", "reviews"]
 
 
 class LegacyImportDryRunRequest(BaseModel):
@@ -59,13 +59,45 @@ class LegacyCandidateImportPlan(BaseModel):
     candidates: list[LegacyCandidateImportRecord]
 
 
-class LegacyCandidateImportSummary(BaseModel):
+class LegacyReviewImportRecord(BaseModel):
+    code: str
+    strategy: str
+    review_key: str
+    verdict: str | None = None
+    total_score: float | None = None
+    reviewer: str | None = None
+    payload: dict[str, Any]
+
+
+class LegacyRecommendationImportRecord(BaseModel):
+    rank: int
+    code: str
+    strategy: str
+    review_key: str
+    verdict: str | None = None
+    total_score: float | None = None
+    payload: dict[str, Any]
+
+
+class LegacyReviewImportPlan(BaseModel):
+    data_root: str
+    source_path: str
+    pick_date: str
+    provider: str
+    reviews: list[LegacyReviewImportRecord]
+    recommendations: list[LegacyRecommendationImportRecord]
+
+
+class LegacyImportSummary(BaseModel):
     run_id: str
-    batch_id: str
     pick_date: str
     source_file: str
-    candidates_imported: int
     strategy_counts: dict[str, int]
+    batch_id: str | None = None
+    review_run_id: str | None = None
+    candidates_imported: int = 0
+    reviews_imported: int = 0
+    recommendations_imported: int = 0
 
 
 class LegacyImportDryRunReport(BaseModel):
@@ -76,7 +108,7 @@ class LegacyImportDryRunReport(BaseModel):
     totals: LegacyImportTotals
     warnings: list[LegacyImportIssue]
     quarantine: list[LegacyImportIssue]
-    import_summary: LegacyCandidateImportSummary | None = None
+    import_summary: LegacyImportSummary | None = None
 
 
 class MigrationQuarantineRecord(BaseModel):

@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 
 import httpx
+from alembic import command
+from alembic.config import Config
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
@@ -18,10 +20,23 @@ from archive_results import review_key as legacy_archive_review_key  # noqa: E40
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.services.legacy_import import legacy_review_key, scan_legacy_import_dry_run  # noqa: E402
 
+SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
+
 
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def alembic_config(db_path: Path) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(SQLITE_MIGRATIONS))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    return config
+
+
+def migrate_sqlite(db_path: Path) -> None:
+    command.upgrade(alembic_config(db_path), "head")
 
 
 def build_legacy_fixture(root: Path) -> Path:
@@ -166,7 +181,9 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             data_root = build_legacy_fixture(tmp)
-            app = create_app(sqlite_path=tmp / "app.sqlite")
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path)
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -175,13 +192,39 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                     json={"dry_run": True, "data_root": str(data_root)},
                 )
                 self.assertEqual(dry_run.status_code, 200)
-                self.assertEqual(dry_run.json()["totals"]["quarantine_count"], 8)
+                dry_run_payload = dry_run.json()
+                migration_id = dry_run_payload["migration_id"]
+                self.assertEqual(dry_run_payload["totals"]["quarantine_count"], 8)
+                self.assertIsNotNone(migration_id)
+
+                persisted = await client.get(f"/api/migrations/{migration_id}")
+                self.assertEqual(persisted.status_code, 200)
+                persisted_payload = persisted.json()
+                self.assertEqual(persisted_payload["id"], migration_id)
+                self.assertEqual(persisted_payload["source_root"], str(data_root))
+                self.assertEqual(persisted_payload["status"], "succeeded")
+                self.assertEqual(persisted_payload["report"]["migration_id"], migration_id)
+                self.assertEqual(persisted_payload["report"]["totals"]["quarantine_count"], 8)
+                self.assertEqual(len(persisted_payload["quarantine"]), 8)
+                self.assertIn(
+                    "duplicate_candidate_identity",
+                    {row["reason"] for row in persisted_payload["quarantine"]},
+                )
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                legacy_runs = [run for run in runs.json()["runs"] if run["id"] == migration_id]
+                self.assertEqual(len(legacy_runs), 1)
+                self.assertEqual(legacy_runs[0]["kind"], "legacy_import")
 
                 write_attempt = await client.post(
                     "/api/migrations/import-legacy",
                     json={"dry_run": False, "data_root": str(data_root)},
                 )
                 self.assertEqual(write_attempt.status_code, 409)
+
+                missing = await client.get("/api/migrations/not-found")
+                self.assertEqual(missing.status_code, 404)
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

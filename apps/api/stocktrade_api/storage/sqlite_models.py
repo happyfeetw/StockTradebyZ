@@ -53,6 +53,11 @@ class Run(Base):
     candidate_batches: Mapped[list[CandidateBatch]] = relationship(back_populates="run", cascade="all, delete-orphan")
     review_runs: Mapped[list[ReviewRun]] = relationship(back_populates="run", cascade="all, delete-orphan")
     archive_snapshots: Mapped[list[ArchiveSnapshot]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    migration_run: Mapped[MigrationRun | None] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class JobStep(Base):
@@ -315,3 +320,47 @@ class ArchiveRow(Base):
     review: Mapped[Review | None] = relationship(back_populates="archive_rows")
     recommendation: Mapped[Recommendation | None] = relationship(back_populates="archive_rows")
     chart_artifact: Mapped[Artifact | None] = relationship(back_populates="archive_rows")
+
+
+class MigrationRun(Base):
+    __tablename__ = "migration_runs"
+    __table_args__ = (
+        CheckConstraint(f"status in ({_sql_values(RUN_STATUSES)})", name="ck_migration_runs_status"),
+        Index("ix_migration_runs_status", "status"),
+        Index("ix_migration_runs_source_root", "source_root"),
+    )
+
+    id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    source_root: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    report_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    run: Mapped[Run] = relationship(back_populates="migration_run")
+    quarantine_rows: Mapped[list[MigrationQuarantine]] = relationship(
+        back_populates="migration_run",
+        cascade="all, delete-orphan",
+        order_by="MigrationQuarantine.id",
+    )
+
+
+class MigrationQuarantine(Base):
+    __tablename__ = "migration_quarantine"
+    __table_args__ = (
+        Index("ix_migration_quarantine_run", "migration_run_id"),
+        Index("ix_migration_quarantine_source_reason", "source_path", "reason"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    migration_run_id: Mapped[str] = mapped_column(
+        ForeignKey("migration_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    reason: Mapped[str] = mapped_column(String(120), nullable=False)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    migration_run: Mapped[MigrationRun] = relationship(back_populates="quarantine_rows")

@@ -24,13 +24,7 @@ class BaseReviewer:
         "volume_behavior": 0.30,
         "previous_abnormal_move": 0.30,
     }
-    CLASSIC_PATTERN_SCORE_WEIGHTS: dict[str, float] = {
-        "trend_structure": 0.20,
-        "price_position": 0.20,
-        "volume_behavior": 0.30,
-        "previous_abnormal_move": 0.20,
-        "classic_pattern_match": 0.10,
-    }
+    CLASSIC_PATTERN_BONUS_WEIGHT: float = 0.10
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -181,31 +175,36 @@ class BaseReviewer:
         if not isinstance(scores, dict):
             return result
 
-        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_config)
-        score_weights = (
-            cls.CLASSIC_PATTERN_SCORE_WEIGHTS
-            if has_classic_pattern
-            else cls.BASE_SCORE_WEIGHTS
-        )
-
         normalized_scores: dict[str, float] = {}
-        for key in score_weights:
+        for key in cls.BASE_SCORE_WEIGHTS:
             score = cls._numeric_score(scores.get(key))
             if score is None:
                 return result
             normalized_scores[key] = score
 
         merged_scores = {**scores, **normalized_scores}
+        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_config)
+        base_score = sum(
+            normalized_scores[key] * weight
+            for key, weight in cls.BASE_SCORE_WEIGHTS.items()
+        )
+        classic_bonus = 0.0
+
         if not has_classic_pattern:
             merged_scores["classic_pattern_match"] = 0.0
             result["classic_pattern_type"] = "none"
             result["classic_pattern_reasoning"] = ""
+        else:
+            classic_score = cls._numeric_score(scores.get("classic_pattern_match"))
+            if classic_score is None:
+                return result
+            classic_score = max(1.0, classic_score)
+            normalized_scores["classic_pattern_match"] = classic_score
+            merged_scores["classic_pattern_match"] = classic_score
+            classic_bonus = max(0.0, classic_score - 1.0) * cls.CLASSIC_PATTERN_BONUS_WEIGHT
 
         result["scores"] = merged_scores
-        result["total_score"] = round(
-            sum(normalized_scores[key] * weight for key, weight in score_weights.items()),
-            2,
-        )
+        result["total_score"] = round(min(5.0, base_score + classic_bonus), 2)
 
         if normalized_scores["volume_behavior"] <= 1:
             result["verdict"] = "FAIL"

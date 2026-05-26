@@ -147,7 +147,10 @@ function CandidatesView() {
           type="button"
           className="icon-button secondary"
           aria-label="Refresh candidates"
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['candidates'] })}
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['candidates'] })
+            queryClient.invalidateQueries({ queryKey: ['candidate'] })
+          }}
         >
           <RefreshCw size={17} aria-hidden="true" />
         </button>
@@ -660,9 +663,10 @@ function jsonPreview(value: Record<string, unknown> | null) {
   return JSON.stringify(value, null, 2)
 }
 
-function jsonInline(value: Record<string, unknown> | null) {
+function jsonInline(value: Record<string, unknown> | null, maxLength = 96) {
   if (!value || Object.keys(value).length === 0) return '{}'
-  return JSON.stringify(value)
+  const serialized = JSON.stringify(value)
+  return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized
 }
 
 function errorText(error: unknown) {

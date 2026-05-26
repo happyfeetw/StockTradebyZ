@@ -23,15 +23,22 @@ import './App.css'
 import {
   cancelRun,
   createDiagnosticRun,
+  getArchiveRow,
   getCandidate,
   getHealth,
   getReview,
   getRun,
   getRunArtifacts,
   getRunEvents,
+  listArchiveRows,
+  listArchiveSnapshots,
   listCandidates,
   listRuns,
   listReviews,
+  type ArchiveRow,
+  type ArchiveRowFilters,
+  type ArchiveSnapshot,
+  type ArchiveStatus,
   type Artifact,
   type Candidate,
   type CandidateFilters,
@@ -47,7 +54,7 @@ const navItems = [
   { to: '/runs', label: 'Runs', icon: Activity, state: 'active' },
   { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
   { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
-  { to: '/archive', label: 'Archive', icon: Archive, state: 'pending' },
+  { to: '/archive', label: 'Archive', icon: Archive, state: 'active' },
   { to: '/migrations', label: 'Migrations', icon: Database, state: 'pending' },
 ]
 
@@ -91,7 +98,7 @@ function App() {
           <Route path="/runs" element={<RunsView />} />
           <Route path="/candidates" element={<CandidatesView />} />
           <Route path="/reviews" element={<ReviewsView />} />
-          <Route path="/archive" element={<Placeholder title="Archive" />} />
+          <Route path="/archive" element={<ArchiveView />} />
           <Route path="/migrations" element={<Placeholder title="Migrations" />} />
         </Routes>
       </main>
@@ -459,6 +466,274 @@ function ReviewsView() {
   )
 }
 
+function ArchiveView() {
+  const queryClient = useQueryClient()
+  const [filters, setFilters] = useState<Required<ArchiveRowFilters>>({
+    pick_date: '',
+    run_id: '',
+    strategy: '',
+    code: '',
+    review_key: '',
+    status: 'all',
+    rank: '',
+  })
+  const [selectedPickDate, setSelectedPickDate] = useState<string | null>(null)
+  const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
+
+  const snapshotsQuery = useQuery({
+    queryKey: ['archive-snapshots'],
+    queryFn: () => listArchiveSnapshots(),
+  })
+  const snapshots = snapshotsQuery.data?.snapshots ?? []
+  const filteredPickDate = filters.pick_date.trim()
+  const selectedDateVisible = selectedPickDate !== null && snapshots.some((snapshot) => snapshot.pick_date === selectedPickDate)
+  const activePickDate = filteredPickDate || (selectedDateVisible ? selectedPickDate : snapshots[0]?.pick_date ?? '')
+  const activeSnapshot = findActiveSnapshot(snapshots, activePickDate, filters.run_id.trim())
+
+  const normalizedFilters = {
+    pick_date: filteredPickDate,
+    run_id: filters.run_id.trim(),
+    strategy: filters.strategy.trim(),
+    code: filters.code.trim(),
+    review_key: filters.review_key.trim(),
+    status: filters.status,
+    rank: filters.rank.trim(),
+  }
+
+  const rowsQuery = useQuery({
+    queryKey: ['archive-rows', activePickDate, normalizedFilters],
+    queryFn: () => listArchiveRows(activePickDate, normalizedFilters),
+    enabled: Boolean(activePickDate),
+  })
+  const rows = rowsQuery.data?.rows ?? []
+  const selectedStillVisible = selectedRowId !== null && rows.some((row) => row.id === selectedRowId)
+  const activeRowId = selectedStillVisible ? selectedRowId : rows[0]?.id
+
+  const detailQuery = useQuery({
+    queryKey: ['archive-row', activeRowId],
+    queryFn: () => getArchiveRow(activeRowId as number),
+    enabled: typeof activeRowId === 'number',
+  })
+
+  const hasFilters = Object.entries(filters).some(([key, value]) => {
+    if (key === 'status') return value !== 'all'
+    return value.trim()
+  })
+
+  function updateFilter(key: Exclude<keyof ArchiveRowFilters, 'status'>, value: string) {
+    setFilters((current) => ({ ...current, [key]: value }))
+    setSelectedRowId(null)
+  }
+
+  function updateArchiveStatus(value: ArchiveStatus) {
+    setFilters((current) => ({ ...current, status: value }))
+    setSelectedRowId(null)
+  }
+
+  function selectSnapshot(snapshot: ArchiveSnapshot) {
+    setSelectedPickDate(snapshot.pick_date)
+    setSelectedRowId(null)
+    setFilters((current) => ({
+      ...current,
+      pick_date: '',
+      run_id: snapshot.run_id,
+    }))
+  }
+
+  function resetFilters() {
+    setFilters({
+      pick_date: '',
+      run_id: '',
+      strategy: '',
+      code: '',
+      review_key: '',
+      status: 'all',
+      rank: '',
+    })
+    setSelectedRowId(null)
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">History evidence</p>
+          <h1>Archive</h1>
+        </div>
+        <button
+          type="button"
+          className="icon-button secondary"
+          aria-label="Refresh archive"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
+            queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
+            queryClient.invalidateQueries({ queryKey: ['archive-row'] })
+          }}
+        >
+          <RefreshCw size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      <section className="summary-strip archive-summary-strip" aria-label="Archive summary">
+        <Metric label="Archive dates" value={(snapshotsQuery.data?.total ?? 0).toString()} />
+        <Metric label="Candidates" value={formatNumber(activeSnapshot?.candidate_count ?? null)} />
+        <Metric label="Recommended" value={formatNumber(activeSnapshot?.recommended_count ?? null)} />
+        <Metric label="Reviewed" value={formatNumber(activeSnapshot?.reviewed_count ?? null)} />
+      </section>
+
+      <form className="filter-bar archive-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Archive filters">
+        <FilterInput
+          label="Pick date"
+          placeholder="2026-05-27"
+          type="date"
+          value={filters.pick_date}
+          onChange={(value) => updateFilter('pick_date', value)}
+        />
+        <FilterInput label="Run id" placeholder="archive run" value={filters.run_id} onChange={(value) => updateFilter('run_id', value)} />
+        <FilterInput
+          label="Strategy"
+          placeholder="b2 / brick"
+          value={filters.strategy}
+          onChange={(value) => updateFilter('strategy', value)}
+        />
+        <FilterInput label="Code" placeholder="000001" value={filters.code} onChange={(value) => updateFilter('code', value)} />
+        <FilterInput
+          label="Review key"
+          placeholder="000001_b2"
+          value={filters.review_key}
+          onChange={(value) => updateFilter('review_key', value)}
+        />
+        <ArchiveStatusSelect label="Status" value={filters.status} onChange={updateArchiveStatus} />
+        <FilterInput label="Rank" placeholder="1" value={filters.rank} onChange={(value) => updateFilter('rank', value)} />
+        <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
+          <XCircle size={17} aria-hidden="true" />
+          <span>Clear</span>
+        </button>
+      </form>
+
+      {snapshotsQuery.isError || rowsQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(snapshotsQuery.error ?? rowsQuery.error)}</span>
+        </div>
+      ) : null}
+
+      <div className="archive-grid">
+        <section className="archive-snapshot-panel" aria-label="Archive dates">
+          <div className="panel-heading">
+            <div>
+              <h2>Archive dates</h2>
+              <p>{snapshotsQuery.isLoading ? 'Loading snapshots' : `${snapshotsQuery.data?.total ?? 0} snapshots`}</p>
+            </div>
+          </div>
+
+          {snapshotsQuery.isLoading ? <RunSkeleton /> : null}
+          {!snapshotsQuery.isLoading && snapshots.length === 0 ? (
+            <div className="empty-state">
+              <Archive size={24} aria-hidden="true" />
+              <h3>No archive snapshots yet</h3>
+            </div>
+          ) : null}
+
+          <div className="archive-snapshot-list">
+            {snapshots.map((snapshot) => {
+              const selected = snapshot.pick_date === activePickDate && (!filters.run_id.trim() || snapshot.run_id === filters.run_id.trim())
+              return (
+                <button
+                  key={snapshot.id}
+                  type="button"
+                  className={selected ? 'archive-snapshot-row selected' : 'archive-snapshot-row'}
+                  onClick={() => selectSnapshot(snapshot)}
+                  aria-label={`Archive ${snapshot.pick_date} run ${snapshot.run_id}`}
+                >
+                  <span>
+                    <strong>{snapshot.pick_date}</strong>
+                    <small>{formatDateTime(snapshot.archived_at ?? snapshot.created_at)}</small>
+                  </span>
+                  <span className="snapshot-counts">
+                    <span>{snapshot.candidate_count} rows</span>
+                    <span>{snapshot.recommended_count} rec</span>
+                  </span>
+                  <code>{snapshot.run_id}</code>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="archive-list-panel" aria-label="Archive rows">
+          <div className="panel-heading">
+            <div>
+              <h2>Archive rows</h2>
+              <p>
+                {rowsQuery.isLoading
+                  ? 'Loading archive rows'
+                  : activePickDate
+                    ? `${rowsQuery.data?.total ?? 0} records for ${activePickDate}`
+                    : 'Select an archive date'}
+              </p>
+            </div>
+          </div>
+
+          {rowsQuery.isLoading ? <RunSkeleton /> : null}
+          {!rowsQuery.isLoading && activePickDate && rows.length === 0 ? (
+            <div className="empty-state">
+              <Search size={24} aria-hidden="true" />
+              <h3>{hasFilters ? 'No archive rows match the filters' : 'No rows for this archive date'}</h3>
+            </div>
+          ) : null}
+          {!activePickDate && !snapshotsQuery.isLoading ? (
+            <div className="empty-state">
+              <Archive size={24} aria-hidden="true" />
+              <h3>Select an archive date</h3>
+            </div>
+          ) : null}
+
+          <div className="archive-list">
+            {rows.map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                className={row.id === activeRowId ? 'archive-row selected' : 'archive-row'}
+                onClick={() => setSelectedRowId(row.id)}
+                aria-label={`${row.code} ${row.strategy} archive row ${row.review_key}`}
+              >
+                <span className="review-row-head">
+                  <span className="candidate-code">{row.code}</span>
+                  <span className="strategy-chip">{row.strategy}</span>
+                </span>
+                <span className={`archive-status-chip ${archiveStatusClass(row.status)}`}>{archiveStatusLabel(row.status)}</span>
+                <CandidateCell label="Rank" value={formatArchiveRank(row)} />
+                <CandidateCell label="Close" value={formatNumber(row.close)} strong />
+                <CandidateCell label="Review key" value={row.review_key} mono wide extra />
+                <CandidateCell label="Run" value={row.run_id} mono wide />
+                <CandidateCell label="Chart" value={row.chart || 'Not linked'} wide extra />
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="detail-panel" aria-label="Archive row detail">
+          {detailQuery.isError ? (
+            <div className="alert detail-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(detailQuery.error)}</span>
+            </div>
+          ) : null}
+          {detailQuery.isLoading && activeRowId ? <RunDetailSkeleton /> : null}
+          {!activeRowId && !rowsQuery.isLoading ? (
+            <div className="empty-state detail-empty">
+              <Archive size={24} aria-hidden="true" />
+              <h3>Select an archive row</h3>
+            </div>
+          ) : null}
+          {detailQuery.data ? <ArchiveDetailPanel row={detailQuery.data.row} /> : null}
+        </section>
+      </div>
+    </div>
+  )
+}
+
 function RunsView() {
   const queryClient = useQueryClient()
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -795,6 +1070,74 @@ function ReviewDetailPanel({ review }: { review: Review }) {
   )
 }
 
+function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
+  return (
+    <div className="detail-content">
+      <div className="detail-header">
+        <div>
+          <p className="eyebrow">Selected archive row</p>
+          <h2>{row.code}</h2>
+          <p className="muted run-id-wrap">{row.review_key}</p>
+        </div>
+        <div className="review-detail-actions">
+          <span className="strategy-chip large">{row.strategy}</span>
+          <span className={`archive-status-chip large ${archiveStatusClass(row.status)}`}>{archiveStatusLabel(row.status)}</span>
+        </div>
+      </div>
+
+      <div className="detail-meta archive-metrics">
+        <Metric label="Pick date" value={row.pick_date} />
+        <Metric label="Rank" value={formatArchiveRank(row)} />
+        <Metric label="Close" value={formatNumber(row.close)} />
+        <Metric label="Turnover" value={formatNumber(row.turnover_n)} />
+      </div>
+
+      <section className="subsection">
+        <h3>Lineage</h3>
+        <div className="lineage-grid">
+          <DataPair label="Archive row" value={row.id.toString()} />
+          <DataPair label="Snapshot" value={row.snapshot_id} />
+          <DataPair label="Run id" value={row.run_id} />
+          <DataPair label="Candidate batch" value={row.candidate_batch_id ?? 'Not linked'} />
+          <DataPair label="Review run" value={row.review_run_id ?? 'Not linked'} />
+          <DataPair label="Candidate id" value={row.candidate_id?.toString() ?? 'Not linked'} />
+          <DataPair label="Review id" value={row.review_id?.toString() ?? 'Not linked'} />
+          <DataPair label="Recommendation id" value={row.recommendation_id?.toString() ?? 'Not linked'} />
+          <DataPair label="Chart artifact" value={row.chart_artifact_id ?? 'Not linked'} />
+          <DataPair label="Archived" value={formatDateTime(row.snapshot.archived_at ?? row.snapshot.created_at)} />
+          <DataPair label="Chart" value={row.chart ?? 'Not linked'} />
+        </div>
+      </section>
+
+      <section className="subsection">
+        <h3>Snapshot summary</h3>
+        <div className="lineage-grid">
+          <DataPair label="Candidates" value={row.snapshot.candidate_count.toString()} />
+          <DataPair label="Recommended" value={row.snapshot.recommended_count.toString()} />
+          <DataPair label="Reviewed" value={row.snapshot.reviewed_count.toString()} />
+          <DataPair label="Threshold" value={formatNumber(row.snapshot.min_score_threshold)} />
+        </div>
+        <pre className="json-block">{jsonPreview(row.snapshot.summary)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Extra</h3>
+        <pre className="json-block">{jsonPreview(row.extra)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Review payload</h3>
+        <pre className="json-block">{jsonPreview(row.review_payload)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Strategy counts</h3>
+        <pre className="json-block">{jsonPreview(row.snapshot.strategy_counts)}</pre>
+      </section>
+    </div>
+  )
+}
+
 function FilterInput({
   label,
   value,
@@ -832,6 +1175,28 @@ function FilterSelect({
         <option value="all">All reviews</option>
         <option value="recommended">Recommended</option>
         <option value="reviewed">Reviewed only</option>
+      </select>
+    </label>
+  )
+}
+
+function ArchiveStatusSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: ArchiveStatus
+  onChange: (value: ArchiveStatus) => void
+}) {
+  return (
+    <label className="filter-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value as ArchiveStatus)}>
+        <option value="all">All rows</option>
+        <option value="recommended">Recommended</option>
+        <option value="reviewed">Reviewed</option>
+        <option value="unreviewed">Unreviewed</option>
       </select>
     </label>
   )
@@ -954,12 +1319,34 @@ function reviewerName(review: Review) {
   return review.reviewer || review.review_run.provider || 'Not set'
 }
 
+function findActiveSnapshot(snapshots: ArchiveSnapshot[], pickDate: string, runId: string) {
+  if (!pickDate) return undefined
+  return snapshots.find((snapshot) => snapshot.pick_date === pickDate && (!runId || snapshot.run_id === runId))
+    ?? snapshots.find((snapshot) => snapshot.pick_date === pickDate)
+}
+
 function verdictClass(verdict: string | null) {
   const normalized = verdict?.toLowerCase()
   if (normalized === 'pass') return 'pass'
   if (normalized === 'fail') return 'fail'
   if (normalized === 'watch') return 'watch'
   return 'neutral'
+}
+
+function archiveStatusLabel(status: ArchiveRow['status']) {
+  if (status === 'recommended') return 'Recommended'
+  if (status === 'reviewed') return 'Reviewed'
+  return 'Unreviewed'
+}
+
+function archiveStatusClass(status: ArchiveRow['status']) {
+  if (status === 'recommended') return 'recommended'
+  if (status === 'reviewed') return 'reviewed'
+  return 'unreviewed'
+}
+
+function formatArchiveRank(row: ArchiveRow) {
+  return row.rank ? `#${row.rank}` : 'No rank'
 }
 
 function jsonPreview(value: Record<string, unknown> | null) {

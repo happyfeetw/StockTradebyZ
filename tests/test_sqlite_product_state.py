@@ -16,7 +16,16 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
-from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Recommendation, Review, ReviewRun, Run  # noqa: E402
+from stocktrade_api.storage.sqlite_models import (  # noqa: E402
+    ArchiveRow,
+    ArchiveSnapshot,
+    Candidate,
+    CandidateBatch,
+    Recommendation,
+    Review,
+    ReviewRun,
+    Run,
+)
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -68,6 +77,8 @@ print("agent.gemini_cli_review" in sys.modules)
                     "review_runs",
                     "reviews",
                     "recommendations",
+                    "archive_snapshots",
+                    "archive_rows",
                 }.issubset(tables)
             )
 
@@ -102,6 +113,18 @@ print("agent.gemini_cli_review" in sys.modules)
             }
             self.assertIn(("review_run_id", "rank"), recommendation_uniques)
             self.assertIn(("review_run_id", "review_key"), recommendation_uniques)
+
+            archive_snapshot_uniques = {
+                tuple(unique["column_names"])
+                for unique in inspector.get_unique_constraints("archive_snapshots")
+            }
+            self.assertIn(("pick_date", "run_id"), archive_snapshot_uniques)
+
+            archive_row_uniques = {
+                tuple(unique["column_names"])
+                for unique in inspector.get_unique_constraints("archive_rows")
+            }
+            self.assertIn(("snapshot_id", "review_key"), archive_row_uniques)
             engine.dispose()
 
     def test_candidate_identity_is_unique_per_batch_code_strategy(self) -> None:
@@ -141,6 +164,70 @@ print("agent.gemini_cli_review" in sys.modules)
                         code="000001.SZ",
                         strategy="B2",
                         pick_date="2026-05-27",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    session.commit()
+                session.rollback()
+            engine.dispose()
+
+    def test_archive_identity_is_unique_per_snapshot_review_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+
+            with session_factory() as session:
+                archive_run = Run(id="run-archive-1", kind="archive", status="succeeded", pick_date="2026-05-27")
+                snapshot = ArchiveSnapshot(
+                    id="archive-1",
+                    run=archive_run,
+                    pick_date="2026-05-27",
+                    candidate_count=1,
+                    reviewed_count=0,
+                    recommended_count=0,
+                    strategy_counts_json={"b2": {"total": 1}},
+                    executed_strategies_json=["b2"],
+                )
+                session.add(snapshot)
+                session.add(
+                    ArchiveRow(
+                        snapshot=snapshot,
+                        pick_date="2026-05-27",
+                        run_id="run-archive-1",
+                        code="000001",
+                        strategy="b2",
+                        review_key="000001_b2",
+                        status="unreviewed",
+                    )
+                )
+                session.commit()
+
+                session.add(
+                    ArchiveRow(
+                        snapshot_id="archive-1",
+                        pick_date="2026-05-27",
+                        run_id="run-archive-1",
+                        code="000001",
+                        strategy="b2",
+                        review_key="000001_b2",
+                        status="reviewed",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    session.commit()
+                session.rollback()
+
+                session.add(
+                    ArchiveRow(
+                        snapshot_id="archive-1",
+                        pick_date="2026-05-27",
+                        run_id="run-archive-1",
+                        code="000002",
+                        strategy="brick",
+                        review_key="000002_brick",
+                        status="invalid",
                     )
                 )
                 with self.assertRaises(IntegrityError):

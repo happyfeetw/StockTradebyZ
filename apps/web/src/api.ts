@@ -118,6 +118,73 @@ export interface CandidateFilters {
   code?: string
 }
 
+export type RecommendationStatus = 'all' | 'recommended' | 'reviewed'
+
+export interface ReviewRun {
+  id: string
+  run_id: string
+  candidate_batch_id: string | null
+  pick_date: string
+  provider: string
+  status: string
+  summary: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface Recommendation {
+  id: number
+  review_run_id: string
+  review_id: number | null
+  rank: number
+  code: string
+  strategy: string
+  review_key: string
+  verdict: string | null
+  total_score: number | null
+  payload: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface Review {
+  id: number
+  review_run_id: string
+  run_id: string
+  candidate_batch_id: string | null
+  candidate_id: number | null
+  pick_date: string
+  code: string
+  strategy: string
+  review_key: string
+  verdict: string | null
+  total_score: number | null
+  reviewer: string | null
+  payload: Record<string, unknown> | null
+  created_at: string
+  review_run: ReviewRun
+  recommendation: Recommendation | null
+}
+
+export interface ReviewListResponse {
+  reviews: Review[]
+  total: number
+}
+
+export interface ReviewDetailResponse {
+  review: Review
+}
+
+export interface ReviewFilters {
+  pick_date?: string
+  run_id?: string
+  review_run_id?: string
+  candidate_batch_id?: string
+  strategy?: string
+  code?: string
+  review_key?: string
+  reviewer?: string
+  recommendation_status?: RecommendationStatus
+}
+
 export interface LegacyImportDryRunReport {
   dry_run: boolean
   data_root: string
@@ -208,6 +275,21 @@ export function listCandidates(filters: CandidateFilters = {}): Promise<Candidat
 
 export function getCandidate(candidateId: number): Promise<CandidateDetailResponse> {
   return request<CandidateDetailResponse>(`/api/candidates/${candidateId}`)
+}
+
+export function listReviews(filters: ReviewFilters = {}): Promise<ReviewListResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (!value?.trim()) continue
+    if (key === 'recommendation_status' && value === 'all') continue
+    params.set(key, value.trim())
+  }
+  const query = params.toString()
+  return request<ReviewListResponse>(`/api/reviews${query ? `?${query}` : ''}`)
+}
+
+export function getReview(reviewId: number): Promise<ReviewDetailResponse> {
+  return request<ReviewDetailResponse>(`/api/reviews/${reviewId}`)
 }
 
 export function dryRunLegacyImport(dataRoot: string): Promise<LegacyImportDryRunReport> {

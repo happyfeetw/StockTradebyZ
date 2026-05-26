@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..dependencies import get_job_runtime, get_run_repository
+from stocktrade.domain.selection import PreselectParameters, PreselectService
+
+from ..dependencies import get_job_runtime, get_preselect_service, get_run_repository
 from ..jobs.runtime import JobRuntime
+from ..schemas.preselect import (
+    CandidateBatchResponse,
+    CandidateResponse,
+    PreselectRunRequest,
+    PreselectRunResponse,
+)
 from ..schemas.runs import (
     ArtifactResponse,
     DiagnosticRunRequest,
@@ -16,7 +24,7 @@ from ..schemas.runs import (
     RunSummary,
 )
 from ..storage.run_repository import RunNotFoundError, RunRepository
-from ..storage.sqlite_models import Artifact, JobEvent, JobStep, Run
+from ..storage.sqlite_models import Artifact, Candidate, CandidateBatch, JobEvent, JobStep, Run
 
 router = APIRouter(tags=["runs"])
 
@@ -70,6 +78,33 @@ def artifact_response(artifact: Artifact) -> ArtifactResponse:
     )
 
 
+def candidate_response(candidate: Candidate) -> CandidateResponse:
+    return CandidateResponse(
+        id=candidate.id,
+        batch_id=candidate.batch_id,
+        code=candidate.code,
+        date=candidate.pick_date,
+        strategy=candidate.strategy,
+        close=candidate.close,
+        turnover_n=candidate.turnover_n,
+        brick_growth=candidate.brick_growth,
+        extra=candidate.extra_json or {},
+    )
+
+
+def candidate_batch_response(batch: CandidateBatch) -> CandidateBatchResponse:
+    return CandidateBatchResponse(
+        id=batch.id,
+        run_id=batch.run_id,
+        pick_date=batch.pick_date,
+        source=batch.source,
+        strategy_counts={str(key): int(value) for key, value in (batch.strategy_counts_json or {}).items()},
+        total=len(batch.candidates),
+        created_at=batch.created_at,
+        candidates=[candidate_response(candidate) for candidate in batch.candidates],
+    )
+
+
 def run_detail(run: Run) -> RunDetail:
     summary = run_summary(run)
     return RunDetail(
@@ -88,6 +123,25 @@ def create_diagnostic_run(
 ) -> RunDetail:
     run = runtime.run_diagnostic_job(fail=request.fail)
     return run_detail(repository.get_run_detail(run.id))
+
+
+@router.post("/runs/preselect", response_model=PreselectRunResponse)
+def create_preselect_run(
+    request: PreselectRunRequest,
+    runtime: JobRuntime = Depends(get_job_runtime),
+    service: PreselectService = Depends(get_preselect_service),
+) -> PreselectRunResponse:
+    parameters = PreselectParameters(
+        config_path=request.config_path,
+        data_dir=request.data_dir,
+        pick_date=request.pick_date,
+        end_date=request.end_date,
+    )
+    try:
+        run, batch, _result = runtime.run_preselect_job(parameters, service=service)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return PreselectRunResponse(run=run_summary(run), batch=candidate_batch_response(batch))
 
 
 @router.get("/runs", response_model=RunListResponse)

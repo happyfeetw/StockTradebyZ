@@ -19,6 +19,21 @@ export interface HealthResponse {
   simulated_trading_in_scope: boolean
 }
 
+export interface BackupManifest {
+  backup_id: string
+  run_id: string
+  created_at: string
+  backup_path: string
+  product_version: string
+  sources: Record<string, string | null>
+  files: Record<string, string>
+  missing_optional: string[]
+}
+
+export interface BackupCreateResponse {
+  backup: BackupManifest
+}
+
 export interface RunSummary {
   id: string
   kind: RunKind
@@ -347,6 +362,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/api/health')
+}
+
+export function createBackup(): Promise<BackupCreateResponse> {
+  return request<BackupCreateResponse>('/api/backups', { method: 'POST' })
 }
 
 export function listRuns(): Promise<RunListResponse> {

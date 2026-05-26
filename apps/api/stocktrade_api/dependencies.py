@@ -4,6 +4,7 @@ from fastapi import Request
 
 from .jobs.runtime import JobRuntime
 from .storage.archive_repository import ArchiveRepository
+from .storage.backup_service import BackupService
 from .storage.candidate_repository import CandidateRepository
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
@@ -28,6 +29,10 @@ def get_review_repository(request: Request) -> ReviewRepository:
 
 def get_archive_repository(request: Request) -> ArchiveRepository:
     return request.app.state.archive_repository
+
+
+def get_backup_service(request: Request) -> BackupService:
+    return request.app.state.backup_service
 
 
 def get_migration_repository(request: Request) -> MigrationRepository:

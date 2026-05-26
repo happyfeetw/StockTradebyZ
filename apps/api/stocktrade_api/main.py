@@ -7,6 +7,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .routes.health import router as health_router
+from .routes.migrations import router as migrations_router
 from .routes.runs import router as runs_router
 from .jobs.runtime import JobRuntime
 from .storage.run_repository import RunRepository
@@ -35,6 +36,7 @@ def create_app(
 
     app.include_router(health_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
+    app.include_router(migrations_router, prefix="/api")
 
     @app.on_event("shutdown")
     def shutdown_storage() -> None:

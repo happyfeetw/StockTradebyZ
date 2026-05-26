@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any
 
-from stocktrade.domain.selection import PreselectParameters, PreselectService
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..dependencies import get_job_runtime, get_preselect_service, get_run_repository
 from ..jobs.runtime import JobRuntime
@@ -129,8 +129,10 @@ def create_diagnostic_run(
 def create_preselect_run(
     request: PreselectRunRequest,
     runtime: JobRuntime = Depends(get_job_runtime),
-    service: PreselectService = Depends(get_preselect_service),
+    service: Any = Depends(get_preselect_service),
 ) -> PreselectRunResponse:
+    from stocktrade.domain.selection import PreselectParameters
+
     parameters = PreselectParameters(
         config_path=request.config_path,
         data_dir=request.data_dir,

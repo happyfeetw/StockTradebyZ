@@ -8,13 +8,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from ..schemas.migrations import (
+    LegacyArchiveImportPlan,
     LegacyCandidateImportPlan,
     LegacyImportSummary,
     LegacyImportDryRunReport,
     LegacyImportIssue,
     LegacyReviewImportPlan,
 )
-from .sqlite_models import Candidate, CandidateBatch, MigrationQuarantine, MigrationRun, Recommendation, Review, ReviewRun, Run
+from .sqlite_models import (
+    ArchiveRow,
+    ArchiveSnapshot,
+    Candidate,
+    CandidateBatch,
+    MigrationQuarantine,
+    MigrationRun,
+    Recommendation,
+    Review,
+    ReviewRun,
+    Run,
+)
 
 
 def utc_now() -> datetime:
@@ -255,6 +267,115 @@ class MigrationRepository:
                         verdict=item.verdict,
                         total_score=item.total_score,
                         payload_json=item.payload,
+                    )
+                )
+            self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.commit()
+            migration_run = self._load_migration_run(session, run_id)
+            if migration_run is None:
+                raise MigrationRunNotFoundError(run_id)
+            return migration_run
+
+    def record_archive_import(
+        self,
+        report: LegacyImportDryRunReport,
+        plan: LegacyArchiveImportPlan,
+        *,
+        migration_id: str | None = None,
+        archive_snapshot_id: str | None = None,
+    ) -> MigrationRun:
+        run_id = migration_id or uuid4().hex
+        snapshot_id = archive_snapshot_id or uuid4().hex
+        now = utc_now()
+        import_summary = LegacyImportSummary(
+            run_id=run_id,
+            pick_date=plan.pick_date,
+            source_file=plan.source_path,
+            strategy_counts=plan.strategy_counts,
+            archive_snapshot_id=snapshot_id,
+            archive_rows_imported=len(plan.rows),
+            archive_reviewed_count=plan.reviewed_count,
+            archive_recommended_count=plan.recommended_count,
+        )
+        stored_report = report.model_copy(
+            update={
+                "migration_id": run_id,
+                "dry_run": False,
+                "import_summary": import_summary,
+            }
+        )
+        report_payload = stored_report.model_dump(mode="json")
+        summary = {
+            "dry_run": False,
+            "data_root": report.data_root,
+            "totals": report_payload["totals"],
+            "import_summary": report_payload["import_summary"],
+        }
+        source_json = dict(plan.source)
+        source_json.update(
+            {
+                "legacy_run_id": plan.legacy_run_id,
+                "history_summary": f"{plan.source_path}/summary.json",
+                "history_all": f"{plan.source_path}/all.json",
+            }
+        )
+
+        with self.session_factory() as session:
+            session.add(
+                Run(
+                    id=run_id,
+                    kind="legacy_import",
+                    status="succeeded",
+                    pick_date=plan.pick_date,
+                    started_at=now,
+                    finished_at=now,
+                    summary_json=summary,
+                )
+            )
+            session.add(
+                MigrationRun(
+                    id=run_id,
+                    source_root=report.data_root,
+                    status="succeeded",
+                    started_at=now,
+                    finished_at=now,
+                    report_json=report_payload,
+                )
+            )
+            session.add(
+                ArchiveSnapshot(
+                    id=snapshot_id,
+                    run_id=run_id,
+                    pick_date=plan.pick_date,
+                    candidate_run_date=plan.candidate_run_date,
+                    candidate_count=plan.candidate_count,
+                    reviewed_count=plan.reviewed_count,
+                    recommended_count=plan.recommended_count,
+                    strategy_counts_json=plan.strategy_counts,
+                    executed_strategies_json=plan.executed_strategies,
+                    min_score_threshold=plan.min_score_threshold,
+                    source_json=source_json,
+                    summary_json=plan.summary,
+                    archived_at=plan.archived_at,
+                )
+            )
+            for row in plan.rows:
+                session.add(
+                    ArchiveRow(
+                        snapshot_id=snapshot_id,
+                        pick_date=plan.pick_date,
+                        run_id=run_id,
+                        code=row.code,
+                        strategy=row.strategy,
+                        review_key=row.review_key,
+                        status=row.status,
+                        rank=row.rank,
+                        close=row.close,
+                        turnover_n=row.turnover_n,
+                        brick_growth=row.brick_growth,
+                        extra_json=row.extra,
+                        review_payload_json=row.review_payload,
+                        chart_path=row.chart,
                     )
                 )
             self._add_quarantine_rows(session, run_id, report.quarantine)

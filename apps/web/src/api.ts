@@ -260,17 +260,38 @@ export interface ArchiveRowFilters extends ArchiveSnapshotFilters {
   rank?: string
 }
 
+export interface LegacyImportIssue {
+  section: string
+  source_path: string
+  reason: string
+  message: string
+  record_key: string | null
+}
+
+export interface LegacyImportSectionReport {
+  files_seen: number
+  files_valid: number
+  records_seen: number
+  records_valid: number
+  by_kind: Record<string, number>
+}
+
+export interface LegacyImportTotals {
+  files_seen: number
+  files_valid: number
+  records_seen: number
+  records_valid: number
+  warning_count: number
+  quarantine_count: number
+}
+
 export interface LegacyImportDryRunReport {
   dry_run: boolean
   data_root: string
-  totals: {
-    files_seen: number
-    files_valid: number
-    records_seen: number
-    records_valid: number
-    warning_count: number
-    quarantine_count: number
-  }
+  sections: Record<string, LegacyImportSectionReport>
+  totals: LegacyImportTotals
+  warnings: LegacyImportIssue[]
+  quarantine: LegacyImportIssue[]
 }
 
 export class ApiError extends Error {

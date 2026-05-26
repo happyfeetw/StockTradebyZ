@@ -23,6 +23,7 @@ import './App.css'
 import {
   cancelRun,
   createDiagnosticRun,
+  dryRunLegacyImport,
   getArchiveRow,
   getCandidate,
   getHealth,
@@ -43,6 +44,8 @@ import {
   type Candidate,
   type CandidateFilters,
   type JobEvent,
+  type LegacyImportIssue,
+  type LegacyImportSectionReport,
   type RecommendationStatus,
   type Review,
   type ReviewFilters,
@@ -55,7 +58,7 @@ const navItems = [
   { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
   { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
   { to: '/archive', label: 'Archive', icon: Archive, state: 'active' },
-  { to: '/migrations', label: 'Migrations', icon: Database, state: 'pending' },
+  { to: '/migrations', label: 'Migrations', icon: Database, state: 'active' },
 ]
 
 const statusLabels: Record<RunStatus, string> = {
@@ -99,7 +102,7 @@ function App() {
           <Route path="/candidates" element={<CandidatesView />} />
           <Route path="/reviews" element={<ReviewsView />} />
           <Route path="/archive" element={<ArchiveView />} />
-          <Route path="/migrations" element={<Placeholder title="Migrations" />} />
+          <Route path="/migrations" element={<MigrationsView />} />
         </Routes>
       </main>
     </div>
@@ -734,6 +737,108 @@ function ArchiveView() {
   )
 }
 
+function MigrationsView() {
+  const [dataRoot, setDataRoot] = useState('data')
+  const dryRunMutation = useMutation({
+    mutationFn: (root: string) => dryRunLegacyImport(root),
+  })
+  const report = dryRunMutation.data
+  const totals = report?.totals
+  const sectionNames = ['candidates', 'reviews', 'history']
+
+  function runDryRun() {
+    dryRunMutation.mutate(dataRoot.trim() || 'data')
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Migration preflight</p>
+          <h1>Migrations</h1>
+        </div>
+        <span className="pending-chip">Dry-run only</span>
+      </header>
+
+      <section className="summary-strip migration-summary-strip" aria-label="Migration dry-run summary">
+        <Metric label="Files" value={totals ? `${totals.files_valid}/${totals.files_seen}` : 'Not run'} />
+        <Metric label="Records" value={totals ? `${totals.records_valid}/${totals.records_seen}` : 'Not run'} />
+        <Metric label="Warnings" value={totals ? totals.warning_count.toString() : 'Not run'} />
+        <Metric label="Quarantine" value={totals ? totals.quarantine_count.toString() : 'Not run'} />
+      </section>
+
+      <section className="migration-control-panel" aria-label="Legacy import dry-run control">
+        <form
+          className="migration-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            runDryRun()
+          }}
+        >
+          <FilterInput label="Data root" placeholder="data" value={dataRoot} onChange={setDataRoot} />
+          <button type="submit" className="action-button" disabled={dryRunMutation.isPending}>
+            {dryRunMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+            <span>Dry run</span>
+          </button>
+        </form>
+        <p className="muted migration-note">
+          This dry-run scans candidates, reviews, and history only. Write/import execution and trading account data are intentionally
+          unavailable in this slice.
+        </p>
+      </section>
+
+      {dryRunMutation.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(dryRunMutation.error)}</span>
+        </div>
+      ) : null}
+
+      {!report && !dryRunMutation.isPending ? (
+        <div className="empty-state migration-empty">
+          <Database size={24} aria-hidden="true" />
+          <h3>Run a dry-run scan before importing legacy files</h3>
+        </div>
+      ) : null}
+
+      {dryRunMutation.isPending ? <RunSkeleton /> : null}
+
+      {report ? (
+        <div className="migration-grid">
+          <section className="migration-section-panel" aria-label="Migration section reports">
+            <div className="panel-heading">
+              <div>
+                <h2>Sections</h2>
+                <p>{report.data_root}</p>
+              </div>
+              <span className="status-badge succeeded">
+                <CheckCircle2 size={15} aria-hidden="true" />
+                Dry run
+              </span>
+            </div>
+            <div className="migration-section-grid">
+              {sectionNames.map((section) => (
+                <MigrationSectionCard key={section} name={section} report={report.sections[section]} />
+              ))}
+            </div>
+          </section>
+
+          <section className="migration-issues-panel" aria-label="Migration warnings and quarantine">
+            <div className="panel-heading">
+              <div>
+                <h2>Issues</h2>
+                <p>{report.warnings.length + report.quarantine.length} findings</p>
+              </div>
+            </div>
+            <MigrationIssueList title="Warnings" kind="warning" issues={report.warnings} />
+            <MigrationIssueList title="Quarantine" kind="quarantine" issues={report.quarantine} />
+          </section>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function RunsView() {
   const queryClient = useQueryClient()
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -1138,6 +1243,58 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
   )
 }
 
+function MigrationSectionCard({ name, report }: { name: string; report?: LegacyImportSectionReport }) {
+  return (
+    <div className="migration-section-card">
+      <div className="migration-section-head">
+        <Database size={17} aria-hidden="true" />
+        <h3>{sectionLabel(name)}</h3>
+      </div>
+      <div className="section-count-grid">
+        <DataPair label="Files" value={report ? `${report.files_valid}/${report.files_seen}` : '0/0'} />
+        <DataPair label="Records" value={report ? `${report.records_valid}/${report.records_seen}` : '0/0'} />
+      </div>
+      <pre className="json-block compact">{jsonPreview(report?.by_kind ?? null)}</pre>
+    </div>
+  )
+}
+
+function MigrationIssueList({
+  title,
+  kind,
+  issues,
+}: {
+  title: string
+  kind: 'warning' | 'quarantine'
+  issues: LegacyImportIssue[]
+}) {
+  return (
+    <section className="migration-issue-section">
+      <div className="migration-issue-heading">
+        <h3>{title}</h3>
+        <span className={`issue-kind ${kind}`}>{issues.length}</span>
+      </div>
+      {issues.length === 0 ? (
+        <p className="muted migration-issue-empty">No {title.toLowerCase()} found.</p>
+      ) : (
+        <div className="migration-issue-list">
+          {issues.map((issue, index) => (
+            <div className="migration-issue-row" key={`${issue.section}-${issue.source_path}-${issue.reason}-${issue.record_key ?? index}`}>
+              <span className={`issue-kind ${kind}`}>{issue.section}</span>
+              <div>
+                <strong>{issue.reason}</strong>
+                <p>{issue.message}</p>
+                <code>{issue.source_path}</code>
+                {issue.record_key ? <small>{issue.record_key}</small> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function FilterInput({
   label,
   value,
@@ -1235,24 +1392,6 @@ function CandidateCell({
   )
 }
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="placeholder-view">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Product area</p>
-          <h1>{title}</h1>
-        </div>
-        <span className="pending-chip">Not wired</span>
-      </header>
-      <section className="placeholder-panel">
-        <Database size={28} aria-hidden="true" />
-        <h2>{title} is queued for a later slice</h2>
-      </section>
-    </div>
-  )
-}
-
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -1347,6 +1486,13 @@ function archiveStatusClass(status: ArchiveRow['status']) {
 
 function formatArchiveRank(row: ArchiveRow) {
   return row.rank ? `#${row.rank}` : 'No rank'
+}
+
+function sectionLabel(section: string) {
+  if (section === 'candidates') return 'Candidates'
+  if (section === 'reviews') return 'Reviews'
+  if (section === 'history') return 'History'
+  return section
 }
 
 function jsonPreview(value: Record<string, unknown> | null) {

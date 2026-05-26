@@ -22,6 +22,7 @@ from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_
 from stocktrade_api.storage.sqlite_models import (  # noqa: E402
     ArchiveRow,
     ArchiveSnapshot,
+    Artifact,
     Candidate,
     CandidateBatch,
     Recommendation,
@@ -166,6 +167,14 @@ def seed_archive(db_path: Path) -> None:
         )
         session.add(recommendation)
         session.flush()
+        chart_artifact = Artifact(
+            id="artifact-chart-1",
+            run=archive_run_1,
+            kind="chart",
+            path="data/kline/2026-05-27/000001_day.png",
+            content_type="image/png",
+            metadata_json={"code": "000001", "strategy": "b2"},
+        )
         snapshot_1 = ArchiveSnapshot(
             id="archive-2026-05-27-run-archive-1",
             run=archive_run_1,
@@ -210,6 +219,7 @@ def seed_archive(db_path: Path) -> None:
                     candidate=candidate_1,
                     review=review_pass,
                     recommendation=recommendation,
+                    chart_artifact=chart_artifact,
                     pick_date="2026-05-27",
                     run_id="run-archive-1",
                     code="000001",
@@ -316,6 +326,7 @@ class ArchiveRepositoryContractTests(unittest.TestCase):
             "candidate_id": 7,
             "review_id": 8,
             "recommendation_id": 9,
+            "chart_artifact_id": "artifact-chart-1",
             "code": "000001",
             "strategy": "b2",
             "review_key": "000001_b2",
@@ -350,6 +361,7 @@ class ArchiveRepositoryContractTests(unittest.TestCase):
         detail = ArchiveRowDetailResponse.model_validate({"row": payload})
         self.assertEqual(detail.row.review_key, "000001_b2")
         self.assertEqual(detail.row.snapshot.recommended_count, 1)
+        self.assertEqual(detail.row.chart_artifact_id, "artifact-chart-1")
         self.assertEqual(ArchiveDateResponse.model_validate({"snapshots": [payload["snapshot"]], "rows": [payload], "total": 1}).total, 1)
 
     def test_archive_routes_do_not_pull_heavy_legacy_modules(self) -> None:
@@ -393,11 +405,13 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(filtered_payload["total"], 1)
                 row = filtered_payload["rows"][0]
                 self.assertEqual((row["review_key"], row["run_id"], row["candidate_batch_id"]), ("000001_b2", "run-archive-1", "batch-1"))
+                self.assertEqual(row["chart_artifact_id"], "artifact-chart-1")
                 self.assertEqual(row["snapshot"]["review_run_id"], "review-batch-1")
                 self.assertEqual(row["review_payload"], {"comment": "clean breakout"})
 
                 detail = await client.get(f"/api/archive/rows/{row['id']}")
                 self.assertEqual(detail.status_code, 200)
+                self.assertEqual(detail.json()["row"]["chart_artifact_id"], "artifact-chart-1")
                 self.assertEqual(detail.json()["row"]["chart"], "data/kline/2026-05-27/000001_day.png")
 
                 mismatch = await client.get("/api/archive/2026-05-28", params={"code": "000004", "strategy": "b2"})

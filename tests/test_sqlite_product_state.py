@@ -125,6 +125,9 @@ print("agent.gemini_cli_review" in sys.modules)
                 for unique in inspector.get_unique_constraints("archive_rows")
             }
             self.assertIn(("snapshot_id", "review_key"), archive_row_uniques)
+
+            archive_row_columns = {column["name"] for column in inspector.get_columns("archive_rows")}
+            self.assertIn("chart_artifact_id", archive_row_columns)
             engine.dispose()
 
     def test_candidate_identity_is_unique_per_batch_code_strategy(self) -> None:

@@ -1,0 +1,70 @@
+# Agent Harness Index
+
+This directory defines how agents should work in StockTradebyZ. It translates
+the harness-engineering ideas from OpenAI's article into repo-specific,
+verifiable rules.
+
+## Source Inspiration
+
+OpenAI's [harness engineering article](https://openai.com/zh-Hans-CN/index/harness-engineering/)
+argues that agent effectiveness depends on the environment: clear intent,
+readable systems, feedback loops, repository knowledge, mechanical architecture
+constraints, and recurring cleanup. The project-specific interpretation here is:
+
+- Give agents a map, not a giant manual.
+- Store durable product and architecture knowledge in the repo.
+- Make important checks executable.
+- Preserve observability for local workflows.
+- Turn repeated review feedback into docs or harness rules.
+- Prefer boring, inspectable interfaces over hidden magic.
+
+## Files
+
+- [../../AGENTS.md](../../AGENTS.md): short entry map injected into agent context.
+- [../../ARCHITECTURE.md](../../ARCHITECTURE.md): high-level domain and storage map.
+- [harness-engineering-principles.md](harness-engineering-principles.md):
+  repo-specific interpretation of the article.
+- [issue-pr-governance.md](issue-pr-governance.md): issue and PR rules for all
+  refactor work.
+- [product-refactor-charter.md](product-refactor-charter.md): scope and target
+  qualities for the full product rewrite.
+- [business-logic-spec.md](business-logic-spec.md): behavior parity and golden
+  master rules for rewriting core business logic in a new stack.
+- [refactor-execution.md](refactor-execution.md): phase model and stop
+  conditions for the product-level rewrite.
+- [refactor-contracts.md](refactor-contracts.md): compatibility contracts that
+  must survive or be explicitly migrated during the rewrite.
+- [refactor-preconditions.md](refactor-preconditions.md): decisions that need
+  user confirmation before destructive implementation work.
+- [uiux-quality-bar.md](uiux-quality-bar.md): measurable UI/UX acceptance bar.
+- [architecture-quality-bar.md](architecture-quality-bar.md): frontend,
+  backend, system, storage, maintainability, and resource quality bar.
+- [validation-gates.md](validation-gates.md): what to run for each change type.
+- [workflows.md](workflows.md): repeatable agent workflows.
+- [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.
+
+## Executable Entry Points
+
+```bash
+scripts/harness/check.sh quick
+scripts/harness/check.sh product-refactor-readiness
+scripts/harness/check.sh refactor-readiness
+scripts/harness/check.sh docs
+scripts/harness/check.sh contracts
+scripts/harness/check.sh python
+```
+
+The harness is intentionally lightweight. It should be safe in a clean clone and
+should not require Tushare, Gemini credentials, or local `data/` artifacts. The
+`product-refactor-readiness` gate is the required preflight for full product
+rewrites, target-stack proposals, UI/UX replacement, backend redesign, storage
+redesign, and core business logic rewrites.
+
+## Maintenance Rule
+
+When an agent or reviewer hits the same failure pattern twice, add one of:
+
+- a short rule in `AGENTS.md` if it is context-critical;
+- a durable explanation in `docs/agent-harness/`;
+- a mechanical check in `scripts/harness/`;
+- a focused regression test in `tests/`.

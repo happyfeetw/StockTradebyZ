@@ -46,6 +46,9 @@
 - [docs](docs)：方案文档
 - [run_all.py](run_all.py)：全流程一键入口
 
+Agent 协作与 harness 规范见 [AGENTS.md](AGENTS.md) 和
+[docs/agent-harness/index.md](docs/agent-harness/index.md)。
+
 ---
 
 ## 3. 快速开始（一键跑通）

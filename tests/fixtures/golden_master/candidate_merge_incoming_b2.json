@@ -1,0 +1,32 @@
+{
+  "run_date": "2026-05-23",
+  "pick_date": "2026-05-22",
+  "candidates": [
+    {
+      "code": "000001",
+      "date": "2026-05-22",
+      "strategy": "b2",
+      "close": 10.5,
+      "turnover_n": 123000000.0,
+      "extra": {
+        "reason": "same code from b2"
+      }
+    },
+    {
+      "code": "000999",
+      "date": "2026-05-22",
+      "strategy": "b2",
+      "close": 12.3,
+      "turnover_n": 88000000.0
+    }
+  ],
+  "meta": {
+    "executed_strategies": [
+      "b2"
+    ],
+    "strategy_candidate_counts": {
+      "b2": 2
+    },
+    "source": "incoming"
+  }
+}

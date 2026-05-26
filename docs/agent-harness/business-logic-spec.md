@@ -20,6 +20,24 @@ outputs. A golden master should include:
 If parity cannot be established, stop and decide whether the legacy behavior is
 wrong, underspecified, or intentionally changing.
 
+## Golden Master Fixtures
+
+Credential-free golden masters live under
+`tests/fixtures/golden_master/` and are exercised by
+`tests/test_golden_master_contracts.py`.
+
+Current cases:
+
+- `candidate_merge_*`: same-date strategy rerun preserves `(code, strategy)`,
+  replaces stale rows only for rerun strategies, and allows the same stock code
+  to appear under multiple strategies.
+- `archive_review_case.json`: archive rows preserve review keys, same-code
+  multi-strategy candidates, legacy review matching, recommended/reviewed/
+  unreviewed status, chart evidence, and strategy counts.
+- `review_suggestion_case.json`: review score normalization and suggestion
+  generation run without live Gemini calls and preserve recommendation,
+  excluded, and per-strategy count semantics.
+
 ## Required Business Areas
 
 ### Strategy Selection

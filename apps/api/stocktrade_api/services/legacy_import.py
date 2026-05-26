@@ -10,6 +10,9 @@ from typing import Any
 from ..schemas.migrations import (
     LegacyCandidateImportPlan,
     LegacyCandidateImportRecord,
+    LegacyRecommendationImportRecord,
+    LegacyReviewImportPlan,
+    LegacyReviewImportRecord,
     LegacyImportDryRunReport,
     LegacyImportIssue,
     LegacyImportSectionReport,
@@ -24,6 +27,10 @@ class LegacyCandidateImportError(ValueError):
     def __init__(self, message: str, *, status_code: int = 422):
         super().__init__(message)
         self.status_code = status_code
+
+
+class LegacyReviewImportError(LegacyCandidateImportError):
+    pass
 
 
 def legacy_review_key(code: str, strategy: str = "") -> str:
@@ -423,6 +430,184 @@ def build_legacy_candidate_import_report(plan: LegacyCandidateImportPlan) -> Leg
     )
 
 
+def load_legacy_review_import_plan(data_root: str | Path, pick_date: str) -> LegacyReviewImportPlan:
+    root = Path(data_root).expanduser()
+    review_root = root / "review" / pick_date
+    if not review_root.exists():
+        raise LegacyReviewImportError("review directory does not exist", status_code=404)
+    if not review_root.is_dir():
+        raise LegacyReviewImportError("review path must be a directory")
+
+    suggestion_payload = _load_optional_review_json(review_root / "suggestion.json")
+    provider = _review_provider(suggestion_payload)
+    reviews: list[LegacyReviewImportRecord] = []
+    seen_review_keys: set[str] = set()
+    for path in sorted(item for item in review_root.glob("*.json") if item.name != "suggestion.json"):
+        payload = _load_review_payload(path)
+        record = _review_record_from_payload(root, path, payload)
+        if record.review_key in seen_review_keys:
+            raise LegacyReviewImportError(f"duplicate review_key in import directory: {record.review_key}")
+        seen_review_keys.add(record.review_key)
+        reviews.append(record)
+
+    recommendations = _recommendations_from_suggestion(root, review_root / "suggestion.json", suggestion_payload)
+    reviewed_keys = {record.review_key for record in reviews}
+    missing_review_keys = [record.review_key for record in recommendations if record.review_key not in reviewed_keys]
+    if missing_review_keys:
+        raise LegacyReviewImportError(
+            f"recommendations reference missing review files: {', '.join(sorted(missing_review_keys))}"
+        )
+
+    if not reviews and not recommendations:
+        raise LegacyReviewImportError("review directory contains no importable review records")
+
+    return LegacyReviewImportPlan(
+        data_root=root.as_posix(),
+        source_path=_relative_source_path(root, review_root),
+        pick_date=pick_date,
+        provider=provider,
+        reviews=reviews,
+        recommendations=recommendations,
+    )
+
+
+def build_legacy_review_import_report(plan: LegacyReviewImportPlan) -> LegacyImportDryRunReport:
+    section_reports = {section: LegacyImportSectionReport() for section in LEGACY_SECTIONS}
+    files_valid = len(plan.reviews) + (1 if plan.recommendations else 0)
+    section_reports["reviews"] = LegacyImportSectionReport(
+        files_seen=files_valid,
+        files_valid=files_valid,
+        records_seen=len(plan.reviews) + len(plan.recommendations),
+        records_valid=len(plan.reviews) + len(plan.recommendations),
+        by_kind={
+            "review": len(plan.reviews),
+            **({"suggestion": 1} if plan.recommendations else {}),
+        },
+    )
+    totals = LegacyImportTotals(
+        files_seen=files_valid,
+        files_valid=files_valid,
+        records_seen=len(plan.reviews) + len(plan.recommendations),
+        records_valid=len(plan.reviews) + len(plan.recommendations),
+        warning_count=0,
+        quarantine_count=0,
+    )
+    return LegacyImportDryRunReport(
+        dry_run=False,
+        data_root=plan.data_root,
+        sections=section_reports,
+        totals=totals,
+        warnings=[],
+        quarantine=[],
+    )
+
+
+def _review_record_from_payload(root: Path, path: Path, payload: dict[str, Any]) -> LegacyReviewImportRecord:
+    code = str(payload.get("code") or "")
+    if not code:
+        raise LegacyReviewImportError(f"{_relative_source_path(root, path)} requires code")
+    strategy = str(payload.get("strategy") or "")
+    expected_key = legacy_review_key(code, strategy)
+    stored_key = str(payload.get("review_key") or "")
+    if stored_key and stored_key != expected_key:
+        raise LegacyReviewImportError(
+            f"{_relative_source_path(root, path)} review_key does not match (code, strategy)"
+        )
+    review_key = stored_key or expected_key
+    normalized_payload = dict(payload)
+    normalized_payload.setdefault("review_key", review_key)
+    normalized_payload.setdefault("strategy", strategy)
+    normalized_payload.setdefault("legacy_source_path", _relative_source_path(root, path))
+    return LegacyReviewImportRecord(
+        code=code,
+        strategy=strategy,
+        review_key=review_key,
+        verdict=_optional_string(payload.get("verdict")),
+        total_score=_candidate_optional_float(payload.get("total_score"), f"{_relative_source_path(root, path)} total_score"),
+        reviewer=_optional_string(payload.get("reviewer")),
+        payload=normalized_payload,
+    )
+
+
+def _recommendations_from_suggestion(
+    root: Path,
+    path: Path,
+    payload: dict[str, Any] | None,
+) -> list[LegacyRecommendationImportRecord]:
+    if payload is None:
+        return []
+    if payload.get("date") and str(payload.get("date")) != path.parent.name:
+        raise LegacyReviewImportError("suggestion.json date does not match requested pick_date")
+    recommendations = payload.get("recommendations") or []
+    if not isinstance(recommendations, list):
+        raise LegacyReviewImportError("suggestion.json recommendations must be a list")
+
+    records: list[LegacyRecommendationImportRecord] = []
+    seen_keys: set[str] = set()
+    seen_ranks: set[int] = set()
+    for index, item in enumerate(recommendations):
+        if not isinstance(item, dict):
+            raise LegacyReviewImportError(f"suggestion recommendation row {index} must be an object")
+        code = str(item.get("code") or "")
+        if not code:
+            raise LegacyReviewImportError(f"suggestion recommendation row {index} requires code")
+        strategy = str(item.get("strategy") or "")
+        expected_key = legacy_review_key(code, strategy)
+        stored_key = str(item.get("review_key") or "")
+        if stored_key and stored_key != expected_key:
+            raise LegacyReviewImportError(f"suggestion recommendation row {index} review_key mismatch")
+        review_key = stored_key or expected_key
+        rank = _positive_int(item.get("rank") or index + 1, f"suggestion recommendation row {index} rank")
+        if review_key in seen_keys:
+            raise LegacyReviewImportError(f"duplicate recommendation review_key: {review_key}")
+        if rank in seen_ranks:
+            raise LegacyReviewImportError(f"duplicate recommendation rank: {rank}")
+        seen_keys.add(review_key)
+        seen_ranks.add(rank)
+        normalized_payload = dict(item)
+        normalized_payload.setdefault("review_key", review_key)
+        normalized_payload.setdefault("strategy", strategy)
+        normalized_payload.setdefault("legacy_source_path", _relative_source_path(root, path))
+        records.append(
+            LegacyRecommendationImportRecord(
+                rank=rank,
+                code=code,
+                strategy=strategy,
+                review_key=review_key,
+                verdict=_optional_string(item.get("verdict")),
+                total_score=_candidate_optional_float(item.get("total_score"), f"suggestion recommendation row {index} total_score"),
+                payload=normalized_payload,
+            )
+        )
+    return sorted(records, key=lambda record: record.rank)
+
+
+def _review_provider(payload: dict[str, Any] | None) -> str:
+    if payload:
+        reviewer = _optional_string(payload.get("reviewer"))
+        if reviewer:
+            return reviewer
+    return "legacy-review"
+
+
+def _load_optional_review_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return _load_review_payload(path)
+
+
+def _load_review_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise LegacyReviewImportError(f"{path.name} is malformed JSON: {exc}") from exc
+    except OSError as exc:
+        raise LegacyReviewImportError(f"{path.name} is unreadable: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise LegacyReviewImportError(f"{path.name} root must be an object")
+    return payload
+
+
 def _load_candidate_import_payload(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -448,6 +633,22 @@ def _candidate_optional_float(value: Any, label: str) -> float | None:
     if value in (None, ""):
         return None
     return _candidate_float(value, label)
+
+
+def _positive_int(value: Any, label: str) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise LegacyReviewImportError(f"{label} must be a positive integer") from exc
+    if result <= 0:
+        raise LegacyReviewImportError(f"{label} must be a positive integer")
+    return result
+
+
+def _optional_string(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
 
 
 def _relative_source_path(root: Path, path: Path) -> str:

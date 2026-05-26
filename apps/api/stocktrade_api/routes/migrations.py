@@ -12,7 +12,9 @@ from ..schemas.migrations import (
 from ..services.legacy_import import (
     LegacyCandidateImportError,
     build_legacy_candidate_import_report,
+    build_legacy_review_import_report,
     load_legacy_candidate_import_plan,
+    load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
 )
 from ..storage.migration_repository import MigrationRepository, MigrationRunNotFoundError
@@ -26,10 +28,10 @@ def import_legacy(
     request: LegacyImportDryRunRequest,
     repository: MigrationRepository = Depends(get_migration_repository),
 ) -> LegacyImportDryRunReport:
-    if not request.dry_run and (request.scope != "candidates" or not request.pick_date):
+    if not request.dry_run and (request.scope not in {"candidates", "reviews"} or not request.pick_date):
         raise HTTPException(
             status_code=409,
-            detail="legacy import writes require scope='candidates' and pick_date",
+            detail="legacy import writes require scope='candidates' or scope='reviews' and pick_date",
         )
 
     if request.dry_run:
@@ -38,14 +40,20 @@ def import_legacy(
         return report.model_copy(update={"migration_id": migration_run.id})
 
     try:
-        import_plan = load_legacy_candidate_import_plan(request.data_root, request.pick_date)
+        if request.scope == "candidates":
+            import_plan = load_legacy_candidate_import_plan(request.data_root, request.pick_date)
+            migration_run = repository.record_candidate_import(
+                build_legacy_candidate_import_report(import_plan),
+                import_plan,
+            )
+        else:
+            review_plan = load_legacy_review_import_plan(request.data_root, request.pick_date)
+            migration_run = repository.record_review_import(
+                build_legacy_review_import_report(review_plan),
+                review_plan,
+            )
     except LegacyCandidateImportError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-    migration_run = repository.record_candidate_import(
-        build_legacy_candidate_import_report(import_plan),
-        import_plan,
-    )
     return LegacyImportDryRunReport.model_validate(migration_run.report_json or {})
 
 

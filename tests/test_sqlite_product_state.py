@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
-from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Run  # noqa: E402
+from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Recommendation, Review, ReviewRun, Run  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -65,6 +65,9 @@ print("agent.gemini_cli_review" in sys.modules)
                     "artifacts",
                     "candidate_batches",
                     "candidates",
+                    "review_runs",
+                    "reviews",
+                    "recommendations",
                 }.issubset(tables)
             )
 
@@ -86,6 +89,19 @@ print("agent.gemini_cli_review" in sys.modules)
                 for unique in inspector.get_unique_constraints("candidates")
             }
             self.assertIn(("batch_id", "code", "strategy"), candidate_uniques)
+
+            review_uniques = {
+                tuple(unique["column_names"])
+                for unique in inspector.get_unique_constraints("reviews")
+            }
+            self.assertIn(("review_run_id", "review_key"), review_uniques)
+
+            recommendation_uniques = {
+                tuple(unique["column_names"])
+                for unique in inspector.get_unique_constraints("recommendations")
+            }
+            self.assertIn(("review_run_id", "rank"), recommendation_uniques)
+            self.assertIn(("review_run_id", "review_key"), recommendation_uniques)
             engine.dispose()
 
     def test_candidate_identity_is_unique_per_batch_code_strategy(self) -> None:
@@ -125,6 +141,83 @@ print("agent.gemini_cli_review" in sys.modules)
                         code="000001.SZ",
                         strategy="B2",
                         pick_date="2026-05-27",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    session.commit()
+                session.rollback()
+            engine.dispose()
+
+    def test_review_identity_is_unique_per_review_run_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+
+            with session_factory() as session:
+                candidate_run = Run(id="run-preselect-1", kind="preselect", status="succeeded", pick_date="2026-05-27")
+                review_run = Run(id="run-review-1", kind="review", status="succeeded", pick_date="2026-05-27")
+                batch = CandidateBatch(
+                    id="batch-1",
+                    run=candidate_run,
+                    pick_date="2026-05-27",
+                    source="fixture",
+                    strategy_counts_json={"b2": 1},
+                )
+                review_batch = ReviewRun(
+                    id="review-batch-1",
+                    run=review_run,
+                    candidate_batch=batch,
+                    pick_date="2026-05-27",
+                    provider="gemini-cli",
+                    status="succeeded",
+                )
+                session.add(review_batch)
+                session.add(
+                    Review(
+                        review_run=review_batch,
+                        code="000001",
+                        strategy="b2",
+                        review_key="000001_b2",
+                        total_score=4.2,
+                    )
+                )
+                session.commit()
+
+                session.add(
+                    Review(
+                        review_run_id="review-batch-1",
+                        code="000001",
+                        strategy="b2",
+                        review_key="000001_b2",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    session.commit()
+                session.rollback()
+
+                review = session.query(Review).filter_by(review_key="000001_b2").one()
+                session.add(
+                    Recommendation(
+                        review_run_id="review-batch-1",
+                        review=review,
+                        rank=1,
+                        code="000001",
+                        strategy="b2",
+                        review_key="000001_b2",
+                        total_score=4.2,
+                    )
+                )
+                session.commit()
+
+                session.add(
+                    Recommendation(
+                        review_run_id="review-batch-1",
+                        rank=1,
+                        code="000002",
+                        strategy="brick",
+                        review_key="000002_brick",
                     )
                 )
                 with self.assertRaises(IntegrityError):

@@ -50,6 +50,7 @@ class Run(Base):
     events: Mapped[list[JobEvent]] = relationship(back_populates="run", cascade="all, delete-orphan")
     artifacts: Mapped[list[Artifact]] = relationship(back_populates="run", cascade="all, delete-orphan")
     candidate_batches: Mapped[list[CandidateBatch]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    review_runs: Mapped[list[ReviewRun]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
 
 class JobStep(Base):
@@ -125,6 +126,7 @@ class CandidateBatch(Base):
         cascade="all, delete-orphan",
         order_by="Candidate.id",
     )
+    review_runs: Mapped[list[ReviewRun]] = relationship(back_populates="candidate_batch")
 
 
 class Candidate(Base):
@@ -147,3 +149,86 @@ class Candidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
 
     batch: Mapped[CandidateBatch] = relationship(back_populates="candidates")
+    reviews: Mapped[list[Review]] = relationship(back_populates="candidate")
+
+
+class ReviewRun(Base):
+    __tablename__ = "review_runs"
+    __table_args__ = (
+        CheckConstraint(f"status in ({_sql_values(RUN_STATUSES)})", name="ck_review_runs_status"),
+        Index("ix_review_runs_pick_date", "pick_date"),
+        Index("ix_review_runs_run_id", "run_id"),
+        Index("ix_review_runs_candidate_batch", "candidate_batch_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), nullable=False)
+    candidate_batch_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_batches.id", ondelete="SET NULL"))
+    pick_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    run: Mapped[Run] = relationship(back_populates="review_runs")
+    candidate_batch: Mapped[CandidateBatch | None] = relationship(back_populates="review_runs")
+    reviews: Mapped[list[Review]] = relationship(
+        back_populates="review_run",
+        cascade="all, delete-orphan",
+        order_by="Review.id",
+    )
+    recommendations: Mapped[list[Recommendation]] = relationship(
+        back_populates="review_run",
+        cascade="all, delete-orphan",
+        order_by="Recommendation.rank",
+    )
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("review_run_id", "review_key", name="uq_reviews_run_key"),
+        Index("ix_reviews_code_strategy", "code", "strategy"),
+        Index("ix_reviews_review_key", "review_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_runs.id", ondelete="CASCADE"), nullable=False)
+    candidate_id: Mapped[int | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"))
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(80), nullable=False)
+    review_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    verdict: Mapped[str | None] = mapped_column(String(32))
+    total_score: Mapped[float | None] = mapped_column(Float)
+    reviewer: Mapped[str | None] = mapped_column(String(80))
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    review_run: Mapped[ReviewRun] = relationship(back_populates="reviews")
+    candidate: Mapped[Candidate | None] = relationship(back_populates="reviews")
+    recommendation: Mapped[Recommendation | None] = relationship(back_populates="review")
+
+
+class Recommendation(Base):
+    __tablename__ = "recommendations"
+    __table_args__ = (
+        CheckConstraint("rank > 0", name="ck_recommendations_rank_positive"),
+        UniqueConstraint("review_run_id", "rank", name="uq_recommendations_run_rank"),
+        UniqueConstraint("review_run_id", "review_key", name="uq_recommendations_run_key"),
+        Index("ix_recommendations_run_rank", "review_run_id", "rank"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    review_run_id: Mapped[str] = mapped_column(ForeignKey("review_runs.id", ondelete="CASCADE"), nullable=False)
+    review_id: Mapped[int | None] = mapped_column(ForeignKey("reviews.id", ondelete="SET NULL"))
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(80), nullable=False)
+    review_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    verdict: Mapped[str | None] = mapped_column(String(32))
+    total_score: Mapped[float | None] = mapped_column(Float)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
+
+    review_run: Mapped[ReviewRun] = relationship(back_populates="recommendations")
+    review: Mapped[Review | None] = relationship(back_populates="recommendation")

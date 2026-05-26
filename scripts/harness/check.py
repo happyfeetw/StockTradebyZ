@@ -31,6 +31,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/refactor-preconditions.md"),
     Path("docs/agent-harness/uiux-quality-bar.md"),
     Path("docs/agent-harness/architecture-quality-bar.md"),
+    Path("docs/agent-harness/target-architecture-design.md"),
     Path("docs/agent-harness/validation-gates.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
@@ -112,6 +113,7 @@ def check_docs() -> None:
             "docs/agent-harness/refactor-preconditions.md",
             "docs/agent-harness/uiux-quality-bar.md",
             "docs/agent-harness/architecture-quality-bar.md",
+            "docs/agent-harness/target-architecture-design.md",
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "(code, strategy)",
@@ -122,6 +124,7 @@ def check_docs() -> None:
         [
             "Give agents a map",
             "issue-pr-governance.md",
+            "target-architecture-design.md",
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
@@ -303,6 +306,24 @@ def check_product_refactor_readiness() -> None:
             "Observability",
             "Schema migrations",
             "External calls",
+        ],
+    )
+    assert_contains(
+        "docs/agent-harness/target-architecture-design.md",
+        [
+            "Issue: #29",
+            "React + Vite + TypeScript",
+            "FastAPI",
+            "SQLite Ownership",
+            "DuckDB Ownership",
+            "FastAPI Route Groups",
+            "Job Runtime",
+            "Legacy Import and Migration",
+            "Backup Format",
+            "simulated trading is out of scope",
+            "var/db/app.sqlite",
+            "var/db/analytics.duckdb",
+            "migration_quarantine",
         ],
     )
     print("[product-refactor-readiness] ok")

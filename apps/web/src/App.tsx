@@ -157,6 +157,7 @@ function CandidatesView() {
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
+          type="date"
           value={filters.pick_date}
           onChange={(value) => updateFilter('pick_date', value)}
         />
@@ -169,7 +170,8 @@ function CandidatesView() {
         />
         <FilterInput label="Code" placeholder="000001" value={filters.code} onChange={(value) => updateFilter('code', value)} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
-          Clear
+          <XCircle size={17} aria-hidden="true" />
+          <span>Clear</span>
         </button>
       </form>
 
@@ -204,18 +206,31 @@ function CandidatesView() {
                 type="button"
                 className={candidate.id === activeCandidateId ? 'candidate-row selected' : 'candidate-row'}
                 onClick={() => setSelectedCandidateId(candidate.id)}
+                aria-label={`${candidate.code} ${candidate.strategy} candidate from run ${candidate.run_id}`}
               >
-                <span className="candidate-code">{candidate.code}</span>
-                <span className="strategy-chip">{candidate.strategy}</span>
-                <span className="candidate-meta">{candidate.pick_date}</span>
-                <span className="candidate-price">{formatNumber(candidate.close)}</span>
-                <span className="candidate-lineage">{candidate.batch_id}</span>
+                <span className="candidate-row-head">
+                  <span className="candidate-code">{candidate.code}</span>
+                  <span className="strategy-chip">{candidate.strategy}</span>
+                </span>
+                <CandidateCell label="Pick date" value={candidate.pick_date} />
+                <CandidateCell label="Close" value={formatNumber(candidate.close)} strong />
+                <CandidateCell label="Turnover" value={formatNumber(candidate.turnover_n)} />
+                <CandidateCell label="Brick growth" value={formatNumber(candidate.brick_growth)} />
+                <CandidateCell label="Run" value={candidate.run_id} mono wide />
+                <CandidateCell label="Batch" value={candidate.batch_id} mono wide />
+                <CandidateCell label="Extra" value={jsonInline(candidate.extra)} extra />
               </button>
             ))}
           </div>
         </section>
 
         <section className="detail-panel" aria-label="Candidate detail">
+          {detailQuery.isError ? (
+            <div className="alert detail-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(detailQuery.error)}</span>
+            </div>
+          ) : null}
           {detailQuery.isLoading && activeCandidateId ? <RunDetailSkeleton /> : null}
           {!activeCandidateId && !candidatesQuery.isLoading ? (
             <div className="empty-state detail-empty">
@@ -514,17 +529,19 @@ function FilterInput({
   label,
   value,
   placeholder,
+  type = 'text',
   onChange,
 }: {
   label: string
   value: string
   placeholder: string
+  type?: 'text' | 'date'
   onChange: (value: string) => void
 }) {
   return (
     <label className="filter-field">
       <span>{label}</span>
-      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   )
 }
@@ -535,6 +552,30 @@ function DataPair({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  )
+}
+
+function CandidateCell({
+  label,
+  value,
+  mono = false,
+  strong = false,
+  wide = false,
+  extra = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  strong?: boolean
+  wide?: boolean
+  extra?: boolean
+}) {
+  const className = ['candidate-cell', mono ? 'mono' : '', wide ? 'wide' : '', extra ? 'extra' : ''].filter(Boolean).join(' ')
+  return (
+    <span className={className}>
+      <span>{label}</span>
+      <strong className={strong ? 'numeric' : undefined}>{value}</strong>
+    </span>
   )
 }
 
@@ -617,6 +658,11 @@ function formatNumber(value: number | null) {
 function jsonPreview(value: Record<string, unknown> | null) {
   if (!value || Object.keys(value).length === 0) return '{}'
   return JSON.stringify(value, null, 2)
+}
+
+function jsonInline(value: Record<string, unknown> | null) {
+  if (!value || Object.keys(value).length === 0) return '{}'
+  return JSON.stringify(value)
 }
 
 function errorText(error: unknown) {

@@ -120,7 +120,11 @@ class CandidateBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
 
     run: Mapped[Run] = relationship(back_populates="candidate_batches")
-    candidates: Mapped[list[Candidate]] = relationship(back_populates="batch", cascade="all, delete-orphan")
+    candidates: Mapped[list[Candidate]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="Candidate.id",
+    )
 
 
 class Candidate(Base):

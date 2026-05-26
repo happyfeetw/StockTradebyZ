@@ -17,3 +17,9 @@ def get_job_runtime(request: Request) -> JobRuntime:
 
 def get_candidate_repository(request: Request) -> CandidateRepository:
     return request.app.state.candidate_repository
+
+
+def get_preselect_service():
+    from stocktrade.domain.selection import PreselectService
+
+    return PreselectService()

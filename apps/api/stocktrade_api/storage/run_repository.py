@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .sqlite_models import Artifact, JobEvent, JobStep, Run
+from .sqlite_models import Artifact, Candidate, CandidateBatch, JobEvent, JobStep, Run
+
+if TYPE_CHECKING:
+    from stocktrade.domain.selection import PreselectResult
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running", "cancelling"}
@@ -80,6 +83,7 @@ class RunRepository:
         run_id: str,
         *,
         status: str,
+        pick_date: str | None = None,
         summary: dict[str, Any] | None = None,
     ) -> Run:
         with self.session_factory() as session:
@@ -91,6 +95,8 @@ class RunRepository:
                 run.started_at = utc_now()
             if status in TERMINAL_STATUSES:
                 run.finished_at = utc_now()
+            if pick_date is not None:
+                run.pick_date = pick_date
             if summary is not None:
                 run.summary_json = summary
             session.commit()
@@ -165,3 +171,52 @@ class RunRepository:
             session.commit()
             session.refresh(run)
             return run
+
+    def create_candidate_batch(
+        self,
+        *,
+        run_id: str,
+        result: "PreselectResult",
+        source: str = "preselect",
+    ) -> CandidateBatch:
+        batch_id = uuid4().hex
+        with self.session_factory() as session:
+            batch = CandidateBatch(
+                id=batch_id,
+                run_id=run_id,
+                pick_date=result.pick_date,
+                source=source,
+                strategy_counts_json=result.strategy_counts,
+            )
+            session.add(batch)
+            for candidate in result.candidates:
+                session.add(
+                    Candidate(
+                        batch_id=batch_id,
+                        code=candidate.code,
+                        strategy=candidate.strategy,
+                        pick_date=result.pick_date,
+                        close=candidate.close,
+                        turnover_n=candidate.turnover_n,
+                        brick_growth=candidate.brick_growth,
+                        extra_json=candidate.extra,
+                    )
+                )
+            session.commit()
+            return self._load_candidate_batch(session, batch_id)
+
+    def get_candidate_batch_detail(self, batch_id: str) -> CandidateBatch:
+        with self.session_factory() as session:
+            batch = self._load_candidate_batch(session, batch_id)
+            if batch is None:
+                raise LookupError(batch_id)
+            return batch
+
+    def _load_candidate_batch(self, session: Session, batch_id: str) -> CandidateBatch:
+        statement = (
+            select(CandidateBatch)
+            .where(CandidateBatch.id == batch_id)
+            .options(selectinload(CandidateBatch.candidates))
+        )
+        batch = session.execute(statement).scalar_one()
+        return batch

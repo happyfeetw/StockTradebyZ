@@ -51,6 +51,7 @@ def archive_row_response(row: ArchiveRow) -> ArchiveRowResponse:
         candidate_id=row.candidate_id,
         review_id=row.review_id,
         recommendation_id=row.recommendation_id,
+        chart_artifact_id=row.chart_artifact_id,
         code=row.code,
         strategy=row.strategy,
         review_key=row.review_key,

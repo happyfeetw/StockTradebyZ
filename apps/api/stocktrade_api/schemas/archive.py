@@ -35,6 +35,7 @@ class ArchiveRowResponse(BaseModel):
     candidate_id: int | None = None
     review_id: int | None = None
     recommendation_id: int | None = None
+    chart_artifact_id: str | None = None
     code: str
     strategy: str
     review_key: str

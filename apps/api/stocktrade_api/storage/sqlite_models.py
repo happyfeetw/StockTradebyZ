@@ -106,6 +106,7 @@ class Artifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.current_timestamp())
 
     run: Mapped[Run] = relationship(back_populates="artifacts")
+    archive_rows: Mapped[list[ArchiveRow]] = relationship(back_populates="chart_artifact")
 
 
 class CandidateBatch(Base):
@@ -293,6 +294,7 @@ class ArchiveRow(Base):
     candidate_id: Mapped[int | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"))
     review_id: Mapped[int | None] = mapped_column(ForeignKey("reviews.id", ondelete="SET NULL"))
     recommendation_id: Mapped[int | None] = mapped_column(ForeignKey("recommendations.id", ondelete="SET NULL"))
+    chart_artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifacts.id", ondelete="SET NULL"))
     pick_date: Mapped[str] = mapped_column(String(10), nullable=False)
     run_id: Mapped[str] = mapped_column(String(64), nullable=False)
     code: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -312,3 +314,4 @@ class ArchiveRow(Base):
     candidate: Mapped[Candidate | None] = relationship(back_populates="archive_rows")
     review: Mapped[Review | None] = relationship(back_populates="archive_rows")
     recommendation: Mapped[Recommendation | None] = relationship(back_populates="archive_rows")
+    chart_artifact: Mapped[Artifact | None] = relationship(back_populates="archive_rows")

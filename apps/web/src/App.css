@@ -425,6 +425,7 @@ button {
 }
 
 .candidate-cell strong {
+  min-width: 0;
   color: var(--text-strong);
   font-size: 12px;
   font-weight: 650;
@@ -437,6 +438,14 @@ button {
 
 .candidate-cell.wide {
   grid-column: span 2;
+}
+
+.candidate-cell.extra strong {
+  display: block;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .candidate-cell .numeric {

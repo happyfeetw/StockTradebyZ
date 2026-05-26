@@ -29,14 +29,18 @@ import {
   getRunEvents,
   listRuns,
   type Artifact,
+  type Candidate,
+  type CandidateFilters,
   type JobEvent,
   type RunStatus,
   type RunSummary,
+  getCandidate,
+  listCandidates,
 } from './api'
 
 const navItems = [
   { to: '/runs', label: 'Runs', icon: Activity, state: 'active' },
-  { to: '/candidates', label: 'Candidates', icon: Search, state: 'pending' },
+  { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
   { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'pending' },
   { to: '/archive', label: 'Archive', icon: Archive, state: 'pending' },
   { to: '/migrations', label: 'Migrations', icon: Database, state: 'pending' },
@@ -80,12 +84,166 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsView />} />
-          <Route path="/candidates" element={<Placeholder title="Candidates" />} />
+          <Route path="/candidates" element={<CandidatesView />} />
           <Route path="/reviews" element={<Placeholder title="Reviews" />} />
           <Route path="/archive" element={<Placeholder title="Archive" />} />
           <Route path="/migrations" element={<Placeholder title="Migrations" />} />
         </Routes>
       </main>
+    </div>
+  )
+}
+
+function CandidatesView() {
+  const queryClient = useQueryClient()
+  const [filters, setFilters] = useState<Required<CandidateFilters>>({
+    pick_date: '',
+    run_id: '',
+    strategy: '',
+    code: '',
+  })
+  const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null)
+
+  const normalizedFilters = {
+    pick_date: filters.pick_date.trim(),
+    run_id: filters.run_id.trim(),
+    strategy: filters.strategy.trim(),
+    code: filters.code.trim(),
+  }
+
+  const candidatesQuery = useQuery({
+    queryKey: ['candidates', normalizedFilters],
+    queryFn: () => listCandidates(normalizedFilters),
+  })
+  const candidates = candidatesQuery.data?.candidates ?? []
+  const selectedStillVisible = selectedCandidateId !== null && candidates.some((candidate) => candidate.id === selectedCandidateId)
+  const activeCandidateId = selectedStillVisible ? selectedCandidateId : candidates[0]?.id
+
+  const detailQuery = useQuery({
+    queryKey: ['candidate', activeCandidateId],
+    queryFn: () => getCandidate(activeCandidateId as number),
+    enabled: typeof activeCandidateId === 'number',
+  })
+
+  const hasFilters = Object.values(filters).some((value) => value.trim())
+
+  function updateFilter(key: keyof CandidateFilters, value: string) {
+    setFilters((current) => ({ ...current, [key]: value }))
+  }
+
+  function resetFilters() {
+    setFilters({ pick_date: '', run_id: '', strategy: '', code: '' })
+    setSelectedCandidateId(null)
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Selection evidence</p>
+          <h1>Candidates</h1>
+        </div>
+        <button
+          type="button"
+          className="icon-button secondary"
+          aria-label="Refresh candidates"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['candidates'] })
+            queryClient.invalidateQueries({ queryKey: ['candidate'] })
+          }}
+        >
+          <RefreshCw size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      <form className="filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+        <FilterInput
+          label="Pick date"
+          placeholder="2026-05-27"
+          type="date"
+          value={filters.pick_date}
+          onChange={(value) => updateFilter('pick_date', value)}
+        />
+        <FilterInput label="Run id" placeholder="run id" value={filters.run_id} onChange={(value) => updateFilter('run_id', value)} />
+        <FilterInput
+          label="Strategy"
+          placeholder="b2 / brick"
+          value={filters.strategy}
+          onChange={(value) => updateFilter('strategy', value)}
+        />
+        <FilterInput label="Code" placeholder="000001" value={filters.code} onChange={(value) => updateFilter('code', value)} />
+        <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
+          <XCircle size={17} aria-hidden="true" />
+          <span>Clear</span>
+        </button>
+      </form>
+
+      {candidatesQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(candidatesQuery.error)}</span>
+        </div>
+      ) : null}
+
+      <div className="candidate-grid">
+        <section className="candidate-list-panel" aria-label="Candidate list">
+          <div className="panel-heading">
+            <div>
+              <h2>Candidate rows</h2>
+              <p>{candidatesQuery.isLoading ? 'Loading candidate rows' : `${candidatesQuery.data?.total ?? 0} records`}</p>
+            </div>
+          </div>
+
+          {candidatesQuery.isLoading ? <RunSkeleton /> : null}
+          {!candidatesQuery.isLoading && candidates.length === 0 ? (
+            <div className="empty-state">
+              <Search size={24} aria-hidden="true" />
+              <h3>{hasFilters ? 'No candidates match the filters' : 'No candidate rows yet'}</h3>
+            </div>
+          ) : null}
+
+          <div className="candidate-list">
+            {candidates.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                className={candidate.id === activeCandidateId ? 'candidate-row selected' : 'candidate-row'}
+                onClick={() => setSelectedCandidateId(candidate.id)}
+                aria-label={`${candidate.code} ${candidate.strategy} candidate from run ${candidate.run_id}`}
+              >
+                <span className="candidate-row-head">
+                  <span className="candidate-code">{candidate.code}</span>
+                  <span className="strategy-chip">{candidate.strategy}</span>
+                </span>
+                <CandidateCell label="Pick date" value={candidate.pick_date} />
+                <CandidateCell label="Close" value={formatNumber(candidate.close)} strong />
+                <CandidateCell label="Turnover" value={formatNumber(candidate.turnover_n)} />
+                <CandidateCell label="Brick growth" value={formatNumber(candidate.brick_growth)} />
+                <CandidateCell label="Run" value={candidate.run_id} mono wide />
+                <CandidateCell label="Batch" value={candidate.batch_id} mono wide />
+                <CandidateCell label="Extra" value={jsonInline(candidate.extra)} extra />
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="detail-panel" aria-label="Candidate detail">
+          {detailQuery.isError ? (
+            <div className="alert detail-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(detailQuery.error)}</span>
+            </div>
+          ) : null}
+          {detailQuery.isLoading && activeCandidateId ? <RunDetailSkeleton /> : null}
+          {!activeCandidateId && !candidatesQuery.isLoading ? (
+            <div className="empty-state detail-empty">
+              <Database size={24} aria-hidden="true" />
+              <h3>Select a candidate</h3>
+            </div>
+          ) : null}
+          {detailQuery.data ? <CandidateDetailPanel candidate={detailQuery.data.candidate} /> : null}
+        </section>
+      </div>
     </div>
   )
 }
@@ -326,6 +484,104 @@ function RunDetailPanel({
   )
 }
 
+function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
+  return (
+    <div className="detail-content">
+      <div className="detail-header">
+        <div>
+          <p className="eyebrow">Selected candidate</p>
+          <h2>{candidate.code}</h2>
+          <p className="muted run-id-wrap">{candidate.batch_id}</p>
+        </div>
+        <span className="strategy-chip large">{candidate.strategy}</span>
+      </div>
+
+      <div className="detail-meta candidate-metrics">
+        <Metric label="Pick date" value={candidate.pick_date} />
+        <Metric label="Close" value={formatNumber(candidate.close)} />
+        <Metric label="Turnover" value={formatNumber(candidate.turnover_n)} />
+        <Metric label="Brick growth" value={formatNumber(candidate.brick_growth)} />
+      </div>
+
+      <section className="subsection">
+        <h3>Lineage</h3>
+        <div className="lineage-grid">
+          <DataPair label="Candidate id" value={candidate.id.toString()} />
+          <DataPair label="Batch id" value={candidate.batch_id} />
+          <DataPair label="Run id" value={candidate.run_id} />
+          <DataPair label="Source" value={candidate.batch.source} />
+          <DataPair label="Batch date" value={candidate.batch.pick_date} />
+          <DataPair label="Created" value={formatDateTime(candidate.created_at)} />
+        </div>
+      </section>
+
+      <section className="subsection">
+        <h3>Strategy counts</h3>
+        <pre className="json-block">{jsonPreview(candidate.batch.strategy_counts)}</pre>
+      </section>
+
+      <section className="subsection">
+        <h3>Extra</h3>
+        <pre className="json-block">{jsonPreview(candidate.extra)}</pre>
+      </section>
+    </div>
+  )
+}
+
+function FilterInput({
+  label,
+  value,
+  placeholder,
+  type = 'text',
+  onChange,
+}: {
+  label: string
+  value: string
+  placeholder: string
+  type?: 'text' | 'date'
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="filter-field">
+      <span>{label}</span>
+      <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function DataPair({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="data-pair">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function CandidateCell({
+  label,
+  value,
+  mono = false,
+  strong = false,
+  wide = false,
+  extra = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  strong?: boolean
+  wide?: boolean
+  extra?: boolean
+}) {
+  const className = ['candidate-cell', mono ? 'mono' : '', wide ? 'wide' : '', extra ? 'extra' : ''].filter(Boolean).join(' ')
+  return (
+    <span className={className}>
+      <span>{label}</span>
+      <strong className={strong ? 'numeric' : undefined}>{value}</strong>
+    </span>
+  )
+}
+
 function Placeholder({ title }: { title: string }) {
   return (
     <div className="placeholder-view">
@@ -395,6 +651,22 @@ function formatDateTime(value: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function formatNumber(value: number | null) {
+  if (value === null || Number.isNaN(value)) return 'Not set'
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value)
+}
+
+function jsonPreview(value: Record<string, unknown> | null) {
+  if (!value || Object.keys(value).length === 0) return '{}'
+  return JSON.stringify(value, null, 2)
+}
+
+function jsonInline(value: Record<string, unknown> | null, maxLength = 96) {
+  if (!value || Object.keys(value).length === 0) return '{}'
+  const serialized = JSON.stringify(value)
+  return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized
 }
 
 function errorText(error: unknown) {

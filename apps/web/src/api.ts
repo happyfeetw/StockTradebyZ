@@ -78,6 +78,46 @@ export interface RunArtifactsResponse {
   artifacts: Artifact[]
 }
 
+export interface CandidateBatch {
+  id: string
+  run_id: string
+  pick_date: string
+  source: string
+  strategy_counts: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface Candidate {
+  id: number
+  batch_id: string
+  run_id: string
+  pick_date: string
+  code: string
+  strategy: string
+  close: number | null
+  turnover_n: number | null
+  brick_growth: number | null
+  extra: Record<string, unknown> | null
+  created_at: string
+  batch: CandidateBatch
+}
+
+export interface CandidateListResponse {
+  candidates: Candidate[]
+  total: number
+}
+
+export interface CandidateDetailResponse {
+  candidate: Candidate
+}
+
+export interface CandidateFilters {
+  pick_date?: string
+  run_id?: string
+  strategy?: string
+  code?: string
+}
+
 export interface LegacyImportDryRunReport {
   dry_run: boolean
   data_root: string
@@ -153,6 +193,21 @@ export function getRunEvents(runId: string): Promise<RunEventsResponse> {
 
 export function getRunArtifacts(runId: string): Promise<RunArtifactsResponse> {
   return request<RunArtifactsResponse>(`/api/runs/${runId}/artifacts`)
+}
+
+export function listCandidates(filters: CandidateFilters = {}): Promise<CandidateListResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value?.trim()) {
+      params.set(key, value.trim())
+    }
+  }
+  const query = params.toString()
+  return request<CandidateListResponse>(`/api/candidates${query ? `?${query}` : ''}`)
+}
+
+export function getCandidate(candidateId: number): Promise<CandidateDetailResponse> {
+  return request<CandidateDetailResponse>(`/api/candidates/${candidateId}`)
 }
 
 export function dryRunLegacyImport(dataRoot: string): Promise<LegacyImportDryRunReport> {

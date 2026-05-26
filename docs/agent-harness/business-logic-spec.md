@@ -28,6 +28,10 @@ Credential-free golden masters live under
 
 Current cases:
 
+- `strategy_preselect_case.json`: `run_preselect` uses real raw CSV loading,
+  trading-date fallback, turnover pool selection, strategy dispatch, candidate
+  assembly, B2 quality sorting, brick growth output, and `(code, strategy)`
+  deduplication while using fixture selectors to keep the test credential-free.
 - `candidate_merge_*`: same-date strategy rerun preserves `(code, strategy)`,
   replaces stale rows only for rerun strategies, and allows the same stock code
   to appear under multiple strategies.

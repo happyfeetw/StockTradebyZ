@@ -1,0 +1,209 @@
+{
+  "requested_pick_date": "2026-05-23",
+  "expected_pick_date": "2026-05-22",
+  "config": {
+    "global": {
+      "top_m": 2,
+      "n_turnover_days": 2,
+      "min_bars_buffer": 1,
+      "n_jobs": 1,
+      "prepare_executor": "thread"
+    },
+    "b1": {
+      "enabled": true,
+      "zx_m1": 1,
+      "zx_m2": 1,
+      "zx_m3": 1,
+      "zx_m4": 1,
+      "j_threshold": 999.0,
+      "j_q_threshold": 1.0
+    },
+    "b2": {
+      "enabled": true,
+      "b1_lookback": 2
+    },
+    "brick": {
+      "enabled": true
+    }
+  },
+  "raw_data": {
+    "000001": [
+      {
+        "date": "2026-05-20",
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-21",
+        "open": 11.0,
+        "high": 11.0,
+        "low": 11.0,
+        "close": 11.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-22",
+        "open": 12.0,
+        "high": 12.0,
+        "low": 12.0,
+        "close": 12.0,
+        "volume": 5000,
+        "_fixture_b1": 1,
+        "_fixture_b2": 1,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 110,
+        "_fixture_brick_growth": 0
+      }
+    ],
+    "000002": [
+      {
+        "date": "2026-05-20",
+        "open": 8.0,
+        "high": 8.0,
+        "low": 8.0,
+        "close": 8.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-21",
+        "open": 9.0,
+        "high": 9.0,
+        "low": 9.0,
+        "close": 9.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-22",
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume": 4500,
+        "_fixture_b1": 0,
+        "_fixture_b2": 1,
+        "_fixture_brick": 1,
+        "_fixture_b2_quality_score": 120,
+        "_fixture_brick_growth": 2.5
+      }
+    ],
+    "000003": [
+      {
+        "date": "2026-05-20",
+        "open": 8.0,
+        "high": 8.0,
+        "low": 8.0,
+        "close": 8.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-21",
+        "open": 8.0,
+        "high": 8.0,
+        "low": 8.0,
+        "close": 8.0,
+        "volume": 1000,
+        "_fixture_b1": 0,
+        "_fixture_b2": 0,
+        "_fixture_brick": 0,
+        "_fixture_b2_quality_score": 0,
+        "_fixture_brick_growth": 0
+      },
+      {
+        "date": "2026-05-22",
+        "open": 8.5,
+        "high": 8.5,
+        "low": 8.5,
+        "close": 8.5,
+        "volume": 1000,
+        "_fixture_b1": 1,
+        "_fixture_b2": 1,
+        "_fixture_brick": 1,
+        "_fixture_b2_quality_score": 130,
+        "_fixture_brick_growth": 3.5
+      }
+    ]
+  },
+  "expected_candidates": [
+    {
+      "code": "000001",
+      "date": "2026-05-22",
+      "strategy": "b1",
+      "close": 12.0,
+      "turnover_n": 71000.0
+    },
+    {
+      "code": "000002",
+      "date": "2026-05-22",
+      "strategy": "b2",
+      "close": 10.0,
+      "turnover_n": 54000.0,
+      "extra": {
+        "daily_return": 0.11,
+        "today_body_pct": 0.05,
+        "volume_ratio": 1.25,
+        "prior_b1_lag": 1,
+        "prior_b1_j": 20.0,
+        "j": 35.0,
+        "j_turn_up": true,
+        "strict_yang_bao_yin": false,
+        "upper_shadow_ratio": 0.02,
+        "b2_quality_score": 120.0
+      }
+    },
+    {
+      "code": "000001",
+      "date": "2026-05-22",
+      "strategy": "b2",
+      "close": 12.0,
+      "turnover_n": 71000.0,
+      "extra": {
+        "daily_return": 0.11,
+        "today_body_pct": 0.05,
+        "volume_ratio": 1.25,
+        "prior_b1_lag": 1,
+        "prior_b1_j": 20.0,
+        "j": 35.0,
+        "j_turn_up": true,
+        "strict_yang_bao_yin": false,
+        "upper_shadow_ratio": 0.02,
+        "b2_quality_score": 110.0
+      }
+    },
+    {
+      "code": "000002",
+      "date": "2026-05-22",
+      "strategy": "brick",
+      "close": 10.0,
+      "turnover_n": 54000.0,
+      "brick_growth": 2.5
+    }
+  ]
+}

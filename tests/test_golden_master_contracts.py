@@ -6,11 +6,15 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agent"))
 sys.path.insert(0, str(ROOT / "pipeline"))
 
+import pandas as pd  # noqa: E402
+
+import select_stock  # noqa: E402
 from archive_results import build_rows, build_summary  # noqa: E402
 from base_reviewer import BaseReviewer  # noqa: E402
 from pipeline_io import merge_same_date_by_strategy  # noqa: E402
@@ -32,7 +36,85 @@ def normalize_chart_paths(rows: list[dict]) -> list[dict]:
     return normalized
 
 
+class FixtureB1Selector:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def prepare_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        prepared = df.copy()
+        prepared["_vec_pick"] = prepared["_fixture_b1"].astype(bool)
+        return prepared
+
+    def vec_picks_from_prepared(
+        self,
+        df: pd.DataFrame,
+        start: pd.Timestamp | None = None,
+        end: pd.Timestamp | None = None,
+    ) -> list[pd.Timestamp]:
+        mask = df["_vec_pick"].astype(bool)
+        if start is not None:
+            mask = mask & (df.index >= start)
+        if end is not None:
+            mask = mask & (df.index <= end)
+        return list(df.index[mask])
+
+
+class FixtureB2Selector(FixtureB1Selector):
+    def prepare_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        prepared = df.copy()
+        prepared["_vec_pick"] = prepared["_fixture_b2"].astype(bool)
+        prepared["_b2_daily_return"] = 0.11
+        prepared["_b2_today_body_pct"] = 0.05
+        prepared["_b2_volume_ratio"] = 1.25
+        prepared["_b2_prior_b1_lag"] = 1
+        prepared["_b2_prior_b1_j"] = 20.0
+        prepared["J"] = 35.0
+        prepared["_b2_j_turn_up"] = True
+        prepared["_b2_strict_yang_bao_yin"] = False
+        prepared["_b2_upper_shadow_ratio"] = 0.02
+        prepared["_b2_quality_score"] = prepared["_fixture_b2_quality_score"].astype(float)
+        return prepared
+
+
+class FixtureBrickSelector(FixtureB1Selector):
+    def prepare_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        prepared = df.copy()
+        prepared["_vec_pick"] = prepared["_fixture_brick"].astype(bool)
+        prepared["brick_growth"] = prepared["_fixture_brick_growth"].astype(float)
+        return prepared
+
+
+def write_strategy_case_files(tmp: Path, case: dict) -> tuple[Path, Path]:
+    raw_dir = tmp / "raw"
+    raw_dir.mkdir()
+    for code, rows in case["raw_data"].items():
+        pd.DataFrame(rows).to_csv(raw_dir / f"{code}.csv", index=False)
+
+    config = deepcopy(case["config"])
+    config["global"]["data_dir"] = str(raw_dir)
+    config_path = tmp / "rules_preselect.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    return raw_dir, config_path
+
+
 class GoldenMasterContractTests(unittest.TestCase):
+    def test_preselect_pipeline_output_matches_golden_master(self) -> None:
+        case = load_fixture("strategy_preselect_case.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, config_path = write_strategy_case_files(Path(tmpdir), case)
+            with (
+                patch.object(select_stock, "B1Selector", FixtureB1Selector),
+                patch.object(select_stock, "B2Selector", FixtureB2Selector),
+                patch.object(select_stock, "BrickChartSelector", FixtureBrickSelector),
+            ):
+                pick_ts, candidates = select_stock.run_preselect(
+                    config_path=str(config_path),
+                    pick_date=case["requested_pick_date"],
+                )
+
+        self.assertEqual(pick_ts.strftime("%Y-%m-%d"), case["expected_pick_date"])
+        self.assertEqual([candidate.to_dict() for candidate in candidates], case["expected_candidates"])
+
     def test_candidate_merge_preserves_code_strategy_identity(self) -> None:
         existing = CandidateRun.from_dict(load_fixture("candidate_merge_existing.json"))
         incoming = CandidateRun.from_dict(load_fixture("candidate_merge_incoming_b2.json"))

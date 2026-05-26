@@ -285,13 +285,24 @@ export interface LegacyImportTotals {
   quarantine_count: number
 }
 
+export interface LegacyCandidateImportSummary {
+  run_id: string
+  batch_id: string
+  pick_date: string
+  source_file: string
+  candidates_imported: number
+  strategy_counts: Record<string, number>
+}
+
 export interface LegacyImportDryRunReport {
+  migration_id: string | null
   dry_run: boolean
   data_root: string
   sections: Record<string, LegacyImportSectionReport>
   totals: LegacyImportTotals
   warnings: LegacyImportIssue[]
   quarantine: LegacyImportIssue[]
+  import_summary: LegacyCandidateImportSummary | null
 }
 
 export class ApiError extends Error {
@@ -419,5 +430,17 @@ export function dryRunLegacyImport(dataRoot: string): Promise<LegacyImportDryRun
   return request<LegacyImportDryRunReport>('/api/migrations/import-legacy', {
     method: 'POST',
     body: JSON.stringify({ dry_run: true, data_root: dataRoot }),
+  })
+}
+
+export function importLegacyCandidateBatch(dataRoot: string, pickDate: string): Promise<LegacyImportDryRunReport> {
+  return request<LegacyImportDryRunReport>('/api/migrations/import-legacy', {
+    method: 'POST',
+    body: JSON.stringify({
+      dry_run: false,
+      data_root: dataRoot,
+      sections: ['candidates'],
+      pick_date: pickDate,
+    }),
   })
 }

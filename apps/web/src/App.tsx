@@ -575,7 +575,7 @@ function CandidateCell({
 }) {
   const className = ['candidate-cell', mono ? 'mono' : '', wide ? 'wide' : '', extra ? 'extra' : ''].filter(Boolean).join(' ')
   return (
-    <span className={className}>
+    <span className={className} title={value}>
       <span>{label}</span>
       <strong className={strong ? 'numeric' : undefined}>{value}</strong>
     </span>
@@ -663,10 +663,9 @@ function jsonPreview(value: Record<string, unknown> | null) {
   return JSON.stringify(value, null, 2)
 }
 
-function jsonInline(value: Record<string, unknown> | null, maxLength = 96) {
+function jsonInline(value: Record<string, unknown> | null) {
   if (!value || Object.keys(value).length === 0) return '{}'
-  const serialized = JSON.stringify(value)
-  return serialized.length > maxLength ? `${serialized.slice(0, maxLength)}...` : serialized
+  return `keys: ${Object.keys(value).join(', ')}`
 }
 
 function errorText(error: unknown) {

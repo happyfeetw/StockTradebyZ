@@ -335,7 +335,7 @@ def check_refactor_readiness() -> None:
 
 
 def python_files() -> list[str]:
-    roots = ["agent", "dashboard", "paper_trading", "pipeline", "tests"]
+    roots = ["agent", "apps", "dashboard", "paper_trading", "pipeline", "src", "tests"]
     files: list[str] = ["run_all.py", "scripts/harness/check.py"]
     for root in roots:
         root_path = ROOT / root
@@ -358,7 +358,9 @@ def check_python() -> None:
     env["PYTHONPATH"] = os.pathsep.join(
         [
             str(ROOT / "agent"),
+            str(ROOT / "apps" / "api"),
             str(ROOT / "pipeline"),
+            str(ROOT / "src"),
             env.get("PYTHONPATH", ""),
         ]
     )

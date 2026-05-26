@@ -39,6 +39,7 @@ REQUIRED_DOCS = [
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 OPTIONAL_GENERATED_LINK_PREFIXES = ("data/",)
+IGNORED_PYTHON_PATH_PARTS = {"node_modules", "dist"}
 
 
 class HarnessError(RuntimeError):
@@ -340,7 +341,11 @@ def python_files() -> list[str]:
     for root in roots:
         root_path = ROOT / root
         if root_path.exists():
-            files.extend(rel(path) for path in sorted(root_path.rglob("*.py")))
+            files.extend(
+                rel(path)
+                for path in sorted(root_path.rglob("*.py"))
+                if not (set(path.relative_to(ROOT).parts) & IGNORED_PYTHON_PATH_PARTS)
+            )
     return files
 
 

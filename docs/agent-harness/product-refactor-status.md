@@ -29,7 +29,7 @@ backup/restore, provider evidence indexing, and a fixture-backed product API
 write proof across preselect, chart export, provider review, and archive.
 #152 now owns the R7 plan, validation gate, resource evidence, product launcher,
 runtime hardening, runtime recovery, final browser proof, Gemini API reviewer
-retirement, and legacy retirement sequence.
+retirement, run_all retirement, and legacy retirement sequence.
 
 ## Phase Status
 
@@ -42,7 +42,7 @@ retirement, and legacy retirement sequence.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/workbench/recovery guardrails, validation, rollback, and phase order | Surface-by-surface retirement |
+| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-run-all-retirement.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-run-all-retirement`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/run-all/workbench/recovery guardrails, validation, rollback, and phase order | Surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -140,6 +140,10 @@ evidence:
 - R7 product launcher now provides `./start_product` as the local React/FastAPI
   entrypoint and points `start_workbench` users to the product path while
   preserving the legacy workbench as compatibility-only.
+- R7 run_all retirement now stops `run_all.py` by default before it invokes
+  legacy subprocesses or reads `candidates_latest.json`/`suggestion.json`;
+  rollback requires `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1` plus any child legacy
+  flags needed for the selected legacy path.
 - R7 runtime terminal integrity now prevents terminal product run and step state
   from being overwritten by late cancellation, retry, or recovery calls.
 - R7 dashboard retirement now stops `dashboard/app.py` by default before it
@@ -217,8 +221,8 @@ full objective:
   cutover.
 - File-system state is still a compatibility and migration source. The legacy
   Gemini API reviewer, Gemini CLI reviewer, chart exporter, legacy preselect
-  CLI, legacy archive writer, and Streamlit workbench are retired by default,
-  but final legacy
+  CLI, legacy archive writer, run_all wrapper, and Streamlit workbench are
+  retired by default, but final legacy
   retirement is not complete.
 - R7 still needs explicit hardening and retirement work before legacy
   file-system, Streamlit/workbench, and compatibility entrypoints can be

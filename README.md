@@ -19,16 +19,16 @@
 
 ## 1. 项目流程
 
-完整流程对应 [run_all.py](run_all.py)：
+默认产品流程在 `./start_product` 的 Run Center 中执行；历史完整流程由
+[run_all.py](run_all.py) 串联，但 R7 后已默认退休：
 
 1. 下载 K 线数据（pipeline.fetch_kline）
-2. 量化初选（产品路径：Run Center / `POST /api/runs/preselect`；legacy
-   `pipeline.cli preselect` 已默认退休）
-3. 导出候选图表（dashboard/export_kline_charts.py）
-4. Gemini CLI 复评（agent/gemini_cli_review.py）
-5. 打印推荐结果（读取 suggestion.json）
+2. 量化初选（Run Center / `POST /api/runs/preselect`）
+3. 导出候选图表（Run Center / `POST /api/runs/chart-export`）
+4. Gemini CLI 复评（Run Center / `POST /api/runs/review/provider`）
+5. 归档与查看推荐结果（Run Center / `POST /api/runs/archive`）
 
-输出主链路：
+legacy 文件输出链路：
 
 - data/raw：原始日线 CSV
 - data/candidates：初选候选列表
@@ -45,7 +45,7 @@
 - [config](config)：抓取、初选、Gemini 复评配置
 - [data](data)：运行数据与结果
 - [docs](docs)：方案文档
-- [run_all.py](run_all.py)：全流程一键入口
+- [run_all.py](run_all.py)：legacy 全流程一键入口，默认已退休
 
 Agent 协作与 harness 规范见 [AGENTS.md](AGENTS.md) 和
 [docs/agent-harness/index.md](docs/agent-harness/index.md)。
@@ -114,14 +114,17 @@ Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧�
 ~~~
 
 然后在 Run Center 运行初选、图表导出、复评和归档。旧的 `run_all.py` 与
-legacy CLI 链路仅保留用于迁移、对照或回滚；其中 legacy 初选 CLI 需要显式
-设置 `STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1`。
+legacy CLI 链路仅保留用于迁移、对照或回滚；一键脚本本身需要显式设置
+`STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1`，子步骤还需要按需设置对应的 legacy
+flag。
 
 legacy 一键脚本示例：
 
 ~~~bash
+STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 \
 STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 \
 STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 \
+STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 \
 python run_all.py --skip-fetch
 ~~~
 
@@ -181,15 +184,15 @@ STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 python dashboard/export_kline_charts.py
 
 ### 步骤 4：Gemini CLI 图表复评
 
-~~~bash
-python agent/gemini_cli_review.py
-~~~
+默认产品路径是在 Run Center 运行复评，或调用
+`POST /api/runs/review/provider` 并使用 `provider=gemini-cli`。旧脚本仅用于
+迁移、对照或回滚：
 
 可选参数示例：
 
 ~~~bash
-python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
-python agent/gemini_review.py --config config/gemini_review.yaml
+STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
+STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW=1 python agent/gemini_review.py --config config/gemini_review.yaml
 ~~~
 
 Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。

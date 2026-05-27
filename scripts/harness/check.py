@@ -46,6 +46,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-preselect-cli-retirement.md"),
     Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
+    Path("docs/agent-harness/r7-run-all-retirement.md"),
     Path("docs/agent-harness/r7-workbench-retirement.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
@@ -146,6 +147,7 @@ def check_docs() -> None:
             "docs/agent-harness/architecture-quality-bar.md",
             "docs/agent-harness/target-architecture-design.md",
             "docs/agent-harness/r7-hardening-retirement-plan.md",
+            "docs/agent-harness/r7-run-all-retirement.md",
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "(code, strategy)",
@@ -170,6 +172,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-preselect-cli-retirement",
             "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
+            "scripts/harness/check.sh r7-run-all-retirement",
             "scripts/harness/check.sh r7-workbench-retirement",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
@@ -510,6 +513,7 @@ def check_r7_retirement_plan() -> None:
             "`dashboard/app.py`",
             "`workbench/app.py`",
             "`start_workbench`",
+            "`run_all.py`",
             "Legacy Surface Matrix",
             "R7 Sequence",
             "Runtime hardening",
@@ -533,6 +537,8 @@ def check_r7_retirement_plan() -> None:
             "r7-dashboard-retirement",
             "Product launcher",
             "r7-product-launcher",
+            "Run-all retirement",
+            "r7-run-all-retirement",
             "Workbench retirement",
             "r7-workbench-retirement",
             "Retirement PRs",
@@ -958,6 +964,90 @@ def check_r7_product_launcher() -> None:
     print("[r7-product-launcher] ok")
 
 
+def check_r7_run_all_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-run-all-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Run All Retirement",
+            "`run_all.py`",
+            "./start_product",
+            "Run Center",
+            "POST /api/runs/preselect",
+            "POST /api/runs/chart-export",
+            "POST /api/runs/review/provider",
+            "POST /api/runs/archive",
+            "STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1",
+            "STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1",
+            "STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1",
+            "STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1",
+            "simulated trading",
+            "scripts/harness/check.sh r7-run-all-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_RUN_ALL_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_RUN_ALL",
+            "LEGACY_RUN_ALL_RETIRED_NOTICE",
+            "legacy_run_all_enabled",
+        ],
+    )
+    assert_contains(
+        "run_all.py",
+        [
+            "legacy_run_all_enabled",
+            "LEGACY_RUN_ALL_RETIRED_NOTICE",
+            "./start_product",
+            "POST /api/runs/preselect",
+            "POST /api/runs/chart-export",
+            "POST /api/runs/review/provider",
+            "POST /api/runs/archive",
+            "raise SystemExit(2)",
+            "_run(",
+            "_print_recommendations()",
+        ],
+    )
+    text = read("run_all.py")
+    guard_index = text.index("if not legacy_run_all_enabled()")
+    for needle in ("_run(", "_print_recommendations()"):
+        needle_index = text.index(needle, guard_index)
+        if guard_index > needle_index:
+            raise HarnessError(f"run_all.py must stop before {needle}")
+    assert_contains(
+        "README.md",
+        [
+            "./start_product",
+            "Run Center",
+            "STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1",
+            "POST /api/runs/review/provider",
+        ],
+    )
+    assert_contains(
+        "docs/gemini-cli-review-plan.md",
+        [
+            "POST /api/runs/review/provider",
+            "provider=gemini-cli",
+            "STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1",
+        ],
+    )
+    assert_contains(
+        "tests/test_run_all_retirement_harness.py",
+        [
+            "test_run_all_exits_before_legacy_subprocesses_and_file_reads_by_default",
+            "test_run_all_guard_runs_before_subprocess_calls_and_recommendation_reads",
+            "test_run_all_rollback_flag_is_explicit_and_suppressed_by_default",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_run_all_retirement_harness"])
+    print("[r7-run-all-retirement] ok")
+
+
 def check_r7_workbench_retirement() -> None:
     assert_contains(
         "docs/agent-harness/r7-workbench-retirement.md",
@@ -1058,6 +1148,7 @@ def check_r7_legacy_write_freeze() -> None:
             "pipeline.archive_results",
             "workbench.runner",
             "start_workbench",
+            "run_all.py",
             "Product No-Read Guard",
             "apps/api/stocktrade_api/services/legacy_import.py",
             "apps/api/stocktrade_api/services/legacy_verify.py",
@@ -1077,6 +1168,7 @@ def check_r7_legacy_write_freeze() -> None:
         "dashboard/app.py": ["LEGACY_UI_FREEZE_NOTICE"],
         "workbench/app.py": ["LEGACY_UI_FREEZE_NOTICE"],
         "start_workbench": ["R7 legacy write freeze", "compatibility-only"],
+        "run_all.py": ["LEGACY_RUN_ALL_RETIRED_NOTICE", "legacy_run_all_enabled"],
     }
     for path, needles in expected_notices.items():
         assert_contains(path, needles)
@@ -1233,6 +1325,7 @@ def parse_args() -> argparse.Namespace:
             "r7-preselect-cli-retirement",
             "r7-chart-export-retirement",
             "r7-product-launcher",
+            "r7-run-all-retirement",
             "r7-workbench-retirement",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
@@ -1281,6 +1374,8 @@ def main() -> int:
             check_r7_chart_export_retirement()
         elif args.gate == "r7-product-launcher":
             check_r7_product_launcher()
+        elif args.gate == "r7-run-all-retirement":
+            check_r7_run_all_retirement()
         elif args.gate == "r7-workbench-retirement":
             check_r7_workbench_retirement()
         elif args.gate == "r7-runtime-terminal-integrity":

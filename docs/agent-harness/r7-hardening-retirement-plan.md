@@ -18,7 +18,7 @@ In scope:
 - final React workstation browser proof across primary research workflows;
 - resource and storage-growth evidence for local runs;
 - legacy write freeze and retirement sequencing for `pipeline/`, `agent/`,
-  `dashboard/`, `workbench/`, and `start_workbench`;
+  `dashboard/`, `workbench/`, `run_all.py`, and `start_workbench`;
 - final parity and migration evidence before disabling legacy entrypoints.
 
 Out of scope:
@@ -43,6 +43,7 @@ Out of scope:
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Retire by default behind explicit rollback flag | Product browser smoke, cancellation/error-state proof, user workflow notes |
 | `start_workbench` | Legacy launch script | Retire by default behind explicit rollback flag | `start_product` React/FastAPI local launch docs and smoke |
+| `run_all.py` | Legacy one-command orchestration of fetch, preselect, chart export, review, and recommendation file reads | Retire by default behind explicit rollback flag | Product Run Center/API replacement proof, child legacy rollback flag notes, and `r7-run-all-retirement` |
 | `data/candidates`, `data/review`, `data/history`, `data/kline`, `data/runs` | Legacy generated state and migration input | Do not delete in R7 planning; retire reads/writes by surface-specific PR | Backup, migration verify, product no-read proof |
 | `data/trading` | Paper/simulated trading state | Excluded from product refactor | Explicit exclusion remains in gates |
 
@@ -120,6 +121,9 @@ Out of scope:
    - Product launcher proof uses `docs/agent-harness/r7-product-launcher.md` and
      `scripts/harness/check.sh r7-product-launcher` as the replacement launch
      proof before retiring `start_workbench`.
+   - Run-all retirement uses `docs/agent-harness/r7-run-all-retirement.md` and
+     `scripts/harness/check.sh r7-run-all-retirement` for the legacy
+     one-command orchestration wrapper.
    - Workbench retirement uses `docs/agent-harness/r7-workbench-retirement.md`
      and `scripts/harness/check.sh r7-workbench-retirement` for the legacy
      Streamlit workbench, background runner, and `start_workbench`.
@@ -165,6 +169,9 @@ prove the touched path:
   `scripts/harness/check.sh r7-dashboard-retirement`;
 - product launcher: `start_product` replacement path, bash syntax check, and
   `scripts/harness/check.sh r7-product-launcher`;
+- run-all retirement: default stop guard, explicit rollback flag, product
+  Run Center/API replacement proof, child flag rollback notes, and
+  `scripts/harness/check.sh r7-run-all-retirement`;
 - workbench retirement: default stop guard, explicit rollback flag, product
   launcher/runtime replacement proof, and
   `scripts/harness/check.sh r7-workbench-retirement`;

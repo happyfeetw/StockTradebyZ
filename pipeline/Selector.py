@@ -40,10 +40,14 @@ except ImportError:
 try:
     from stocktrade.domain.selection.indicators import (
         compute_kdj as _product_compute_kdj,
+        compute_weekly_close as _product_compute_weekly_close,
+        compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
         compute_zx_lines as _product_compute_zx_lines,
     )
 except ImportError:
     _product_compute_kdj = None
+    _product_compute_weekly_close = None
+    _product_compute_weekly_ma_bull = None
     _product_compute_zx_lines = None
 
 # =============================================================================
@@ -198,6 +202,9 @@ def compute_weekly_close(df: pd.DataFrame) -> pd.Series:
     不依赖固定 resample 锚点（周日/周五），而是直接按
     ISO 周编号分组取最后一行，index 保持为真实交易日日期。
     """
+    if _product_compute_weekly_close is not None:
+        return _product_compute_weekly_close(df)
+
     close = (
         df["close"].astype(float)
         if isinstance(df.index, pd.DatetimeIndex)
@@ -224,6 +231,9 @@ def compute_weekly_ma_bull(
 
     周线收盘价 index 为真实交易日，reindex 后 ffill 可正确对齐。
     """
+    if _product_compute_weekly_ma_bull is not None:
+        return _product_compute_weekly_ma_bull(df, ma_periods=ma_periods)
+
     weekly_close = compute_weekly_close(df)
     s, m, l = ma_periods
     ma_s = weekly_close.rolling(s, min_periods=s).mean()

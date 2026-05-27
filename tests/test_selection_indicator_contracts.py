@@ -13,7 +13,12 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import Selector as selector_module  # noqa: E402
-from stocktrade.domain.selection import compute_kdj, compute_zx_lines  # noqa: E402
+from stocktrade.domain.selection import (  # noqa: E402
+    compute_kdj,
+    compute_weekly_close,
+    compute_weekly_ma_bull,
+    compute_zx_lines,
+)
 
 
 def reference_compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
@@ -51,6 +56,44 @@ def reference_compute_zx_lines(
         + close.rolling(m4, min_periods=m4).mean()
     ) / 4.0
     return zxdq, zxdkx
+
+
+def reference_compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
+    close = (
+        frame["close"].astype(float)
+        if isinstance(frame.index, pd.DatetimeIndex)
+        else frame.set_index("date")["close"].astype(float)
+    )
+    idx = close.index
+    iso_calendar = idx.isocalendar()
+    year_week = (
+        iso_calendar.year.astype(str)
+        + "-"
+        + iso_calendar.week.astype(str).str.zfill(2)
+    )
+    weekly = close.groupby(year_week).last()
+    last_date_per_week = close.groupby(year_week).apply(lambda series: series.index[-1])
+    weekly.index = pd.DatetimeIndex(last_date_per_week.values)
+    return weekly.dropna()
+
+
+def reference_compute_weekly_ma_bull(
+    frame: pd.DataFrame,
+    ma_periods: tuple[int, int, int] = (20, 60, 120),
+) -> pd.Series:
+    weekly_close = reference_compute_weekly_close(frame)
+    short_period, mid_period, long_period = ma_periods
+    ma_short = weekly_close.rolling(short_period, min_periods=short_period).mean()
+    ma_mid = weekly_close.rolling(mid_period, min_periods=mid_period).mean()
+    ma_long = weekly_close.rolling(long_period, min_periods=long_period).mean()
+    bull = (ma_short > ma_mid) & (ma_mid > ma_long)
+
+    daily_index = (
+        frame.index
+        if isinstance(frame.index, pd.DatetimeIndex)
+        else pd.DatetimeIndex(frame["date"])
+    )
+    return bull.astype(float).reindex(daily_index).ffill().fillna(0.0).astype(bool)
 
 
 class SelectionIndicatorContractTests(unittest.TestCase):
@@ -126,6 +169,61 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         self.assertEqual(zxdq.tolist(), [1.0, 2.0, 5.0])
         self.assertEqual(zxdkx.tolist(), [3.0, 4.0, 99.0])
+
+    def test_product_weekly_close_matches_reference_formula_for_datetime_index(self) -> None:
+        frame = pd.DataFrame(
+            {"close": [10.0, 11.0, 12.0, 9.0, 13.0, 14.0]},
+            index=pd.to_datetime(
+                ["2026-01-02", "2026-01-05", "2026-01-09", "2026-01-12", "2026-01-16", "2026-01-19"]
+            ),
+        )
+
+        actual = compute_weekly_close(frame)
+        expected = reference_compute_weekly_close(frame)
+
+        pd.testing.assert_series_equal(actual, expected)
+
+    def test_product_weekly_ma_bull_matches_reference_formula_for_date_column(self) -> None:
+        dates = pd.date_range("2026-01-05", periods=60, freq="B")
+        frame = pd.DataFrame(
+            {
+                "date": dates,
+                "close": np.linspace(10.0, 40.0, num=len(dates)),
+            }
+        )
+
+        actual = compute_weekly_ma_bull(frame, ma_periods=(2, 3, 4))
+        expected = reference_compute_weekly_ma_bull(frame, ma_periods=(2, 3, 4))
+
+        pd.testing.assert_series_equal(actual, expected)
+
+    def test_legacy_selector_compute_weekly_close_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame({"close": [10.0, 11.0]})
+
+        def fake_product_compute_weekly_close(input_frame: pd.DataFrame) -> pd.Series:
+            return pd.Series([float(len(input_frame))], index=pd.to_datetime(["2026-01-09"]))
+
+        with patch.object(selector_module, "_product_compute_weekly_close", fake_product_compute_weekly_close):
+            actual = selector_module.compute_weekly_close(frame)
+
+        self.assertEqual(actual.tolist(), [2.0])
+
+    def test_legacy_selector_compute_weekly_ma_bull_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame({"close": [10.0, 11.0]}, index=pd.to_datetime(["2026-01-05", "2026-01-06"]))
+
+        def fake_product_compute_weekly_ma_bull(
+            input_frame: pd.DataFrame,
+            ma_periods: tuple[int, int, int] = (20, 60, 120),
+        ) -> pd.Series:
+            return pd.Series(
+                [ma_periods == (1, 2, 3), False],
+                index=input_frame.index,
+            )
+
+        with patch.object(selector_module, "_product_compute_weekly_ma_bull", fake_product_compute_weekly_ma_bull):
+            actual = selector_module.compute_weekly_ma_bull(frame, ma_periods=(1, 2, 3))
+
+        self.assertEqual(actual.tolist(), [True, False])
 
 
 if __name__ == "__main__":

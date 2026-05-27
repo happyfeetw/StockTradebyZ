@@ -1,6 +1,11 @@
 """Selection domain boundary for the product rewrite."""
 
-from .indicators import compute_kdj, compute_zx_lines
+from .indicators import (
+    compute_kdj,
+    compute_weekly_close,
+    compute_weekly_ma_bull,
+    compute_zx_lines,
+)
 from .preselect import (
     LegacyLiquidityPoolPort,
     LegacyMarketDataPort,
@@ -33,6 +38,8 @@ from .preselect import (
 
 __all__ = [
     "compute_kdj",
+    "compute_weekly_close",
+    "compute_weekly_ma_bull",
     "compute_zx_lines",
     "LegacyLiquidityPoolPort",
     "LegacyMarketDataPort",

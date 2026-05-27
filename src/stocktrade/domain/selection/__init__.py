@@ -1,5 +1,6 @@
 """Selection domain boundary for the product rewrite."""
 
+from .indicators import compute_kdj
 from .preselect import (
     LegacyLiquidityPoolPort,
     LegacyMarketDataPort,
@@ -31,6 +32,7 @@ from .preselect import (
 )
 
 __all__ = [
+    "compute_kdj",
     "LegacyLiquidityPoolPort",
     "LegacyMarketDataPort",
     "LegacyMarketPreparationPort",

@@ -37,6 +37,11 @@ except ImportError:
             return args[0]
         return lambda func: func
 
+try:
+    from stocktrade.domain.selection.indicators import compute_kdj as _product_compute_kdj
+except ImportError:
+    _product_compute_kdj = None
+
 # =============================================================================
 # Numba 加速核心函数
 # =============================================================================
@@ -145,6 +150,9 @@ def _compute_brick_numba(
 
 def compute_kdj(df: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     """返回带 K/D/J 列的 DataFrame（Numba 加速 KDJ 递推）。"""
+    if _product_compute_kdj is not None:
+        return _product_compute_kdj(df, n=n)
+
     if df.empty:
         return df.assign(K=np.nan, D=np.nan, J=np.nan)
     low_n  = df["low"].rolling(window=n, min_periods=1).min()

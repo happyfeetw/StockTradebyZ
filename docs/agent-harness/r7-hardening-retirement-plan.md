@@ -14,7 +14,7 @@ files remain migration inputs and rollback evidence until a PR proves otherwise.
 In scope:
 
 - product runtime hardening for FastAPI job execution, cancellation,
-  concurrency, error recovery, and backup/restore drills;
+  concurrency, runtime recovery, error recovery, and backup/restore drills;
 - final React workstation browser proof across primary research workflows;
 - resource and storage-growth evidence for local runs;
 - legacy write freeze and retirement sequencing for `pipeline/`, `agent/`,
@@ -42,7 +42,7 @@ Out of scope:
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Keep as chart oracle; product chart export is supported path | Product chart artifact proof and visual smoke |
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Freeze after product workstation covers primary flows | Product browser smoke, cancellation/error-state proof, user workflow notes |
-| `start_workbench` | Legacy launch script | Keep until replacement launch/developer docs are complete | React/FastAPI local launch docs and smoke |
+| `start_workbench` | Legacy launch script | Keep as compatibility launcher until final retirement | `start_product` React/FastAPI local launch docs and smoke |
 | `data/candidates`, `data/review`, `data/history`, `data/kline`, `data/runs` | Legacy generated state and migration input | Do not delete in R7 planning; retire reads/writes by surface-specific PR | Backup, migration verify, product no-read proof |
 | `data/trading` | Paper/simulated trading state | Excluded from product refactor | Explicit exclusion remains in gates |
 
@@ -58,6 +58,13 @@ Out of scope:
    - Add cancellation and recovery tests for long-running or staged jobs.
    - Ensure failed jobs leave enough SQLite events and summaries for UI
      diagnosis.
+   - Use `docs/agent-harness/r7-runtime-recovery.md` and
+     `scripts/harness/check.sh r7-runtime-recovery` as the reproducible
+     recovery/concurrency proof path.
+   - Preserve terminal run and step states so late cancellation, retry, or
+     recovery code cannot overwrite `succeeded`, `failed`, or `cancelled`
+     evidence. Guard this with
+     `scripts/harness/check.sh r7-runtime-terminal-integrity`.
 
 3. Resource envelope.
    - Capture credential-free fixture evidence for API startup, product workflow
@@ -94,6 +101,9 @@ Out of scope:
      `docs/agent-harness/r7-dashboard-retirement.md` and
      `scripts/harness/check.sh r7-dashboard-retirement` for the legacy
      single-stock Streamlit dashboard retirement.
+   - Product launcher proof uses `docs/agent-harness/r7-product-launcher.md` and
+     `scripts/harness/check.sh r7-product-launcher` as the replacement launch
+     proof before retiring `start_workbench`.
 
 ## Validation Requirements
 
@@ -109,6 +119,10 @@ Implementation PRs that harden runtime or retire legacy surfaces must also
 prove the touched path:
 
 - runtime hardening: targeted job lifecycle/cancellation tests plus `quick`;
+- runtime recovery: `scripts/harness/check.sh r7-runtime-recovery`, targeted
+  job lifecycle tests, and `quick`;
+- runtime terminal integrity: `scripts/harness/check.sh
+  r7-runtime-terminal-integrity` plus targeted job lifecycle tests;
 - resource evidence: fixture command output or checked-in report with
   reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and
@@ -118,6 +132,8 @@ prove the touched path:
 - dashboard retirement: default stop guard, explicit rollback flag,
   React/FastAPI replacement proof, and
   `scripts/harness/check.sh r7-dashboard-retirement`;
+- product launcher: `start_product` replacement path, bash syntax check, and
+  `scripts/harness/check.sh r7-product-launcher`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 

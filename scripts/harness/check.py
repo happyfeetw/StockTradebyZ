@@ -40,7 +40,10 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
+    Path("docs/agent-harness/r7-product-launcher.md"),
+    Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
+    Path("docs/agent-harness/r7-runtime-recovery.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -155,7 +158,10 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-legacy-write-freeze",
+            "scripts/harness/check.sh r7-product-launcher",
+            "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
+            "scripts/harness/check.sh r7-runtime-recovery",
             "Maintenance Rule",
         ],
     )
@@ -495,6 +501,8 @@ def check_r7_retirement_plan() -> None:
             "Legacy Surface Matrix",
             "R7 Sequence",
             "Runtime hardening",
+            "runtime recovery",
+            "r7-runtime-terminal-integrity",
             "Resource envelope",
             "r7-resource-envelope",
             "Final browser proof",
@@ -503,6 +511,8 @@ def check_r7_retirement_plan() -> None:
             "r7-legacy-write-freeze",
             "Dashboard retirement",
             "r7-dashboard-retirement",
+            "Product launcher",
+            "r7-product-launcher",
             "Retirement PRs",
             "Rollback Rules",
             "scripts/harness/check.sh r7-retirement-plan",
@@ -555,6 +565,97 @@ def check_r7_dashboard_retirement() -> None:
         ],
     )
     print("[r7-dashboard-retirement] ok")
+
+
+def check_r7_runtime_recovery() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-runtime-recovery.md",
+        [
+            "Managing issue: #152",
+            "R7 Runtime Recovery And Concurrency",
+            "FastAPI startup recovery",
+            "JobRuntime.recover_interrupted_runs",
+            "RunRepository.recover_interrupted_active_runs",
+            "`queued` and `running` runs recover to `failed`",
+            "`cancelling` runs recover to `cancelled`",
+            "RuntimeRecovery",
+            "in-process workflow lock",
+            "Multiple API processes",
+            "simulated trading remains out of scope",
+            "scripts/harness/check.sh r7-runtime-recovery",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/jobs/runtime.py",
+        [
+            "RLock",
+            "_workflow_lock",
+            "recover_interrupted_runs",
+            "with self._workflow_lock",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/storage/run_repository.py",
+        [
+            "recover_interrupted_active_runs",
+            "RuntimeRecovery",
+            "previous_status",
+            "OperationalError",
+        ],
+    )
+    assert_contains(
+        "tests/test_job_runtime_contracts.py",
+        [
+            "test_app_startup_recovers_interrupted_active_runs",
+            "test_product_workflow_jobs_are_serialized_in_process",
+            "test_runtime_does_not_cancel_terminal_run_after_late_cancellation",
+        ],
+    )
+    print("[r7-runtime-recovery] ok")
+
+
+def check_r7_product_launcher() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-product-launcher.md",
+        [
+            "Managing issue: #152",
+            "R7 Product Launcher",
+            "./start_product",
+            "stocktrade_api.main:app",
+            "127.0.0.1:8000",
+            "127.0.0.1:5173",
+            "start_workbench",
+            "simulated trading",
+            "scripts/harness/check.sh r7-product-launcher",
+            "Rollback",
+        ],
+    )
+    launcher = ROOT / "start_product"
+    if not launcher.exists():
+        raise HarnessError("missing start_product")
+    if not os.access(launcher, os.X_OK):
+        raise HarnessError("start_product must be executable")
+    assert_contains(
+        "start_product",
+        [
+            "stocktrade_api.main:app",
+            "npm run dev",
+            "STOCKTRADE_API_PORT:-8000",
+            "STOCKTRADE_WEB_PORT:-5173",
+            "PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"",
+            "cleanup()",
+        ],
+    )
+    assert_contains("start_workbench", ["R7 legacy write freeze", "./start_product", "React/FastAPI workflows"])
+    assert_contains(
+        "tests/test_product_launcher_harness.py",
+        [
+            "test_start_product_is_executable_and_targets_react_fastapi_stack",
+            "test_legacy_workbench_points_to_product_launcher",
+        ],
+    )
+    print("[r7-product-launcher] ok")
 
 
 def iter_product_source_files() -> list[Path]:
@@ -675,6 +776,34 @@ def check_r7_resource_envelope() -> None:
     print("[r7-resource-envelope] ok")
 
 
+def check_r7_runtime_terminal_integrity() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-runtime-terminal-integrity.md",
+        [
+            "Managing issue: #152",
+            "R7 Runtime Terminal Integrity",
+            "`succeeded`, `failed`, or `cancelled`",
+            "TerminalRunTransitionError",
+            "TerminalStepTransitionError",
+            "late cancellation",
+            "scripts/harness/check.sh r7-runtime-terminal-integrity",
+            "Simulated trading remains out of scope",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/storage/run_repository.py",
+        [
+            "TerminalRunTransitionError",
+            "TerminalStepTransitionError",
+            "run.status in TERMINAL_STATUSES",
+            "step.status in TERMINAL_STATUSES",
+            "already terminal",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_job_runtime_contracts"])
+    print("[r7-runtime-terminal-integrity] ok")
+
+
 def check_quick() -> None:
     check_docs()
     check_contracts()
@@ -698,7 +827,10 @@ def parse_args() -> argparse.Namespace:
             "r7-dashboard-retirement",
             "r7-browser-proof",
             "r7-legacy-write-freeze",
+            "r7-product-launcher",
+            "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
+            "r7-runtime-recovery",
             "quick",
         ],
         help="Validation gate to run",
@@ -731,8 +863,14 @@ def main() -> int:
             check_r7_browser_proof()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
+        elif args.gate == "r7-product-launcher":
+            check_r7_product_launcher()
+        elif args.gate == "r7-runtime-terminal-integrity":
+            check_r7_runtime_terminal_integrity()
         elif args.gate == "r7-resource-envelope":
             check_r7_resource_envelope()
+        elif args.gate == "r7-runtime-recovery":
+            check_r7_runtime_recovery()
         elif args.gate == "quick":
             check_quick()
         else:

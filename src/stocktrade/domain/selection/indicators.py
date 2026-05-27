@@ -55,3 +55,41 @@ def compute_zx_lines(
         + close.rolling(m4, min_periods=m4).mean()
     ) / 4.0
     return zxdq, zxdkx
+
+
+def compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
+    close = (
+        frame["close"].astype(float)
+        if isinstance(frame.index, pd.DatetimeIndex)
+        else frame.set_index("date")["close"].astype(float)
+    )
+    idx = close.index
+    iso_calendar = idx.isocalendar()
+    year_week = (
+        iso_calendar.year.astype(str)
+        + "-"
+        + iso_calendar.week.astype(str).str.zfill(2)
+    )
+    weekly = close.groupby(year_week).last()
+    last_date_per_week = close.groupby(year_week).apply(lambda series: series.index[-1])
+    weekly.index = pd.DatetimeIndex(last_date_per_week.values)
+    return weekly.dropna()
+
+
+def compute_weekly_ma_bull(
+    frame: pd.DataFrame,
+    ma_periods: tuple[int, int, int] = (20, 60, 120),
+) -> pd.Series:
+    weekly_close = compute_weekly_close(frame)
+    short_period, mid_period, long_period = ma_periods
+    ma_short = weekly_close.rolling(short_period, min_periods=short_period).mean()
+    ma_mid = weekly_close.rolling(mid_period, min_periods=mid_period).mean()
+    ma_long = weekly_close.rolling(long_period, min_periods=long_period).mean()
+    bull = (ma_short > ma_mid) & (ma_mid > ma_long)
+
+    daily_index = (
+        frame.index
+        if isinstance(frame.index, pd.DatetimeIndex)
+        else pd.DatetimeIndex(frame["date"])
+    )
+    return bull.astype(float).reindex(daily_index).ffill().fillna(0.0).astype(bool)

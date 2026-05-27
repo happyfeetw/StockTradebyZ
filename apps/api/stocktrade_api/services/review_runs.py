@@ -29,7 +29,13 @@ class ReviewRunService:
         self.repository = repository
         self.analytics_writer = analytics_writer
 
-    def run(self, *, run_id: str, request: ReviewRunCreateRequest) -> CreatedReviewRun:
+    def run(
+        self,
+        *,
+        run_id: str,
+        request: ReviewRunCreateRequest,
+        source: dict[str, Any] | None = None,
+    ) -> CreatedReviewRun:
         batch = self.repository.get_candidate_batch(request.candidate_batch_id)
         candidates = [_candidate_payload(candidate) for candidate in batch.candidates]
         candidates_by_key = {candidate_review_key(candidate): candidate for candidate in candidates}
@@ -51,6 +57,7 @@ class ReviewRunService:
             min_score=request.min_score,
             normalized_results=normalized_results,
             suggestion=suggestion,
+            source=source,
         )
         created = self.repository.create_review_run(
             run_id=run_id,
@@ -118,11 +125,13 @@ def _summary_payload(
     min_score: float,
     normalized_results: list[dict[str, Any]],
     suggestion: dict[str, Any],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     strategy_counts = suggestion.get("strategy_counts") or {}
     pending = sum(int(metrics.get("pending", 0)) for metrics in strategy_counts.values())
-    return {
-        "mode": "review_results",
+    source_payload = source or {}
+    summary = {
+        "mode": str(source_payload.get("mode") or "review_results"),
         "candidate_batch_id": batch.id,
         "pick_date": batch.pick_date,
         "provider": provider,
@@ -136,3 +145,6 @@ def _summary_payload(
         "strategy_counts": strategy_counts,
         "suggestion": suggestion,
     }
+    if source_payload:
+        summary["source"] = source_payload
+    return summary

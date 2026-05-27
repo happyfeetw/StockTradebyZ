@@ -13,6 +13,7 @@ from ..dependencies import (
     get_job_runtime,
     get_preselect_service,
     get_review_repository,
+    get_review_provider_executor,
     get_run_repository,
 )
 from ..jobs.runtime import JobRuntime
@@ -26,7 +27,7 @@ from ..schemas.preselect import (
     PreselectRunRequest,
     PreselectRunResponse,
 )
-from ..schemas.reviews import ReviewRunCreateRequest, ReviewRunCreateResponse
+from ..schemas.reviews import ReviewProviderRunCreateRequest, ReviewRunCreateRequest, ReviewRunCreateResponse
 from ..schemas.runs import (
     ArtifactResponse,
     DiagnosticRunRequest,
@@ -181,6 +182,39 @@ def create_review_run(
     except CandidateBatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail="candidate batch not found") from exc
     except ReviewRunValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ReviewRunCreateResponse(
+        run=run_summary(run),
+        review_run=review_run_response(created.review_run),
+        reviews=[review_response(review) for review in created.reviews],
+        recommendations=[
+            recommendation_response(recommendation)
+            for recommendation in created.recommendations
+        ],
+    )
+
+
+@router.post("/runs/review/provider", response_model=ReviewRunCreateResponse)
+def create_review_provider_run(
+    request: ReviewProviderRunCreateRequest,
+    runtime: JobRuntime = Depends(get_job_runtime),
+    review_repository: ReviewRepository = Depends(get_review_repository),
+    analytics_writer: DuckDBAnalyticsWriter | None = Depends(get_analytics_writer),
+    executor: Any = Depends(get_review_provider_executor),
+) -> ReviewRunCreateResponse:
+    from ..services.review_provider_runs import ReviewProviderRunService, ReviewProviderValidationError
+    from ..services.review_runs import ReviewRunValidationError
+
+    service = ReviewProviderRunService(
+        review_repository,
+        executor=executor,
+        analytics_writer=analytics_writer,
+    )
+    try:
+        run, created = runtime.run_review_job(request, service=service)
+    except CandidateBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="candidate batch not found") from exc
+    except (ReviewProviderValidationError, ReviewRunValidationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ReviewRunCreateResponse(
         run=run_summary(run),

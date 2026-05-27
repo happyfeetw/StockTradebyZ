@@ -70,6 +70,18 @@ class ReviewRunCreateRequest(BaseModel):
     results: list[dict[str, Any]] = Field(min_length=1)
 
 
+class ReviewProviderRunCreateRequest(BaseModel):
+    candidate_batch_id: str = Field(min_length=1, max_length=64)
+    provider: str = Field(min_length=1, max_length=80)
+    reviewer: str | None = Field(default=None, min_length=1, max_length=80)
+    min_score: float = Field(default=4.0, ge=0, le=5)
+    classic_pattern_config: Any = None
+    codes: list[str] | None = None
+    strategies: list[str] | None = None
+    require_charts: bool = True
+    provider_config: dict[str, Any] = Field(default_factory=dict)
+
+
 class ReviewRunCreateResponse(BaseModel):
     run: RunSummary
     review_run: ReviewRunResponse

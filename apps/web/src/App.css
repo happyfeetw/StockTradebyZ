@@ -265,7 +265,7 @@ h3 {
 .archive-grid {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: minmax(238px, 0.58fr) minmax(450px, 1fr) minmax(360px, 0.86fr);
+  grid-template-columns: minmax(210px, 0.52fr) minmax(380px, 1fr) minmax(300px, 0.78fr);
   gap: 18px;
   align-items: start;
 }
@@ -757,6 +757,57 @@ button {
   font-size: 12px;
   font-weight: 700;
   padding: 0 8px;
+}
+
+.evidence-flow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.evidence-step {
+  min-width: 0;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  padding: 6px 7px;
+}
+
+.evidence-step span,
+.evidence-step strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.evidence-step span {
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.evidence-step strong {
+  grid-column: 2;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-step.done {
+  color: var(--success);
+  border-color: var(--success-line);
+  background: var(--success-soft);
+}
+
+.evidence-step.ready {
+  color: var(--accent-strong);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 .batch-lineage {
@@ -1585,6 +1636,61 @@ code {
   background: var(--primary-soft);
 }
 
+.evidence-link-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.evidence-link-card {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--text-strong);
+  padding: 10px;
+  text-decoration: none;
+}
+
+.evidence-link-card:hover,
+.evidence-link-card:focus-visible {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+}
+
+.evidence-link-card.disabled {
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.evidence-link-card span {
+  min-width: 0;
+}
+
+.evidence-link-card strong,
+.evidence-link-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-link-card strong {
+  font-size: 13px;
+}
+
+.evidence-link-card small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .artifact-source-chip {
   min-height: 30px;
   display: inline-flex;
@@ -1948,6 +2054,7 @@ code {
 
   .filter-bar,
   .lineage-grid,
+  .evidence-link-grid,
   .run-setup-form,
   .run-setup-result,
   .migration-form,
@@ -1971,7 +2078,8 @@ code {
   }
 
   .candidate-batch-grid,
-  .batch-metrics {
+  .batch-metrics,
+  .evidence-flow {
     grid-template-columns: 1fr;
   }
 

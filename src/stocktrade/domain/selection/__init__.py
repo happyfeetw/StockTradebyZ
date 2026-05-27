@@ -1,8 +1,11 @@
 """Selection domain boundary for the product rewrite."""
 
 from .indicators import (
+    compute_body_pct,
+    compute_daily_return,
     compute_kdj,
     compute_max_volume_not_bearish,
+    compute_upper_shadow_ratio,
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
@@ -38,8 +41,11 @@ from .preselect import (
 )
 
 __all__ = [
+    "compute_body_pct",
+    "compute_daily_return",
     "compute_kdj",
     "compute_max_volume_not_bearish",
+    "compute_upper_shadow_ratio",
     "compute_weekly_close",
     "compute_weekly_ma_bull",
     "compute_zx_lines",

@@ -14,8 +14,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
+    compute_body_pct,
+    compute_daily_return,
     compute_kdj,
     compute_max_volume_not_bearish,
+    compute_upper_shadow_ratio,
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
@@ -55,6 +58,34 @@ def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int 
                 max_index = j
         mask[i] = close[max_index] >= open_[max_index]
     return mask
+
+
+def reference_compute_daily_return(frame: pd.DataFrame) -> np.ndarray:
+    close = frame["close"].to_numpy(dtype=float)
+    prev_close = np.empty_like(close)
+    prev_close[0] = np.nan
+    prev_close[1:] = close[:-1]
+    out = np.full(len(close), np.nan, dtype=float)
+    np.divide(close, prev_close, out=out, where=prev_close > 0)
+    return out - 1.0
+
+
+def reference_compute_body_pct(frame: pd.DataFrame) -> np.ndarray:
+    open_ = frame["open"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    out = np.full(len(frame), np.nan, dtype=float)
+    np.divide(close - open_, open_, out=out, where=open_ > 0)
+    return out
+
+
+def reference_compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
+    high = frame["high"].to_numpy(dtype=float)
+    low = frame["low"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    span = high - low
+    out = np.zeros(len(frame), dtype=float)
+    np.divide(high - close, span, out=out, where=span > 0)
+    return out
 
 
 def reference_compute_zx_lines(
@@ -189,6 +220,71 @@ class SelectionIndicatorContractTests(unittest.TestCase):
             actual = selector_module.MaxVolNotBearishFilter(n=2).vec_mask(frame)
 
         np.testing.assert_array_equal(actual, np.array([True, False, True], dtype=np.bool_))
+
+    def test_product_daily_return_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"close": [100.0, 104.0, 0.0, 10.0, 11.0]})
+
+        actual = compute_daily_return(frame)
+        expected = reference_compute_daily_return(frame)
+
+        np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+    def test_product_body_pct_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"open": [10.0, 0.0, 12.0], "close": [11.0, 5.0, 11.5]})
+
+        actual = compute_body_pct(frame)
+        expected = reference_compute_body_pct(frame)
+
+        np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+    def test_product_upper_shadow_ratio_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [12.0, 10.0, 15.0],
+                "low": [10.0, 10.0, 12.0],
+                "close": [11.0, 9.5, 14.0],
+            }
+        )
+
+        actual = compute_upper_shadow_ratio(frame)
+        expected = reference_compute_upper_shadow_ratio(frame)
+
+        np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+    def test_legacy_b2_price_action_helpers_delegate_to_product_helpers_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "open": [10.0, 11.0, 12.0],
+                "high": [11.0, 12.0, 13.0],
+                "low": [9.0, 10.0, 11.0],
+                "close": [10.5, 11.5, 12.5],
+            }
+        )
+
+        with (
+            patch.object(
+                selector_module,
+                "_product_compute_daily_return",
+                lambda input_frame: np.array([np.nan, 0.1, 0.2], dtype=float),
+            ),
+            patch.object(
+                selector_module,
+                "_product_compute_body_pct",
+                lambda input_frame: np.array([0.05, 0.06, 0.07], dtype=float),
+            ),
+            patch.object(
+                selector_module,
+                "_product_compute_upper_shadow_ratio",
+                lambda input_frame: np.array([0.2, 0.1, 0.0], dtype=float),
+            ),
+        ):
+            daily_return = selector_module.DailyReturnFilter().values(frame)
+            body_pct = selector_module.BullBodyFilter().values(frame)
+            upper_shadow = selector_module.B2Selector()._upper_shadow_ratio(frame)
+
+        np.testing.assert_allclose(daily_return, np.array([np.nan, 0.1, 0.2]), equal_nan=True)
+        np.testing.assert_allclose(body_pct, np.array([0.05, 0.06, 0.07]))
+        np.testing.assert_allclose(upper_shadow, np.array([0.2, 0.1, 0.0]))
 
     def test_product_zx_lines_match_reference_formula(self) -> None:
         frame = pd.DataFrame(

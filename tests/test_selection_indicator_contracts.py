@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     compute_b1_pick_mask,
+    compute_b2_pick_mask,
+    compute_b2_quality_score,
     compute_body_pct,
     compute_brick_chart,
     compute_brick_green_run,
@@ -258,6 +260,74 @@ def reference_compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
     out = np.zeros(len(frame), dtype=float)
     np.divide(high - close, span, out=out, where=span > 0)
     return out
+
+
+def reference_compute_b2_quality_score(
+    frame: pd.DataFrame,
+    *,
+    upper_shadow_soft_limit: float = 0.15,
+) -> np.ndarray:
+    score = np.full(len(frame), 100.0, dtype=float)
+    j_values = frame["J"].to_numpy(dtype=float)
+    prior_j = frame["_b2_prior_b1_j"].to_numpy(dtype=float)
+    j_delta = j_values - prior_j
+    volume_ratio = frame["_b2_volume_ratio"].to_numpy(dtype=float)
+    body_pct = frame["_b2_today_body_pct"].to_numpy(dtype=float)
+    upper_shadow = frame["_b2_upper_shadow_ratio"].to_numpy(dtype=float)
+
+    score += np.where(j_values < 25.0, 5.0, 0.0)
+    score += np.where((j_values >= 45.0) & (j_values < 55.0), -5.0, 0.0)
+    score += np.where(j_delta >= 10.0, 5.0, 0.0)
+    score += np.where(volume_ratio > 1.2, 8.0, np.where(volume_ratio > 1.0, 3.0, 0.0))
+    score += np.where(body_pct >= 0.03, 5.0, np.where(body_pct < 0.01, -5.0, 0.0))
+    score += np.where(upper_shadow <= 0.03, 5.0, 0.0)
+    score += np.where(upper_shadow > upper_shadow_soft_limit, -10.0, 0.0)
+    return score
+
+
+def reference_compute_b2_pick_mask(
+    frame: pd.DataFrame,
+    *,
+    require_j_turn_up: bool = True,
+    j_ceiling: float = 55.0,
+    min_return: float = 0.04,
+    return_tolerance: float = 1e-12,
+    min_today_body_pct: float = 0.003,
+    volume_ratio_min: float = 1.0,
+    flat_volume_ratio: float = 0.98,
+) -> np.ndarray:
+    current_zx_ok = reference_compute_zx_condition_mask(frame, frame["zxdq"], frame["zxdkx"])
+    current_weekly_ok = frame["wma_bull"].to_numpy(dtype=bool)
+    recent_b1_ok = frame["_b2_prior_b1_lag"].to_numpy(dtype=np.int16) > 0
+    j_turn_up_ok = (
+        frame["_b2_j_turn_up"].to_numpy(dtype=bool)
+        if require_j_turn_up
+        else np.ones(len(frame), dtype=bool)
+    )
+    j_ceiling_ok = frame["J"].to_numpy(dtype=float) < j_ceiling
+    daily_return_ok = frame["_b2_daily_return"].to_numpy(dtype=float) >= min_return - return_tolerance
+    body_ok = (
+        (frame["close"].to_numpy(dtype=float) > frame["open"].to_numpy(dtype=float))
+        & (frame["_b2_today_body_pct"].to_numpy(dtype=float) >= min_today_body_pct)
+    )
+    volume_ratio = frame["_b2_volume_ratio"].to_numpy(dtype=float)
+    volume_ok = (
+        (volume_ratio > volume_ratio_min)
+        | (
+            (volume_ratio >= flat_volume_ratio)
+            & frame["_b2_strict_yang_bao_yin"].to_numpy(dtype=bool)
+        )
+    )
+    return (
+        current_zx_ok
+        & current_weekly_ok
+        & recent_b1_ok
+        & j_turn_up_ok
+        & j_ceiling_ok
+        & daily_return_ok
+        & body_ok
+        & volume_ok
+    )
 
 
 def reference_compute_volume_ratio(frame: pd.DataFrame) -> np.ndarray:
@@ -808,6 +878,48 @@ class SelectionIndicatorContractTests(unittest.TestCase):
         np.testing.assert_allclose(body_pct, np.array([0.05, 0.06, 0.07]))
         np.testing.assert_allclose(upper_shadow, np.array([0.2, 0.1, 0.0]))
 
+    def test_product_b2_quality_score_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "J": [20.0, 50.0, 30.0],
+                "_b2_prior_b1_j": [5.0, 45.0, 35.0],
+                "_b2_volume_ratio": [1.3, 1.1, 0.8],
+                "_b2_today_body_pct": [0.04, 0.005, 0.02],
+                "_b2_upper_shadow_ratio": [0.02, 0.2, 0.05],
+            }
+        )
+
+        actual = compute_b2_quality_score(frame, upper_shadow_soft_limit=0.15)
+        expected = reference_compute_b2_quality_score(frame, upper_shadow_soft_limit=0.15)
+
+        np.testing.assert_allclose(actual, expected)
+        np.testing.assert_allclose(actual, np.array([128.0, 83.0, 100.0]))
+
+    def test_product_b2_pick_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "open": [10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+                "close": [10.0, 10.5, 10.6, 10.6, 10.6, 11.2],
+                "J": [20.0, 30.0, 60.0, 35.0, 40.0, 45.0],
+                "zxdq": [11.0, 11.0, 11.0, 11.0, 11.0, 11.0],
+                "zxdkx": [9.0, 9.0, 9.0, 9.0, 9.0, 9.0],
+                "wma_bull": [True, True, True, True, True, True],
+                "_b2_prior_b1_lag": [0, 1, 1, 1, 1, 1],
+                "_b2_prior_b1_j": [np.nan, 20.0, 30.0, 40.0, 30.0, 30.0],
+                "_b2_j_turn_up": [False, True, True, False, True, True],
+                "_b2_daily_return": [np.nan, 0.05, 0.06, 0.05, 0.05, 0.04],
+                "_b2_today_body_pct": [0.0, 0.05, 0.06, 0.06, 0.06, 0.12],
+                "_b2_volume_ratio": [np.nan, 1.1, 1.1, 1.1, 0.99, 0.99],
+                "_b2_strict_yang_bao_yin": [False, False, False, False, False, True],
+            }
+        )
+
+        actual = compute_b2_pick_mask(frame)
+        expected = reference_compute_b2_pick_mask(frame)
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([False, True, False, False, False, True]))
+
     def test_product_volume_ratio_matches_reference_formula(self) -> None:
         frame = pd.DataFrame({"volume": [100.0, 120.0, 0.0, 50.0]})
 
@@ -897,6 +1009,80 @@ class SelectionIndicatorContractTests(unittest.TestCase):
         np.testing.assert_array_equal(strict_yang_bao_yin, np.array([False, True, False], dtype=np.bool_))
         np.testing.assert_array_equal(prior_lag, np.array([0, 1, 0], dtype=np.int16))
         np.testing.assert_allclose(prior_j, np.array([np.nan, 10.0, np.nan]), equal_nan=True)
+
+    def test_legacy_b2_selector_prepare_df_delegates_vec_pick_and_quality_to_product_helpers(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.5, 11.5, 12.5],
+                "low": [9.5, 10.5, 11.5],
+                "open": [10.0, 11.0, 12.0],
+                "close": [10.2, 11.3, 12.4],
+                "volume": [100.0, 120.0, 150.0],
+            },
+            index=pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07"]),
+        )
+
+        def fake_product_compute_b1_pick_mask(
+            input_frame: pd.DataFrame,
+            **kwargs: float,
+        ) -> np.ndarray:
+            self.assertIn("J", input_frame.columns)
+            self.assertEqual(kwargs["j_threshold"], 12.0)
+            self.assertEqual(kwargs["j_q_threshold"], 0.2)
+            self.assertEqual(kwargs["max_vol_lookback"], 2)
+            return np.array([True, False, True], dtype=np.bool_)
+
+        def fake_product_compute_b2_quality_score(
+            input_frame: pd.DataFrame,
+            *,
+            upper_shadow_soft_limit: float = 0.15,
+        ) -> np.ndarray:
+            self.assertIn("_b2_upper_shadow_ratio", input_frame.columns)
+            self.assertEqual(upper_shadow_soft_limit, 0.11)
+            return np.array([101.0, 102.0, 103.0])
+
+        def fake_product_compute_b2_pick_mask(
+            input_frame: pd.DataFrame,
+            **kwargs: float,
+        ) -> np.ndarray:
+            self.assertIn("_b2_quality_score", input_frame.columns)
+            self.assertEqual(kwargs["j_ceiling"], 50.0)
+            self.assertEqual(kwargs["min_return"], 0.03)
+            self.assertEqual(kwargs["min_today_body_pct"], 0.002)
+            self.assertEqual(kwargs["volume_ratio_min"], 1.1)
+            self.assertEqual(kwargs["flat_volume_ratio"], 0.97)
+            self.assertFalse(kwargs["require_j_turn_up"])
+            return np.array([False, True, True], dtype=np.bool_)
+
+        with (
+            patch.object(selector_module, "_product_compute_b1_pick_mask", fake_product_compute_b1_pick_mask),
+            patch.object(selector_module, "_product_compute_b2_quality_score", fake_product_compute_b2_quality_score),
+            patch.object(selector_module, "_product_compute_b2_pick_mask", fake_product_compute_b2_pick_mask),
+        ):
+            prepared = selector_module.B2Selector(
+                j_threshold=12.0,
+                j_q_threshold=0.2,
+                zx_m1=1,
+                zx_m2=1,
+                zx_m3=1,
+                zx_m4=1,
+                wma_short=1,
+                wma_mid=1,
+                wma_long=1,
+                max_vol_lookback=2,
+                b1_lookback=1,
+                min_return=0.03,
+                min_today_body_pct=0.002,
+                j_ceiling=50.0,
+                require_j_turn_up=False,
+                volume_ratio_min=1.1,
+                flat_volume_ratio=0.97,
+                upper_shadow_soft_limit=0.11,
+            ).prepare_df(frame)
+
+        np.testing.assert_array_equal(prepared["_b1_pick"].to_numpy(dtype=bool), np.array([True, False, True]))
+        np.testing.assert_allclose(prepared["_b2_quality_score"], np.array([101.0, 102.0, 103.0]))
+        np.testing.assert_array_equal(prepared["_vec_pick"].to_numpy(dtype=bool), np.array([False, True, True]))
 
     def test_product_zx_lines_match_reference_formula(self) -> None:
         frame = pd.DataFrame(

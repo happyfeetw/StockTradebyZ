@@ -40,6 +40,8 @@ except ImportError:
 try:
     from stocktrade.domain.selection.indicators import (
         compute_b1_pick_mask as _product_compute_b1_pick_mask,
+        compute_b2_pick_mask as _product_compute_b2_pick_mask,
+        compute_b2_quality_score as _product_compute_b2_quality_score,
         compute_body_pct as _product_compute_body_pct,
         compute_brick_chart as _product_compute_brick_chart,
         compute_brick_growth as _product_compute_brick_growth,
@@ -62,6 +64,8 @@ try:
     )
 except ImportError:
     _product_compute_b1_pick_mask = None
+    _product_compute_b2_pick_mask = None
+    _product_compute_b2_quality_score = None
     _product_compute_body_pct = None
     _product_compute_brick_chart = None
     _product_compute_brick_growth = None
@@ -1186,6 +1190,20 @@ class B2Selector(PipelineSelector):
         self.upper_shadow_soft_limit = upper_shadow_soft_limit
 
     def _b1_pick_mask(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_b1_pick_mask is not None:
+            return _product_compute_b1_pick_mask(
+                df,
+                j_threshold=self._b1_kdj_filter.j_threshold,
+                j_q_threshold=self._b1_kdj_filter.j_q_threshold,
+                require_close_gt_long=self._zx_filter.require_close_gt_long,
+                require_short_gt_long=self._zx_filter.require_short_gt_long,
+                max_vol_lookback=(
+                    self._max_vol_filter.n
+                    if self._max_vol_filter is not None
+                    else None
+                ),
+            )
+
         filters: list = [self._b1_kdj_filter, self._zx_filter, self._wma_filter]
         if self._max_vol_filter is not None:
             filters.append(self._max_vol_filter)
@@ -1204,6 +1222,12 @@ class B2Selector(PipelineSelector):
         return out
 
     def _quality_score(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_b2_quality_score is not None:
+            return _product_compute_b2_quality_score(
+                df,
+                upper_shadow_soft_limit=self.upper_shadow_soft_limit,
+            )
+
         score = np.full(len(df), 100.0, dtype=float)
         j_vals = df["J"].to_numpy(dtype=float)
         prior_j = df["_b2_prior_b1_j"].to_numpy(dtype=float)
@@ -1254,6 +1278,19 @@ class B2Selector(PipelineSelector):
         df["_b2_strict_yang_bao_yin"] = self._volume_filter.strict_yang_bao_yin_arr(df)
         df["_b2_upper_shadow_ratio"] = self._upper_shadow_ratio(df)
         df["_b2_quality_score"] = self._quality_score(df)
+
+        if _product_compute_b2_pick_mask is not None:
+            df["_vec_pick"] = _product_compute_b2_pick_mask(
+                df,
+                require_j_turn_up=self.require_j_turn_up,
+                j_ceiling=self._j_ceiling_filter.j_ceiling,
+                min_return=self._daily_return_filter.min_return,
+                return_tolerance=self._daily_return_filter.tolerance,
+                min_today_body_pct=self._bull_body_filter.min_body_pct,
+                volume_ratio_min=self._volume_filter.volume_ratio_min,
+                flat_volume_ratio=self._volume_filter.flat_volume_ratio,
+            )
+            return df
 
         current_zx_ok = self._zx_filter.vec_mask(df)
         current_weekly_ok = self._wma_filter.vec_mask(df)

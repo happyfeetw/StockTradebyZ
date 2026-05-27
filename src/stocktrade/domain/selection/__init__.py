@@ -2,6 +2,8 @@
 
 from .indicators import (
     compute_b1_pick_mask,
+    compute_b2_pick_mask,
+    compute_b2_quality_score,
     compute_body_pct,
     compute_brick_chart,
     compute_brick_green_run,
@@ -55,6 +57,8 @@ from .preselect import (
 
 __all__ = [
     "compute_b1_pick_mask",
+    "compute_b2_pick_mask",
+    "compute_b2_quality_score",
     "compute_body_pct",
     "compute_brick_chart",
     "compute_brick_green_run",

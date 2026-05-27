@@ -39,15 +39,21 @@ except ImportError:
 
 try:
     from stocktrade.domain.selection.indicators import (
+        compute_body_pct as _product_compute_body_pct,
+        compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
         compute_max_volume_not_bearish as _product_compute_max_volume_not_bearish,
+        compute_upper_shadow_ratio as _product_compute_upper_shadow_ratio,
         compute_weekly_close as _product_compute_weekly_close,
         compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
         compute_zx_lines as _product_compute_zx_lines,
     )
 except ImportError:
+    _product_compute_body_pct = None
+    _product_compute_daily_return = None
     _product_compute_kdj = None
     _product_compute_max_volume_not_bearish = None
+    _product_compute_upper_shadow_ratio = None
     _product_compute_weekly_close = None
     _product_compute_weekly_ma_bull = None
     _product_compute_zx_lines = None
@@ -826,6 +832,9 @@ class DailyReturnFilter:
         return float(close.iloc[-1]) / prev_close - 1.0 >= self.min_return - self.tolerance
 
     def values(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_daily_return is not None:
+            return _product_compute_daily_return(df)
+
         close = df["close"].to_numpy(dtype=float)
         prev_close = np.empty_like(close)
         prev_close[0] = np.nan
@@ -854,6 +863,9 @@ class BullBodyFilter:
         return (close - open_) / open_ >= self.min_body_pct
 
     def values(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_body_pct is not None:
+            return _product_compute_body_pct(df)
+
         open_ = df["open"].to_numpy(dtype=float)
         close = df["close"].to_numpy(dtype=float)
         out = np.full(len(df), np.nan, dtype=float)
@@ -1076,6 +1088,9 @@ class B2Selector(PipelineSelector):
         return _apply_vec_filters(df, filters)
 
     def _upper_shadow_ratio(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_upper_shadow_ratio is not None:
+            return _product_compute_upper_shadow_ratio(df)
+
         high = df["high"].to_numpy(dtype=float)
         low = df["low"].to_numpy(dtype=float)
         close = df["close"].to_numpy(dtype=float)

@@ -59,6 +59,24 @@ def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     return frame.assign(K=k, D=d, J=j)
 
 
+def compute_daily_return(frame: pd.DataFrame) -> np.ndarray:
+    close = frame["close"].to_numpy(dtype=float)
+    prev_close = np.empty_like(close)
+    prev_close[0] = np.nan
+    prev_close[1:] = close[:-1]
+    out = np.full(len(close), np.nan, dtype=float)
+    np.divide(close, prev_close, out=out, where=prev_close > 0)
+    return out - 1.0
+
+
+def compute_body_pct(frame: pd.DataFrame) -> np.ndarray:
+    open_ = frame["open"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    out = np.full(len(frame), np.nan, dtype=float)
+    np.divide(close - open_, open_, out=out, where=open_ > 0)
+    return out
+
+
 def compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
     return _max_volume_not_bearish_core(
         frame["volume"].to_numpy(dtype=np.float64),
@@ -66,6 +84,16 @@ def compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> n
         frame["close"].to_numpy(dtype=np.float64),
         lookback,
     )
+
+
+def compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
+    high = frame["high"].to_numpy(dtype=float)
+    low = frame["low"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    span = high - low
+    out = np.zeros(len(frame), dtype=float)
+    np.divide(high - close, span, out=out, where=span > 0)
+    return out
 
 
 def compute_zx_lines(

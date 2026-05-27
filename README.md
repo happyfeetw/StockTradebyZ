@@ -51,22 +51,47 @@ Agent 协作与 harness 规范见 [AGENTS.md](AGENTS.md) 和
 
 ---
 
-## 3. 快速开始（一键跑通）
+## 3. 产品化本地启动（React/FastAPI）
 
-### 3.1 Clone 项目
+R7 重构后的默认本地产品入口是 React web 前端 + FastAPI 后端：
+
+~~~bash
+./start_product
+~~~
+
+默认地址：
+
+- Web: http://127.0.0.1:5173
+- API: http://127.0.0.1:8000
+
+首次启动前需要安装 Python 依赖和前端依赖：
+
+~~~bash
+pip install -r requirements.txt
+cd apps/web && npm install
+~~~
+
+旧的 `start_workbench` 仍保留为 Streamlit 兼容入口，但新工作流应使用
+`./start_product`。
+
+---
+
+## 4. 快速开始（一键跑通 legacy CLI）
+
+### 4.1 Clone 项目
 
 ~~~bash
 git clone https://github.com/SebastienZh/StockTradebyZ
 cd StockTradebyZ
 ~~~
 
-### 3.2 安装依赖
+### 4.2 安装依赖
 
 ~~~bash
 pip install -r requirements.txt
 ~~~
 
-### 3.3 设置环境变量
+### 4.3 设置环境变量
 
 Windows PowerShell（永久写入）：
 
@@ -78,7 +103,7 @@ Windows PowerShell（永久写入）：
 Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧的 Gemini API
 复评方式，再额外设置 `GEMINI_API_KEY`。
 
-### 3.4 运行一键脚本
+### 4.4 运行一键脚本
 
 在项目根目录执行：
 
@@ -104,7 +129,7 @@ python run_all.py --skip-review
 
 ---
 
-## 4. 分步运行攻略
+## 5. 分步运行攻略
 
 ### 步骤 1：拉取 K 线
 
@@ -166,14 +191,14 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 
 ---
 
-## 5. 关键配置建议
+## 6. 关键配置建议
 
-### 5.1 抓取层
+### 6.1 抓取层
 
 - 首次全量抓取建议 workers 设小一些（如 4 到 8）
 - 若遇到频率限制，降低并发并重试
 
-### 5.2 初选层
+### 6.2 初选层
 
 - top_m 决定流动性股票池大小
 - b1.enabled、brick.enabled 控制策略开关

@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parents[4]
 PIPELINE_DIR = ROOT / "pipeline"
@@ -62,6 +62,15 @@ class PreselectResult:
 
 
 LegacyRunner = Callable[..., tuple[Any, list[Any]]]
+ConfigLoader = Callable[[str | None], dict[str, Any]]
+
+
+class PreselectExecutionPort(Protocol):
+    def load_config(self, config_path: str | None = None) -> dict[str, Any]:
+        ...
+
+    def run_preselect(self, parameters: PreselectParameters) -> tuple[Any, list[Any]]:
+        ...
 
 
 def _enabled_strategies(config: dict[str, Any]) -> list[str]:
@@ -90,34 +99,61 @@ def _load_legacy_select_stock() -> Any:
     return select_stock
 
 
-class PreselectService:
-    def __init__(self, runner: LegacyRunner | None = None):
-        self.runner = runner
+class LegacyPreselectExecutionPort:
+    """Adapter around legacy pipeline selection behavior.
 
-    def run(self, parameters: PreselectParameters, *, run_date: str | None = None) -> PreselectResult:
-        legacy_select_stock = _load_legacy_select_stock()
-        runner = self.runner or legacy_select_stock.run_preselect
-        config = legacy_select_stock.load_config(parameters.config_path)
-        pick_ts, legacy_candidates = runner(
+    This keeps legacy imports behind a named port while the product domain
+    boundary is rewritten and parity-tested in smaller slices.
+    """
+
+    def __init__(self, module_loader: Callable[[], Any] = _load_legacy_select_stock):
+        self._module_loader = module_loader
+        self._module: Any | None = None
+
+    @property
+    def module(self) -> Any:
+        if self._module is None:
+            self._module = self._module_loader()
+        return self._module
+
+    def load_config(self, config_path: str | None = None) -> dict[str, Any]:
+        return self.module.load_config(config_path)
+
+    def run_preselect(self, parameters: PreselectParameters) -> tuple[Any, list[Any]]:
+        return self.module.run_preselect(
             config_path=parameters.config_path,
             data_dir=parameters.data_dir,
             end_date=parameters.end_date,
             pick_date=parameters.pick_date,
         )
 
-        pick_date = pick_ts.strftime("%Y-%m-%d")
-        candidates = [
-            SelectionCandidate(
-                code=str(candidate.code),
-                date=str(candidate.date),
-                strategy=str(candidate.strategy),
-                close=float(candidate.close),
-                turnover_n=float(candidate.turnover_n),
-                brick_growth=float(candidate.brick_growth) if candidate.brick_growth is not None else None,
-                extra=dict(candidate.extra or {}),
+
+class PreselectService:
+    def __init__(
+        self,
+        runner: LegacyRunner | None = None,
+        *,
+        config_loader: ConfigLoader | None = None,
+        port: PreselectExecutionPort | None = None,
+    ):
+        self.runner = runner
+        self.config_loader = config_loader
+        self.port = port or LegacyPreselectExecutionPort()
+
+    def run(self, parameters: PreselectParameters, *, run_date: str | None = None) -> PreselectResult:
+        config = (self.config_loader or self.port.load_config)(parameters.config_path)
+        if self.runner is not None:
+            pick_ts, legacy_candidates = self.runner(
+                config_path=parameters.config_path,
+                data_dir=parameters.data_dir,
+                end_date=parameters.end_date,
+                pick_date=parameters.pick_date,
             )
-            for candidate in legacy_candidates
-        ]
+        else:
+            pick_ts, legacy_candidates = self.port.run_preselect(parameters)
+
+        pick_date = pick_ts.strftime("%Y-%m-%d")
+        candidates = [_selection_candidate_from_port(candidate) for candidate in legacy_candidates]
         executed_strategies = _enabled_strategies(config)
         meta = {
             "config": parameters.config_path,
@@ -134,3 +170,16 @@ class PreselectService:
             candidates=candidates,
             meta=meta,
         )
+
+
+def _selection_candidate_from_port(candidate: Any) -> SelectionCandidate:
+    brick_growth = getattr(candidate, "brick_growth", None)
+    return SelectionCandidate(
+        code=str(candidate.code),
+        date=str(candidate.date),
+        strategy=str(candidate.strategy),
+        close=float(candidate.close),
+        turnover_n=float(candidate.turnover_n),
+        brick_growth=float(brick_growth) if brick_growth is not None else None,
+        extra=dict(getattr(candidate, "extra", None) or {}),
+    )

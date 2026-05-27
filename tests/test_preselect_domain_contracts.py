@@ -177,6 +177,58 @@ class PreselectDomainContractTests(unittest.TestCase):
         self.assertEqual([candidate.to_dict() for candidate in result.candidates], case["expected_candidates"])
         self.assertEqual(result.strategy_counts, {"b1": 1, "b2": 2, "brick": 1})
 
+    def test_preselect_service_can_run_against_port_without_legacy_imports(self) -> None:
+        script = f"""
+import datetime as dt
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+root = Path({str(ROOT)!r})
+sys.path.insert(0, str(root / "src"))
+
+from stocktrade.domain.selection import PreselectParameters, PreselectService
+
+class FixturePort:
+    def load_config(self, config_path=None):
+        return {{
+            "b1": {{"enabled": False}},
+            "b2": {{"enabled": True}},
+            "brick": {{"enabled": False}},
+        }}
+
+    def run_preselect(self, parameters):
+        return dt.date.fromisoformat("2026-05-22"), [
+            SimpleNamespace(
+                code="000001",
+                date="2026-05-22",
+                strategy="b2",
+                close=12.0,
+                turnover_n=5.0,
+                brick_growth=None,
+                extra={{"b2_quality_score": 110.0}},
+            )
+        ]
+
+result = PreselectService(port=FixturePort()).run(PreselectParameters(pick_date="2026-05-23"), run_date="2026-05-27")
+print(result.pick_date)
+print(result.strategy_counts)
+print("select_stock" in sys.modules)
+print("pipeline.select_stock" in sys.modules)
+"""
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip().splitlines(),
+            [
+                "2026-05-22",
+                "{'b2': 1}",
+                "False",
+                "False",
+            ],
+        )
+
     def test_preselect_api_records_run_batch_events_and_candidates(self) -> None:
         case = load_fixture("strategy_preselect_case.json")
         with tempfile.TemporaryDirectory() as tmpdir:

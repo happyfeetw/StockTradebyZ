@@ -39,6 +39,16 @@ class PreselectParameters:
 
 
 @dataclass(frozen=True)
+class PreselectExecutionSettings:
+    data_dir: str
+    top_m: int
+    n_turnover_days: int
+    min_bars_buffer: int
+    n_jobs: int | None
+    prepare_executor: str
+
+
+@dataclass(frozen=True)
 class PreselectResult:
     run_date: str
     pick_date: str
@@ -73,6 +83,51 @@ class PreselectExecutionPort(Protocol):
         ...
 
 
+class MarketDataPort(Protocol):
+    def load_raw_data(self, settings: PreselectExecutionSettings, parameters: PreselectParameters) -> dict[str, Any]:
+        ...
+
+
+class MarketPreparationPort(Protocol):
+    def prepare(
+        self,
+        raw_data: dict[str, Any],
+        *,
+        config: dict[str, Any],
+        settings: PreselectExecutionSettings,
+        parameters: PreselectParameters,
+    ) -> dict[str, Any]:
+        ...
+
+
+class PickDatePort(Protocol):
+    def resolve_pick_date(self, prepared: dict[str, Any], requested_pick_date: str | None) -> Any:
+        ...
+
+
+class LiquidityPoolPort(Protocol):
+    def build_pool(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        settings: PreselectExecutionSettings,
+    ) -> list[str]:
+        ...
+
+
+class StrategySelectorPort(Protocol):
+    def run_strategies(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        pool_codes: list[str],
+        config: dict[str, Any],
+    ) -> list[Any]:
+        ...
+
+
 def _enabled_strategies(config: dict[str, Any]) -> list[str]:
     strategies: list[str] = []
     if config.get("b1", {}).get("enabled", True):
@@ -91,12 +146,102 @@ def _strategy_candidate_counts(strategies: list[str], candidates: list[Selection
     return counts
 
 
+def _dedupe_candidates_by_code_strategy(candidates: list[Any]) -> list[Any]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[Any] = []
+    for candidate in candidates:
+        key = (str(candidate.code), str(candidate.strategy))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
 def _load_legacy_select_stock() -> Any:
     if str(PIPELINE_DIR) not in sys.path:
         sys.path.insert(0, str(PIPELINE_DIR))
     import select_stock
 
     return select_stock
+
+
+class LegacyMarketDataPort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def load_raw_data(self, settings: PreselectExecutionSettings, parameters: PreselectParameters) -> dict[str, Any]:
+        return self._module_provider().load_raw_data(settings.data_dir, end_date=parameters.end_date)
+
+
+class LegacyMarketPreparationPort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def prepare(
+        self,
+        raw_data: dict[str, Any],
+        *,
+        config: dict[str, Any],
+        settings: PreselectExecutionSettings,
+        parameters: PreselectParameters,
+    ) -> dict[str, Any]:
+        module = self._module_provider()
+        preparer = module.MarketDataPreparer(
+            end_date=module.pd.to_datetime(parameters.end_date) if parameters.end_date else None,
+            warmup_bars=module._calc_warmup(config, settings.min_bars_buffer),
+            n_turnover_days=settings.n_turnover_days,
+            selector=None,
+            n_jobs=settings.n_jobs,
+            executor=settings.prepare_executor,
+        )
+        return preparer.prepare(raw_data)
+
+
+class LegacyPickDatePort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def resolve_pick_date(self, prepared: dict[str, Any], requested_pick_date: str | None) -> Any:
+        return self._module_provider()._resolve_pick_date(prepared, requested_pick_date)
+
+
+class LegacyLiquidityPoolPort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def build_pool(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        settings: PreselectExecutionSettings,
+    ) -> list[str]:
+        pool_by_date = self._module_provider().TopTurnoverPoolBuilder(top_m=settings.top_m).build(prepared)
+        return list(pool_by_date.get(pick_date, []))
+
+
+class LegacyStrategySelectorPort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def run_strategies(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        pool_codes: list[str],
+        config: dict[str, Any],
+    ) -> list[Any]:
+        module = self._module_provider()
+        candidates: list[Any] = []
+        if config.get("b1", {}).get("enabled", True):
+            candidates.extend(module.run_b1(prepared, pick_date, pool_codes, config["b1"]))
+        if config.get("b2", {}).get("enabled", False):
+            candidates.extend(module.run_b2(prepared, pick_date, pool_codes, config["b2"], config.get("b1", {})))
+        if config.get("brick", {}).get("enabled", True):
+            candidates.extend(module.run_brick(prepared, pick_date, pool_codes, config["brick"]))
+        return candidates
 
 
 class LegacyPreselectExecutionPort:
@@ -106,9 +251,23 @@ class LegacyPreselectExecutionPort:
     boundary is rewritten and parity-tested in smaller slices.
     """
 
-    def __init__(self, module_loader: Callable[[], Any] = _load_legacy_select_stock):
+    def __init__(
+        self,
+        module_loader: Callable[[], Any] = _load_legacy_select_stock,
+        *,
+        market_data: MarketDataPort | None = None,
+        market_preparation: MarketPreparationPort | None = None,
+        pick_dates: PickDatePort | None = None,
+        liquidity_pool: LiquidityPoolPort | None = None,
+        strategy_selectors: StrategySelectorPort | None = None,
+    ):
         self._module_loader = module_loader
         self._module: Any | None = None
+        self.market_data = market_data or LegacyMarketDataPort(lambda: self.module)
+        self.market_preparation = market_preparation or LegacyMarketPreparationPort(lambda: self.module)
+        self.pick_dates = pick_dates or LegacyPickDatePort(lambda: self.module)
+        self.liquidity_pool = liquidity_pool or LegacyLiquidityPoolPort(lambda: self.module)
+        self.strategy_selectors = strategy_selectors or LegacyStrategySelectorPort(lambda: self.module)
 
     @property
     def module(self) -> Any:
@@ -120,12 +279,27 @@ class LegacyPreselectExecutionPort:
         return self.module.load_config(config_path)
 
     def run_preselect(self, parameters: PreselectParameters) -> tuple[Any, list[Any]]:
-        return self.module.run_preselect(
-            config_path=parameters.config_path,
-            data_dir=parameters.data_dir,
-            end_date=parameters.end_date,
-            pick_date=parameters.pick_date,
+        config = self.load_config(parameters.config_path)
+        settings = _execution_settings(self.module, config=config, parameters=parameters)
+        raw_data = self.market_data.load_raw_data(settings, parameters)
+        prepared = self.market_preparation.prepare(
+            raw_data,
+            config=config,
+            settings=settings,
+            parameters=parameters,
         )
+        pick_date = self.pick_dates.resolve_pick_date(prepared, parameters.pick_date)
+        pool_codes = self.liquidity_pool.build_pool(prepared, pick_date=pick_date, settings=settings)
+        if not pool_codes:
+            return pick_date, []
+
+        candidates = self.strategy_selectors.run_strategies(
+            prepared,
+            pick_date=pick_date,
+            pool_codes=pool_codes,
+            config=config,
+        )
+        return pick_date, _dedupe_candidates_by_code_strategy(candidates)
 
 
 class PreselectService:
@@ -182,4 +356,23 @@ def _selection_candidate_from_port(candidate: Any) -> SelectionCandidate:
         turnover_n=float(candidate.turnover_n),
         brick_growth=float(brick_growth) if brick_growth is not None else None,
         extra=dict(getattr(candidate, "extra", None) or {}),
+    )
+
+
+def _execution_settings(
+    module: Any,
+    *,
+    config: dict[str, Any],
+    parameters: PreselectParameters,
+) -> PreselectExecutionSettings:
+    global_config = config.get("global", {})
+    data_dir = str(module._resolve_cfg_path(parameters.data_dir or global_config.get("data_dir", "./data/raw")))
+    n_jobs = global_config.get("n_jobs")
+    return PreselectExecutionSettings(
+        data_dir=data_dir,
+        top_m=int(global_config.get("top_m", 20)),
+        n_turnover_days=int(global_config.get("n_turnover_days", 43)),
+        min_bars_buffer=int(global_config.get("min_bars_buffer", 10)),
+        n_jobs=int(n_jobs) if n_jobs is not None else None,
+        prepare_executor=str(global_config.get("prepare_executor", "process")),
     )

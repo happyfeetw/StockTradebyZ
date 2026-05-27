@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import asyncio
+import datetime as dt
 import subprocess
 import sys
 import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -21,7 +23,7 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import select_stock  # noqa: E402
-from stocktrade.domain.selection import PreselectParameters, PreselectService  # noqa: E402
+from stocktrade.domain.selection import LegacyPreselectExecutionPort, PreselectParameters, PreselectService  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.preselect import CandidateResponse, PreselectRunRequest, PreselectRunResponse  # noqa: E402
 from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
@@ -226,6 +228,118 @@ print("pipeline.select_stock" in sys.modules)
                 "{'b2': 1}",
                 "False",
                 "False",
+            ],
+        )
+
+    def test_legacy_port_orchestrates_named_selection_ports_and_preserves_identity_dedupe(self) -> None:
+        calls: list[str] = []
+        config = {
+            "global": {
+                "data_dir": "fixture/raw",
+                "top_m": 2,
+                "n_turnover_days": 3,
+                "min_bars_buffer": 4,
+                "n_jobs": 1,
+                "prepare_executor": "thread",
+            },
+            "b1": {"enabled": False},
+            "b2": {"enabled": True},
+            "brick": {"enabled": True},
+        }
+
+        class FixtureModule:
+            def load_config(self, config_path=None):
+                calls.append(f"config:{config_path}")
+                return config
+
+            def _resolve_cfg_path(self, path):
+                return Path("/fixture-root") / str(path)
+
+        class FixtureMarketData:
+            def load_raw_data(self, settings, parameters):
+                calls.append(f"raw:{settings.data_dir}:{parameters.end_date}")
+                self.settings = settings
+                return {"raw": object()}
+
+        class FixturePreparation:
+            def prepare(self, raw_data, *, config, settings, parameters):
+                calls.append(f"prepare:{settings.n_turnover_days}:{settings.prepare_executor}")
+                self.raw_data = raw_data
+                return {"prepared": object()}
+
+        class FixturePickDate:
+            def resolve_pick_date(self, prepared, requested_pick_date):
+                calls.append(f"date:{requested_pick_date}")
+                return dt.date.fromisoformat("2026-05-22")
+
+        class FixtureLiquidity:
+            def build_pool(self, prepared, *, pick_date, settings):
+                calls.append(f"pool:{pick_date.isoformat()}:{settings.top_m}")
+                return ["000001", "000002"]
+
+        class FixtureStrategies:
+            def run_strategies(self, prepared, *, pick_date, pool_codes, config):
+                calls.append(f"strategies:{pick_date.isoformat()}:{','.join(pool_codes)}")
+                return [
+                    SimpleNamespace(
+                        code="000001",
+                        date="2026-05-22",
+                        strategy="b2",
+                        close=12.0,
+                        turnover_n=5.0,
+                        extra={"b2_quality_score": 110.0},
+                    ),
+                    SimpleNamespace(
+                        code="000001",
+                        date="2026-05-22",
+                        strategy="b2",
+                        close=12.0,
+                        turnover_n=5.0,
+                        extra={"b2_quality_score": 99.0},
+                    ),
+                    SimpleNamespace(
+                        code="000001",
+                        date="2026-05-22",
+                        strategy="brick",
+                        close=12.0,
+                        turnover_n=5.0,
+                        brick_growth=2.5,
+                    ),
+                ]
+
+        market_data = FixtureMarketData()
+        port = LegacyPreselectExecutionPort(
+            module_loader=FixtureModule,
+            market_data=market_data,
+            market_preparation=FixturePreparation(),
+            pick_dates=FixturePickDate(),
+            liquidity_pool=FixtureLiquidity(),
+            strategy_selectors=FixtureStrategies(),
+        )
+
+        pick_date, candidates = port.run_preselect(
+            PreselectParameters(
+                config_path="fixture-config.json",
+                pick_date="2026-05-23",
+                end_date="2026-05-23",
+            )
+        )
+
+        self.assertEqual(pick_date, dt.date.fromisoformat("2026-05-22"))
+        self.assertEqual(
+            [(candidate.code, candidate.strategy) for candidate in candidates],
+            [("000001", "b2"), ("000001", "brick")],
+        )
+        self.assertEqual(market_data.settings.data_dir, "/fixture-root/fixture/raw")
+        self.assertEqual(
+            calls,
+            [
+                "config:fixture-config.json",
+                "raw:/fixture-root/fixture/raw:2026-05-23",
+                "prepare:3:thread",
+                "date:2026-05-23",
+                "pool:2026-05-22:2",
+                "strategies:2026-05-22:000001,000002",
             ],
         )
 

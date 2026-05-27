@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +34,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/architecture-quality-bar.md"),
     Path("docs/agent-harness/target-architecture-design.md"),
     Path("docs/agent-harness/validation-gates.md"),
+    Path("docs/agent-harness/r5-ui-browser-smoke.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -373,6 +375,46 @@ def check_python() -> None:
     print("[python] ok")
 
 
+def check_ui_smoke_fixture() -> None:
+    run_command(
+        [
+            sys.executable,
+            "-m",
+            "py_compile",
+            "scripts/harness/seed_ui_smoke.py",
+            "scripts/harness/ui_smoke_app.py",
+        ]
+    )
+    with tempfile.TemporaryDirectory(prefix="stocktrade-ui-smoke-") as tmpdir:
+        tmp = Path(tmpdir)
+        sqlite_path = tmp / "app.sqlite"
+        duckdb_path = tmp / "analytics.duckdb"
+        artifact_root = tmp / "artifacts"
+        run_command(
+            [
+                sys.executable,
+                "scripts/harness/seed_ui_smoke.py",
+                "--sqlite-path",
+                str(sqlite_path),
+                "--duckdb-path",
+                str(duckdb_path),
+                "--artifact-root",
+                str(artifact_root),
+                "--force",
+            ]
+        )
+        expected = [
+            sqlite_path,
+            duckdb_path,
+            artifact_root / "run-ui-smoke-active" / "summary.txt",
+            artifact_root / "run-ui-smoke-chart" / "charts" / "batch-ui-smoke" / "000001_b2.svg",
+        ]
+        missing = [str(path) for path in expected if not path.exists()]
+        if missing:
+            raise HarnessError(f"ui smoke fixture missing output: {', '.join(missing)}")
+    print("[ui-smoke-fixture] ok")
+
+
 def check_quick() -> None:
     check_docs()
     check_contracts()
@@ -390,6 +432,7 @@ def parse_args() -> argparse.Namespace:
             "python",
             "product-refactor-readiness",
             "refactor-readiness",
+            "ui-smoke-fixture",
             "quick",
         ],
         help="Validation gate to run",
@@ -410,6 +453,8 @@ def main() -> int:
             check_product_refactor_readiness()
         elif args.gate == "refactor-readiness":
             check_refactor_readiness()
+        elif args.gate == "ui-smoke-fixture":
+            check_ui_smoke_fixture()
         elif args.gate == "quick":
             check_quick()
         else:

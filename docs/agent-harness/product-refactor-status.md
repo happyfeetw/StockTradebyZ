@@ -1,6 +1,6 @@
 # Product Refactor Status
 
-Managing issue: #111
+Managing issue: #115
 Parent epic: #23
 Last status sync: 2026-05-27
 Baseline commit: `28dc70a`
@@ -18,15 +18,15 @@ R6. The remaining work is still substantial because the final goal requires a
 product-quality UI, product-owned storage cutover, core business logic rewritten
 behind parity tests, and legacy path retirement.
 
-Default next phase focus: R5 React workstation UI/UX productization, tracked
-by #114.
+Default next phase focus: R6 product storage cutover for in-scope workflows,
+tracked by #115.
 
 Rationale: #112 has moved strategy selection behavior behind product-owned
-domain helpers, ports, and parity tests. The remaining selector classes are
-compatibility adapters/fallbacks, not the source of product-owned formulas. #113
-has added product settings read/write contracts, strategy metadata, and
-DuckDB-backed strategy summary contracts, so the next blocking surface is the
-R5 workstation UI that consumes those APIs.
+domain helpers, ports, and parity tests. #113 added product settings read/write
+contracts, strategy metadata, and DuckDB-backed strategy summary contracts. #114
+now gives the React workstation deterministic fixture-backed browser evidence
+for the core R5 surfaces. The next blocking surface is making SQLite/DuckDB the
+product-owned source of truth for in-scope workflows.
 
 ## Phase Status
 
@@ -37,7 +37,7 @@ R5 workstation UI that consumes those APIs.
 | R2 Target architecture and data model | Baseline complete, needs drift control | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep this file and architecture design in sync with implementation |
 | R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | Retire legacy selector compatibility adapters during R7 only after product API/storage/UI cutover evidence exists |
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
-| R5 Frontend product UI/UX | Scaffold plus workflow views; workstation IA first slice active | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, and result-list dense-table refinement | #114 still needs broader browser evidence across core workflows and final UI quality review |
+| R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | Migration/import tooling partial | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96 | #115 must define and execute source-of-truth cutover for in-scope workflows |
 | R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
 
@@ -72,6 +72,10 @@ evidence:
 - Candidate, review, and archive result lists now use desktop scan headers,
   selected/filter summary chips, and a primary comparison row plus secondary
   lineage strip for long run, batch, review-key, and chart-path evidence.
+- A deterministic R5 UI browser-smoke fixture seeds SQLite, DuckDB, and product
+  artifacts under ignored `var/ui-smoke/` state so Overview, Run Center,
+  Candidates, Reviews, Archive, Analytics, Settings, and Migrations can be
+  inspected without credentials.
 - Product review provider boundary plus Gemini CLI provider adapter preserving
   checkpoint, retry/backoff, raw logs, skip cache, batch order validation, and
   chart lineage.
@@ -142,8 +146,10 @@ full objective:
 - Backend route coverage for the named #113 settings, strategy metadata, and
   analytics summary workflows has landed; broader R4 hardening should now be
   driven by concrete R5/R6 workflow gaps instead of speculative endpoints.
-- The frontend has a usable scaffold but not yet the final product-grade
-  workstation UI/UX quality bar.
+- The frontend has a usable scaffold and deterministic R5 UI smoke evidence for
+  the current core workflow surfaces. Residual migration/provider error-state
+  polish should be driven by R6/R7 hardening rather than blocking storage
+  cutover.
 - File-system state is still a live compatibility and migration source. The
   product-owned storage cutover is not complete.
 - Runtime cancellation and concurrency are simple and local-first; this is
@@ -155,14 +161,12 @@ full objective:
 
 Use these issues unless a newer issue supersedes them:
 
-1. #114: R5 productize React workstation UI information architecture and core
-   surfaces.
-2. #115: R6 define and execute product storage cutover plan for in-scope
+1. #115: R6 define and execute product storage cutover plan for in-scope
    workflows.
 
-The default next issue is #114 because #113 has supplied the backend settings,
-strategy metadata, and analytics summary contracts that the R5 workstation UI
-needs to consume.
+The default next issue is #115 because #114 has supplied fixture-backed R5
+browser evidence for the workstation surfaces that consume the current FastAPI,
+SQLite, and DuckDB contracts.
 
 ## Completion Boundary
 

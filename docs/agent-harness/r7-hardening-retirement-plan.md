@@ -36,7 +36,7 @@ Out of scope:
 | --- | --- | --- | --- |
 | `pipeline/cli.py` | Legacy preselect CLI writes `data/candidates/` | Freeze as compatibility CLI, then retire after product API run proof covers local workflow docs | Golden parity, product preselect API proof, rollback note |
 | `pipeline/pipeline_io.py` | Candidate JSON writer/reader for `candidates_latest.json` | Keep import/read compatibility; block new product writes from depending on it | Legacy import verify, product UI/API no-read proof |
-| `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Mark legacy-only; do not expand | Review parity fixtures and product provider evidence proof |
+| `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Retire by default behind explicit rollback flag | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Keep as chart oracle; product chart export is supported path | Product chart artifact proof and visual smoke |
@@ -90,6 +90,9 @@ Out of scope:
    - Each PR must include rollback notes, parity evidence, migration proof, and
      product replacement proof.
    - Do not combine paper-trading changes with product retirement work.
+   - Gemini API reviewer retirement uses
+     `docs/agent-harness/r7-gemini-api-review-retirement.md` and
+     `scripts/harness/check.sh r7-gemini-api-review-retirement`.
 
 ## Validation Requirements
 
@@ -111,6 +114,9 @@ prove the touched path:
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof, compatibility import test,
   and `scripts/harness/check.sh r7-legacy-write-freeze`;
+- Gemini API reviewer retirement: default stop guard, explicit rollback flag,
+  product provider replacement proof, and
+  `scripts/harness/check.sh r7-gemini-api-review-retirement`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 

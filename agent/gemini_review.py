@@ -38,7 +38,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_review.yaml"
 sys.path.insert(0, str(_ROOT))
 
-from legacy_compat import print_legacy_write_freeze_notice
+from legacy_compat import (  # noqa: E402
+    LEGACY_GEMINI_API_REVIEW_ENV,
+    LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE,
+    legacy_gemini_api_review_enabled,
+    print_legacy_write_freeze_notice,
+)
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # 路径参数（相对路径默认基于项目根目录）
@@ -135,7 +140,7 @@ class GeminiReviewer(BaseReviewer):
         return result
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Gemini 图表复评")
     parser.add_argument(
         "--config",
@@ -143,6 +148,15 @@ def main():
         help="配置文件路径（默认 config/gemini_review.yaml）",
     )
     args = parser.parse_args()
+
+    if not legacy_gemini_api_review_enabled():
+        print(LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use POST /api/runs/review/provider for product-owned review workflows. "
+            f"Temporary rollback: set {LEGACY_GEMINI_API_REVIEW_ENV}=1.",
+            file=sys.stderr,
+        )
+        return 2
 
     config = load_config(Path(args.config))
     print_legacy_write_freeze_notice(
@@ -152,7 +166,8 @@ def main():
     )
     reviewer = GeminiReviewer(config)
     reviewer.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

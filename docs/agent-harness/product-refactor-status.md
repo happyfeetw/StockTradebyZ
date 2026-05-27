@@ -27,8 +27,9 @@ now gives the React workstation deterministic fixture-backed browser evidence
 for the core R5 surfaces. #115 now defines R6 ownership, rollback, artifact
 backup/restore, provider evidence indexing, and a fixture-backed product API
 write proof across preselect, chart export, provider review, and archive.
-#152 now owns the R7 plan, validation gate, resource evidence, runtime
-hardening, final browser proof, and legacy retirement sequence.
+#152 now owns the R7 plan, validation gate, resource evidence, Gemini API
+reviewer retirement, runtime hardening, final browser proof, and legacy
+retirement sequence.
 
 ## Phase Status
 
@@ -41,7 +42,7 @@ hardening, final browser proof, and legacy retirement sequence.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, and runtime cancellation contract coverage define scope, browser/resource/freeze guardrails, validation, rollback, and phase order | Broader recovery/concurrency hardening and surface-by-surface retirement |
+| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, and runtime cancellation contract coverage define scope, browser/resource/freeze/reviewer guardrails, validation, rollback, and phase order | Broader recovery/concurrency hardening and remaining surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -111,6 +112,9 @@ evidence:
 - R7 legacy write freeze now marks legacy file-system writers and Streamlit
   surfaces as compatibility-only and adds a product no-read guard for legacy
   generated paths outside the explicit migration/import service.
+- R7 Gemini API reviewer retirement now stops `agent/gemini_review.py` by
+  default before loading legacy review config or writing `data/review`; rollback
+  requires `STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW=1`.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -179,7 +183,7 @@ full objective:
   cutover.
 - File-system state is still a live compatibility and migration source. Final
   legacy retirement is not complete.
-- R7 still needs explicit hardening and retirement work before legacy
+- R7 still needs explicit hardening and retirement work before remaining legacy
   file-system, Streamlit/workbench, and compatibility entrypoints can be
   disabled or removed.
 - Runtime cancellation no longer overwrites terminal runs, but broader

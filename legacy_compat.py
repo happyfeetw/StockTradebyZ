@@ -10,6 +10,15 @@ LEGACY_UI_FREEZE_NOTICE = (
     "Use the React/FastAPI product for new workflows; keep this path only for "
     "migration, parity, and rollback evidence."
 )
+LEGACY_GEMINI_API_REVIEW_ENV = "STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW"
+LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE = (
+    "R7 Gemini API reviewer retirement: agent/gemini_review.py is retired by default. "
+    f"Set {LEGACY_GEMINI_API_REVIEW_ENV}=1 only for migration, parity, or rollback checks."
+)
+
+
+def legacy_gemini_api_review_enabled() -> bool:
+    return os.environ.get(LEGACY_GEMINI_API_REVIEW_ENV) == "1"
 
 
 def print_legacy_write_freeze_notice(*, surface: str, replacement: str, writes: str) -> None:

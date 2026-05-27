@@ -54,6 +54,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   hardening, resource evidence, and legacy retirement plan for #152.
 - [r7-final-browser-proof.md](r7-final-browser-proof.md): desktop/mobile
   browser proof for R7 product shell routes and chart artifact inspection.
+- [r7-gemini-api-review-retirement.md](r7-gemini-api-review-retirement.md):
+  default retirement guard and rollback flag for the legacy Gemini API reviewer.
 - [r7-legacy-write-freeze.md](r7-legacy-write-freeze.md): compatibility-only
   notices and product no-read guard for legacy file-system writers.
 - [r7-resource-envelope.md](r7-resource-envelope.md): credential-free runtime,
@@ -71,6 +73,7 @@ scripts/harness/check.sh ui-smoke-fixture
 scripts/harness/check.sh storage-cutover-plan
 scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-browser-proof
+scripts/harness/check.sh r7-gemini-api-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh docs

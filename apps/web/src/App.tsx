@@ -2232,6 +2232,8 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         <Metric label="Turnover" value={formatNumber(row.turnover_n)} />
       </div>
 
+      <ArchiveChartEvidence row={row} />
+
       <section className="subsection">
         <h3>Evidence route</h3>
         <div className="evidence-link-grid">
@@ -2286,8 +2288,6 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         </div>
       </section>
 
-      <ArchiveChartArtifact row={row} />
-
       <section className="subsection">
         <h3>Snapshot summary</h3>
         <div className="lineage-grid">
@@ -2317,24 +2317,44 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
   )
 }
 
-function ArchiveChartArtifact({ row }: { row: ArchiveRow }) {
+function ArchiveChartEvidence({ row }: { row: ArchiveRow }) {
   const artifactId = row.chart_artifact_id
-  const isProductOwned = artifactId !== null && (!row.chart || isProductOwnedArtifactPath(row.chart))
+  const hasProductArtifact = artifactId !== null
 
-  if (!isProductOwned) {
-    if (!row.chart) return null
-    return (
-      <section className="subsection">
-        <h3>Chart artifact</h3>
-        <div className="artifact-preview-panel">
-          <div className="artifact-preview-head">
-            <ImageIcon size={17} aria-hidden="true" />
-            <div>
-              <strong>Legacy chart reference</strong>
-              <code>{row.chart}</code>
+  if (!hasProductArtifact) {
+    if (!row.chart) {
+      return (
+        <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+          <div className="evidence-asset-panel missing">
+            <div className="evidence-asset-head">
+              <ImageIcon size={18} aria-hidden="true" />
+              <div>
+                <h3>No chart linked</h3>
+                <p>Archive row is stored, but no chart artifact or legacy chart path is linked.</p>
+              </div>
+              <div className="evidence-asset-actions">
+                <span className="artifact-source-chip">Missing chart</span>
+              </div>
             </div>
           </div>
-          <p className="muted artifact-preview-note">This chart path is legacy source material and is not served by the product artifact API.</p>
+        </section>
+      )
+    }
+
+    return (
+      <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+        <div className="evidence-asset-panel legacy">
+          <div className="evidence-asset-head">
+            <ImageIcon size={18} aria-hidden="true" />
+            <div>
+              <h3>Legacy chart reference</h3>
+              <p>This path is legacy source material and is not served by the product artifact API.</p>
+            </div>
+            <div className="evidence-asset-actions">
+              <span className="artifact-source-chip">Legacy path</span>
+            </div>
+          </div>
+          <code className="evidence-asset-path">{row.chart}</code>
         </div>
       </section>
     )
@@ -2343,22 +2363,30 @@ function ArchiveChartArtifact({ row }: { row: ArchiveRow }) {
   const artifactUrl = artifactFileUrl(artifactId)
 
   return (
-    <section className="subsection">
-      <h3>Chart artifact</h3>
-      <div className="artifact-preview-panel">
-        <div className="artifact-preview-head">
-          <ImageIcon size={17} aria-hidden="true" />
+    <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+      <div className="evidence-asset-panel product">
+        <div className="evidence-asset-head">
+          <ImageIcon size={18} aria-hidden="true" />
           <div>
-            <strong>Product chart artifact</strong>
-            <code>{row.chart_artifact_id}</code>
+            <h3>Product chart evidence</h3>
+            <p>Served by the product artifact API and linked to this archive row.</p>
           </div>
-          <a className="artifact-open-link" href={artifactUrl} target="_blank" rel="noreferrer" aria-label="Open chart artifact">
-            <ExternalLink size={15} aria-hidden="true" />
-            <span>Open</span>
-          </a>
+          <div className="evidence-asset-actions">
+            <span className="status-badge succeeded">
+              <CheckCircle2 size={15} aria-hidden="true" />
+              Linked
+            </span>
+            <a className="artifact-open-link" href={artifactUrl} target="_blank" rel="noreferrer" aria-label="Open chart artifact">
+              <ExternalLink size={15} aria-hidden="true" />
+              <span>Open</span>
+            </a>
+          </div>
         </div>
-        <img className="artifact-preview-image" src={artifactUrl} alt={`${row.code} ${row.strategy} chart`} loading="lazy" />
-        {row.chart ? <p className="muted artifact-preview-note">{row.chart}</p> : null}
+        <div className="evidence-asset-meta">
+          <DataPair label="Artifact id" value={row.chart_artifact_id ?? 'Not linked'} />
+          <DataPair label="Chart path" value={row.chart ?? 'Product artifact only'} />
+        </div>
+        <img className="artifact-preview-image" src={artifactUrl} alt={`${row.code} ${row.strategy} chart evidence`} loading="lazy" />
       </div>
     </section>
   )

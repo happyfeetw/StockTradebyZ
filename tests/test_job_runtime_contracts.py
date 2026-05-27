@@ -101,6 +101,22 @@ class JobRuntimeContractTests(unittest.TestCase):
             self.assertIn("Cancellation requested", [event.message for event in repository.list_events(run.id)])
             engine.dispose()
 
+    def test_runtime_does_not_cancel_terminal_run_after_late_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+            runtime = JobRuntime(repository)
+
+            run = runtime.run_diagnostic_job()
+            late_cancelled = runtime.mark_cancelled(run.id)
+            detail = repository.get_run_detail(run.id)
+
+            self.assertEqual(late_cancelled.status, "succeeded")
+            self.assertEqual(detail.status, "succeeded")
+            self.assertNotIn("Diagnostic job cancelled", [event.message for event in detail.events])
+            engine.dispose()
+
     def test_runtime_imports_do_not_pull_heavy_legacy_modules(self) -> None:
         script = f"""
 import sys

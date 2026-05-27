@@ -28,6 +28,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   refactor work.
 - [product-refactor-charter.md](product-refactor-charter.md): scope and target
   qualities for the full product rewrite.
+- [product-refactor-status.md](product-refactor-status.md): current phase
+  status, implemented evidence, architectural gaps, and next issue queue.
 - [business-logic-spec.md](business-logic-spec.md): behavior parity and golden
   master rules for rewriting core business logic in a new stack.
 - [refactor-execution.md](refactor-execution.md): phase model and stop

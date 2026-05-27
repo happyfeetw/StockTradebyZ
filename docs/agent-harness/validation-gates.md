@@ -119,7 +119,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | --- | --- | --- |
 | R0 product charter | product-refactor-readiness + quick | scope, non-goals, and decision list |
 | R1 business spec | contracts + python | golden masters and behavior parity notes |
-| R2 target architecture | product-refactor-readiness | stack, schema, API, resource, and rollback plan |
+| R2 target architecture | product-refactor-readiness | stack, schema, API, resource, rollback plan, and status map |
 | R3 core domain rewrite | python | golden master parity tests |
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | python | fixture UI smoke and screenshot/browser notes |

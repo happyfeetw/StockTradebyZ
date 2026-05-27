@@ -1,19 +1,41 @@
 """Selection domain boundary for the product rewrite."""
 
 from .preselect import (
+    LegacyLiquidityPoolPort,
+    LegacyMarketDataPort,
+    LegacyMarketPreparationPort,
+    LegacyPickDatePort,
     LegacyPreselectExecutionPort,
+    LegacyStrategySelectorPort,
+    LiquidityPoolPort,
+    MarketDataPort,
+    MarketPreparationPort,
+    PickDatePort,
+    PreselectExecutionSettings,
     PreselectExecutionPort,
     PreselectParameters,
     PreselectResult,
     PreselectService,
     SelectionCandidate,
+    StrategySelectorPort,
 )
 
 __all__ = [
+    "LegacyLiquidityPoolPort",
+    "LegacyMarketDataPort",
+    "LegacyMarketPreparationPort",
+    "LegacyPickDatePort",
     "LegacyPreselectExecutionPort",
+    "LegacyStrategySelectorPort",
+    "LiquidityPoolPort",
+    "MarketDataPort",
+    "MarketPreparationPort",
+    "PickDatePort",
+    "PreselectExecutionSettings",
     "PreselectExecutionPort",
     "PreselectParameters",
     "PreselectResult",
     "PreselectService",
     "SelectionCandidate",
+    "StrategySelectorPort",
 ]

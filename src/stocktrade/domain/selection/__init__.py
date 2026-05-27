@@ -3,6 +3,9 @@
 from .indicators import (
     compute_body_pct,
     compute_brick_chart,
+    compute_brick_green_run,
+    compute_brick_growth,
+    compute_brick_pattern_mask,
     compute_brick_values,
     compute_daily_return,
     compute_kdj,
@@ -49,6 +52,9 @@ from .preselect import (
 __all__ = [
     "compute_body_pct",
     "compute_brick_chart",
+    "compute_brick_green_run",
+    "compute_brick_growth",
+    "compute_brick_pattern_mask",
     "compute_brick_values",
     "compute_daily_return",
     "compute_kdj",

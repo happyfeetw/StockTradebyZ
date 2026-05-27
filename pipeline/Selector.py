@@ -41,6 +41,8 @@ try:
     from stocktrade.domain.selection.indicators import (
         compute_body_pct as _product_compute_body_pct,
         compute_brick_chart as _product_compute_brick_chart,
+        compute_brick_growth as _product_compute_brick_growth,
+        compute_brick_pattern_mask as _product_compute_brick_pattern_mask,
         compute_brick_values as _product_compute_brick_values,
         compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
@@ -57,6 +59,8 @@ try:
 except ImportError:
     _product_compute_body_pct = None
     _product_compute_brick_chart = None
+    _product_compute_brick_growth = None
+    _product_compute_brick_pattern_mask = None
     _product_compute_brick_values = None
     _product_compute_daily_return = None
     _product_compute_kdj = None
@@ -684,6 +688,15 @@ class BrickPatternFilter:
     def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
         """向量化：O(N)，使用预计算 'brick' 列（优先）或实时计算。"""
         bv  = self._brick_arr(df)
+        if _product_compute_brick_pattern_mask is not None:
+            return _product_compute_brick_pattern_mask(
+                df,
+                bv,
+                daily_return_threshold=self.daily_return_threshold,
+                brick_growth_ratio=self.brick_growth_ratio,
+                min_prior_green_bars=self.min_prior_green_bars,
+            )
+
         cv  = df["close"].to_numpy(dtype=float)
 
         # 安全 shift（不用 np.roll，避免边界回绕）
@@ -707,6 +720,9 @@ class BrickPatternFilter:
     def brick_growth_arr(self, df: pd.DataFrame) -> np.ndarray:
         """每日砖型图增长倍数数组（用于 top-k 排序）。"""
         bv  = self._brick_arr(df)
+        if _product_compute_brick_growth is not None:
+            return _product_compute_brick_growth(bv)
+
         bp  = np.empty_like(bv); bp[0] = np.nan; bp[1:] = bv[:-1]
         abp = np.abs(bp)
         safe = np.where(abp > 0, abp, 1.0)   # 分母置 1 避免除零警告

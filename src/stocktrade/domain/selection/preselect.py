@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+from bisect import bisect_right
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -158,6 +160,37 @@ def _dedupe_candidates_by_code_strategy(candidates: list[Any]) -> list[Any]:
     return deduped
 
 
+def _sorted_prepared_dates(prepared: dict[str, Any]) -> list[Any]:
+    import pandas as pd
+
+    return sorted(
+        {
+            trade_date
+            for frame in prepared.values()
+            if isinstance(getattr(frame, "index", None), pd.DatetimeIndex)
+            for trade_date in frame.index
+        }
+    )
+
+
+def _top_turnover_pool_by_date(prepared: dict[str, Any], *, top_m: int) -> dict[Any, list[str]]:
+    if top_m <= 0:
+        return {}
+
+    pool: dict[Any, list[tuple[float, str]]] = defaultdict(list)
+    for code, frame in prepared.items():
+        for trade_date, turnover in frame["turnover_n"].items():
+            pool[trade_date].append((float(turnover), code))
+
+    top_codes_by_date: dict[Any, list[str]] = {}
+    for trade_date, entries in pool.items():
+        if not entries:
+            continue
+        ranked = sorted(entries, key=lambda item: item[0], reverse=True)[:top_m]
+        top_codes_by_date[trade_date] = [code for _, code in ranked]
+    return top_codes_by_date
+
+
 def _load_legacy_select_stock() -> Any:
     if str(PIPELINE_DIR) not in sys.path:
         sys.path.insert(0, str(PIPELINE_DIR))
@@ -198,12 +231,41 @@ class LegacyMarketPreparationPort:
         return preparer.prepare(raw_data)
 
 
+class ProductPickDatePort:
+    def resolve_pick_date(self, prepared: dict[str, Any], requested_pick_date: str | None) -> Any:
+        import pandas as pd
+
+        all_dates = _sorted_prepared_dates(prepared)
+        if not all_dates:
+            raise ValueError("prepared 数据中没有可用日期。")
+        if requested_pick_date is None:
+            return all_dates[-1]
+
+        target = pd.to_datetime(requested_pick_date)
+        idx = bisect_right(all_dates, target) - 1
+        if idx < 0:
+            raise ValueError(f"pick_date={requested_pick_date} 早于最早可用日期={all_dates[0].date()}")
+        return all_dates[idx]
+
+
 class LegacyPickDatePort:
     def __init__(self, module_provider: Callable[[], Any]):
         self._module_provider = module_provider
 
     def resolve_pick_date(self, prepared: dict[str, Any], requested_pick_date: str | None) -> Any:
         return self._module_provider()._resolve_pick_date(prepared, requested_pick_date)
+
+
+class ProductLiquidityPoolPort:
+    def build_pool(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        settings: PreselectExecutionSettings,
+    ) -> list[str]:
+        pool_by_date = _top_turnover_pool_by_date(prepared, top_m=settings.top_m)
+        return list(pool_by_date.get(pick_date, []))
 
 
 class LegacyLiquidityPoolPort:
@@ -265,8 +327,8 @@ class LegacyPreselectExecutionPort:
         self._module: Any | None = None
         self.market_data = market_data or LegacyMarketDataPort(lambda: self.module)
         self.market_preparation = market_preparation or LegacyMarketPreparationPort(lambda: self.module)
-        self.pick_dates = pick_dates or LegacyPickDatePort(lambda: self.module)
-        self.liquidity_pool = liquidity_pool or LegacyLiquidityPoolPort(lambda: self.module)
+        self.pick_dates = pick_dates or ProductPickDatePort()
+        self.liquidity_pool = liquidity_pool or ProductLiquidityPoolPort()
         self.strategy_selectors = strategy_selectors or LegacyStrategySelectorPort(lambda: self.module)
 
     @property

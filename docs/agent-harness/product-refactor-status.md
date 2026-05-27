@@ -38,7 +38,7 @@ product-owned source of truth for in-scope workflows.
 | R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | Retire legacy selector compatibility adapters during R7 only after product API/storage/UI cutover evidence exists |
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
-| R6 Data migration and storage cutover | Cutover plan active; migration/import tooling partial | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md` source-of-truth matrix, cutover sequence, validation, and rollback rules | Implement artifact backup/restore first, then provider evidence indexing and product-write proofs |
+| R6 Data migration and storage cutover | Cutover plan active; first artifact backup/restore slice implemented | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md` source-of-truth matrix, cutover sequence, validation, rollback rules, and artifact backup/restore API contract | Provider evidence indexing and product-write proofs |
 | R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
 
 ## Implemented Product Stack Slices
@@ -88,6 +88,10 @@ evidence:
   implementation sequence. Candidate, review, archive, chart artifact, provider
   evidence, migration, backup/restore, and rollback decisions are documented in
   `r6-storage-cutover-plan.md`.
+- Product backup/restore copies SQLite, DuckDB, and product artifact files,
+  writes `artifacts_manifest.json`, restores the configured artifact root, and
+  has an API contract proving restored SQLite artifact rows still serve files
+  through `/api/artifacts/{artifact_id}`.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -156,9 +160,9 @@ full objective:
   cutover.
 - File-system state is still a live compatibility and migration source. The
   product-owned storage cutover is not complete.
-- Product backup/restore currently protects SQLite and DuckDB, but artifact
-  file backup/restore is the first R6 implementation gap to close before
-  broader write-path cutover.
+- Provider raw evidence under `var/artifacts/review-provider/...` is protected
+  by artifact file backup/restore, but it still needs explicit SQLite artifact
+  indexing and provider-evidence lineage before final cutover.
 - Runtime cancellation and concurrency are simple and local-first; this is
   acceptable for now but must be hardened before final retirement.
 - Resource envelope, browser smoke, screenshot evidence, and legacy retirement

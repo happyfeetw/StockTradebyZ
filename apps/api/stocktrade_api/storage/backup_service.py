@@ -7,10 +7,12 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from ..schemas.backups import BackupManifest, BackupRestoreResult
+from .artifact_service import DEFAULT_ARTIFACT_ROOT
 from .run_repository import RunRepository
 from .sqlite import ROOT
 
@@ -61,6 +63,7 @@ class BackupService:
         *,
         sqlite_path: str | Path,
         duckdb_path: str | Path | None = None,
+        artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
         backup_root: str | Path = DEFAULT_BACKUP_ROOT,
         product_version: str,
         dispose_sqlite: Callable[[], None] | None = None,
@@ -68,6 +71,9 @@ class BackupService:
         self.run_repository = run_repository
         self.sqlite_path = sqlite_path
         self.duckdb_path = duckdb_path
+        self.artifact_root = Path(artifact_root).expanduser()
+        if not self.artifact_root.is_absolute():
+            self.artifact_root = ROOT / self.artifact_root
         self.backup_root = Path(backup_root).expanduser()
         if not self.backup_root.is_absolute():
             self.backup_root = ROOT / self.backup_root
@@ -92,6 +98,7 @@ class BackupService:
         sources: dict[str, str | None] = {
             "sqlite": sqlite_path.as_posix(),
             "duckdb": None,
+            "artifacts": self.artifact_root.as_posix(),
         }
 
         try:
@@ -112,8 +119,22 @@ class BackupService:
             else:
                 missing_optional.append("duckdb")
 
+            artifacts_dir = backup_dir / "artifacts"
+            artifact_entries = self._backup_artifacts(artifacts_dir, backup_dir=backup_dir)
+            if artifact_entries:
+                files["artifacts"] = _relative_to_backup(backup_dir, artifacts_dir)
             artifacts_manifest = backup_dir / "artifacts_manifest.json"
-            artifacts_manifest.write_text(json.dumps({"artifacts": []}, indent=2), encoding="utf-8")
+            artifacts_manifest.write_text(
+                json.dumps(
+                    {
+                        "artifact_root": self.artifact_root.as_posix(),
+                        "artifacts": artifact_entries,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
             files["artifacts_manifest"] = _relative_to_backup(backup_dir, artifacts_manifest)
 
             migration_versions = backup_dir / "migration_versions.json"
@@ -158,7 +179,10 @@ class BackupService:
         manifest = self._load_manifest(backup_dir)
         sqlite_source = self._required_backup_file(backup_dir, manifest, "sqlite")
         duckdb_source = self._optional_backup_file(backup_dir, manifest, "duckdb")
-        self._optional_backup_file(backup_dir, manifest, "artifacts_manifest")
+        artifacts_manifest_path = self._optional_backup_file(backup_dir, manifest, "artifacts_manifest")
+        artifacts_source = None
+        if artifacts_manifest_path is not None:
+            artifacts_source = self._optional_backup_dir(backup_dir, manifest, "artifacts")
         self._optional_backup_file(backup_dir, manifest, "migration_versions")
         duckdb_target = resolve_optional_file_path(self.duckdb_path)
         restored_at = utc_now()
@@ -184,6 +208,10 @@ class BackupService:
                     duckdb_target.unlink()
                 if "duckdb" not in missing_optional:
                     missing_optional.append("duckdb")
+
+            if artifacts_manifest_path is not None:
+                self._restore_artifacts(artifacts_source)
+                files_restored["artifacts"] = self.artifact_root.as_posix()
 
             restore_run = self.run_repository.create_run(
                 kind="restore",
@@ -217,6 +245,73 @@ class BackupService:
                     source_connection.backup(target_connection)
         except sqlite3.Error as exc:
             raise BackupError(f"failed to backup SQLite database: {exc}", status_code=500) from exc
+
+    def _backup_artifacts(self, target_root: Path, *, backup_dir: Path) -> list[dict[str, object]]:
+        artifact_root = self.artifact_root.resolve(strict=False)
+        if not artifact_root.exists():
+            return []
+        if not artifact_root.is_dir():
+            raise BackupError(f"artifact root is not a directory: {artifact_root}", status_code=422)
+        if _is_relative_to(backup_dir.resolve(strict=False), artifact_root):
+            raise BackupError("backup directory must not be inside artifact root", status_code=422)
+
+        entries: list[dict[str, object]] = []
+        for source in sorted(artifact_root.rglob("*")):
+            if source.is_symlink():
+                raise BackupError("artifact backup does not support symlink files", status_code=422)
+            if not source.is_file():
+                continue
+            relative = source.relative_to(artifact_root)
+            target = target_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            entries.append(
+                {
+                    "path": relative.as_posix(),
+                    "backup_path": _relative_to_backup(backup_dir, target),
+                    "size_bytes": source.stat().st_size,
+                }
+            )
+        return entries
+
+    def _restore_artifacts(self, backup_artifacts: Path | None) -> None:
+        artifact_root = self.artifact_root.resolve(strict=False)
+        _ensure_safe_artifact_root(artifact_root)
+
+        if backup_artifacts is not None and not backup_artifacts.is_dir():
+            raise BackupError("backup artifacts directory is not a directory", status_code=422)
+
+        artifact_root.parent.mkdir(parents=True, exist_ok=True)
+        staging_root = artifact_root.parent / f".{artifact_root.name}.restore-{uuid4().hex}"
+        previous_root = artifact_root.parent / f".{artifact_root.name}.previous-{uuid4().hex}"
+        staging_root.mkdir(parents=True, exist_ok=False)
+
+        try:
+            if backup_artifacts is not None:
+                for source in sorted(backup_artifacts.rglob("*")):
+                    if source.is_symlink():
+                        raise BackupError("artifact restore does not support symlink files", status_code=422)
+                    if not source.is_file():
+                        continue
+                    relative = source.relative_to(backup_artifacts)
+                    target = staging_root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+
+            if artifact_root.exists():
+                if not artifact_root.is_dir():
+                    raise BackupError(f"artifact root is not a directory: {artifact_root}", status_code=422)
+                artifact_root.rename(previous_root)
+            staging_root.rename(artifact_root)
+        except Exception:
+            if staging_root.exists():
+                shutil.rmtree(staging_root)
+            if previous_root.exists() and not artifact_root.exists():
+                previous_root.rename(artifact_root)
+            raise
+        finally:
+            if previous_root.exists():
+                shutil.rmtree(previous_root)
 
     def _resolve_backup_dir(self, backup_path: str | Path) -> Path:
         if not str(backup_path).strip():
@@ -256,6 +351,37 @@ class BackupService:
             raise BackupError(f"backup manifest references missing optional file: {relative}", status_code=422)
         return path
 
+    def _optional_backup_dir(self, backup_dir: Path, manifest: BackupManifest, key: str) -> Path | None:
+        relative = manifest.files.get(key)
+        if not relative:
+            return None
+        path = backup_dir / relative
+        if not path.exists():
+            raise BackupError(f"backup manifest references missing optional directory: {relative}", status_code=422)
+        if not path.is_dir():
+            raise BackupError(f"backup manifest references non-directory optional path: {relative}", status_code=422)
+        return path
+
 
 def _relative_to_backup(backup_dir: Path, path: Path) -> str:
     return path.relative_to(backup_dir).as_posix()
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _ensure_safe_artifact_root(path: Path) -> None:
+    resolved = path.resolve(strict=False)
+    forbidden = {
+        Path(resolved.anchor).resolve(strict=False),
+        ROOT.resolve(strict=False),
+        ROOT.parent.resolve(strict=False),
+        Path.home().resolve(strict=False),
+    }
+    if resolved in forbidden:
+        raise BackupError(f"refusing to replace unsafe artifact root: {resolved}", status_code=422)

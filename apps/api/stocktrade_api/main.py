@@ -72,6 +72,7 @@ def create_app(
         run_repository,
         sqlite_path=sqlite_path,
         duckdb_path=duckdb_path,
+        artifact_root=artifact_root,
         backup_root=backup_root,
         product_version=API_VERSION,
         dispose_sqlite=dispose_sqlite,

@@ -48,6 +48,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
 - [validation-gates.md](validation-gates.md): what to run for each change type.
 - [r5-ui-browser-smoke.md](r5-ui-browser-smoke.md): deterministic browser-review
   fixture and evidence checklist for #114 R5 UI/UX validation.
+- [r6-storage-cutover-plan.md](r6-storage-cutover-plan.md): source-of-truth
+  ownership, cutover sequence, validation, and rollback plan for #115.
 - [workflows.md](workflows.md): repeatable agent workflows.
 - [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.
 
@@ -58,6 +60,7 @@ scripts/harness/check.sh quick
 scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh refactor-readiness
 scripts/harness/check.sh ui-smoke-fixture
+scripts/harness/check.sh storage-cutover-plan
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts
 scripts/harness/check.sh python

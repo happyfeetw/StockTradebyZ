@@ -200,10 +200,19 @@ def create_review_provider_run(
     runtime: JobRuntime = Depends(get_job_runtime),
     review_repository: ReviewRepository = Depends(get_review_repository),
     analytics_writer: DuckDBAnalyticsWriter | None = Depends(get_analytics_writer),
-    executor: Any = Depends(get_review_provider_executor),
+    artifact_root: Path = Depends(get_artifact_root),
+    executor: Any | None = Depends(get_review_provider_executor),
 ) -> ReviewRunCreateResponse:
-    from ..services.review_provider_runs import ReviewProviderRunService, ReviewProviderValidationError
+    from ..services.review_provider_runs import ReviewProviderRunService, ReviewProviderValidationError, UnconfiguredReviewProviderExecutor
     from ..services.review_runs import ReviewRunValidationError
+
+    if executor is None:
+        if request.provider == "gemini-cli":
+            from ..services.gemini_cli_provider import GeminiCliReviewProviderExecutor
+
+            executor = GeminiCliReviewProviderExecutor(artifact_root=artifact_root)
+        else:
+            executor = UnconfiguredReviewProviderExecutor()
 
     service = ReviewProviderRunService(
         review_repository,

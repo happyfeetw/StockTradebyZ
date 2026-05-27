@@ -631,7 +631,7 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
                     "/api/runs/review/provider",
-                    json={"candidate_batch_id": "batch-history", "provider": "gemini-cli"},
+                    json={"candidate_batch_id": "batch-history", "provider": "unknown-provider"},
                 )
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("executor is not configured", response.json()["detail"])

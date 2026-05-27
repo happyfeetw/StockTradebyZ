@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
+import math
 import sys
 from bisect import bisect_right
 from collections import defaultdict
@@ -11,6 +13,7 @@ from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parents[4]
 PIPELINE_DIR = ROOT / "pipeline"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,17 @@ class StrategySelectorPort(Protocol):
         ...
 
 
+class StrategyFormulaFactoryPort(Protocol):
+    def create_b1_selector(self, **parameters: Any) -> Any:
+        ...
+
+    def create_b2_selector(self, **parameters: Any) -> Any:
+        ...
+
+    def create_brick_selector(self, **parameters: Any) -> Any:
+        ...
+
+
 def _enabled_strategies(config: dict[str, Any]) -> list[str]:
     strategies: list[str] = []
     if config.get("b1", {}).get("enabled", True):
@@ -189,6 +203,11 @@ def _top_turnover_pool_by_date(prepared: dict[str, Any], *, top_m: int) -> dict[
         ranked = sorted(entries, key=lambda item: item[0], reverse=True)[:top_m]
         top_codes_by_date[trade_date] = [code for _, code in ranked]
     return top_codes_by_date
+
+
+def _sorted_zx(m1: int, m2: int, m3: int, m4: int) -> tuple[int, int, int, int]:
+    values = sorted([int(m1), int(m2), int(m3), int(m4)])
+    return values[0], values[1], values[2], values[3]
 
 
 def _load_legacy_select_stock() -> Any:
@@ -283,6 +302,226 @@ class LegacyLiquidityPoolPort:
         return list(pool_by_date.get(pick_date, []))
 
 
+class LegacyStrategyFormulaFactoryPort:
+    def __init__(self, module_provider: Callable[[], Any]):
+        self._module_provider = module_provider
+
+    def create_b1_selector(self, **parameters: Any) -> Any:
+        return self._module_provider().B1Selector(**parameters)
+
+    def create_b2_selector(self, **parameters: Any) -> Any:
+        return self._module_provider().B2Selector(**parameters)
+
+    def create_brick_selector(self, **parameters: Any) -> Any:
+        return self._module_provider().BrickChartSelector(**parameters)
+
+
+class ProductStrategySelectorPort:
+    def __init__(self, formula_factory: StrategyFormulaFactoryPort):
+        self.formula_factory = formula_factory
+
+    def run_strategies(
+        self,
+        prepared: dict[str, Any],
+        *,
+        pick_date: Any,
+        pool_codes: list[str],
+        config: dict[str, Any],
+    ) -> list[SelectionCandidate]:
+        candidates: list[SelectionCandidate] = []
+        if config.get("b1", {}).get("enabled", True):
+            candidates.extend(self._run_b1(prepared, pick_date, pool_codes, config["b1"]))
+        if config.get("b2", {}).get("enabled", False):
+            candidates.extend(self._run_b2(prepared, pick_date, pool_codes, config["b2"], config.get("b1", {})))
+        if config.get("brick", {}).get("enabled", True):
+            candidates.extend(self._run_brick(prepared, pick_date, pool_codes, config["brick"]))
+        return candidates
+
+    def _run_b1(
+        self,
+        prepared: dict[str, Any],
+        pick_date: Any,
+        pool_codes: list[str],
+        config: dict[str, Any],
+    ) -> list[SelectionCandidate]:
+        zx_m1, zx_m2, zx_m3, zx_m4 = _sorted_zx(
+            config["zx_m1"], config["zx_m2"], config["zx_m3"], config["zx_m4"]
+        )
+        selector = self.formula_factory.create_b1_selector(
+            j_threshold=float(config["j_threshold"]),
+            j_q_threshold=float(config["j_q_threshold"]),
+            zx_m1=zx_m1,
+            zx_m2=zx_m2,
+            zx_m3=zx_m3,
+            zx_m4=zx_m4,
+        )
+
+        date_str = pick_date.strftime("%Y-%m-%d")
+        candidates: list[SelectionCandidate] = []
+        for code in pool_codes:
+            frame = prepared.get(code)
+            if frame is None or pick_date not in frame.index:
+                continue
+            try:
+                prepared_frame = selector.prepare_df(frame)
+                if selector.vec_picks_from_prepared(prepared_frame, start=pick_date, end=pick_date):
+                    row = prepared_frame.loc[pick_date]
+                    candidates.append(
+                        SelectionCandidate(
+                            code=code,
+                            date=date_str,
+                            strategy="b1",
+                            close=float(row["close"]),
+                            turnover_n=float(row["turnover_n"]),
+                        )
+                    )
+            except Exception as exc:
+                logger.debug("B1 skip %s: %s", code, exc)
+        logger.info("B1 选出: %d 只", len(candidates))
+        return candidates
+
+    def _run_b2(
+        self,
+        prepared: dict[str, Any],
+        pick_date: Any,
+        pool_codes: list[str],
+        config_b2: dict[str, Any],
+        config_b1: dict[str, Any],
+    ) -> list[SelectionCandidate]:
+        zx_m1, zx_m2, zx_m3, zx_m4 = _sorted_zx(
+            config_b1.get("zx_m1", 14),
+            config_b1.get("zx_m2", 28),
+            config_b1.get("zx_m3", 57),
+            config_b1.get("zx_m4", 114),
+        )
+        selector = self.formula_factory.create_b2_selector(
+            j_threshold=float(config_b1.get("j_threshold", 15.0)),
+            j_q_threshold=float(config_b1.get("j_q_threshold", 0.10)),
+            kdj_n=int(config_b1.get("kdj_n", 9)),
+            zx_m1=zx_m1,
+            zx_m2=zx_m2,
+            zx_m3=zx_m3,
+            zx_m4=zx_m4,
+            zxdq_span=int(config_b1.get("zxdq_span", 10)),
+            wma_short=int(config_b1.get("wma_short", 10)),
+            wma_mid=int(config_b1.get("wma_mid", 20)),
+            wma_long=int(config_b1.get("wma_long", 30)),
+            max_vol_lookback=config_b1.get("max_vol_lookback", 20),
+            b1_lookback=int(config_b2.get("b1_lookback", 2)),
+            min_return=float(config_b2.get("min_return", 0.04)),
+            min_today_body_pct=float(config_b2.get("min_today_body_pct", 0.003)),
+            j_ceiling=float(config_b2.get("j_ceiling", 55.0)),
+            require_j_turn_up=bool(config_b2.get("require_j_turn_up", True)),
+            volume_ratio_min=float(config_b2.get("volume_ratio_min", 1.0)),
+            flat_volume_ratio=float(config_b2.get("flat_volume_ratio", 0.98)),
+            min_yang_bao_yin_body_pct=float(config_b2.get("min_yang_bao_yin_body_pct", 0.003)),
+            upper_shadow_soft_limit=float(config_b2.get("upper_shadow_soft_limit", 0.15)),
+        )
+
+        date_str = pick_date.strftime("%Y-%m-%d")
+        candidates: list[SelectionCandidate] = []
+        for code in pool_codes:
+            frame = prepared.get(code)
+            if frame is None or pick_date not in frame.index:
+                continue
+            try:
+                prepared_frame = selector.prepare_df(frame)
+                if selector.vec_picks_from_prepared(prepared_frame, start=pick_date, end=pick_date):
+                    row = prepared_frame.loc[pick_date]
+                    candidates.append(
+                        SelectionCandidate(
+                            code=code,
+                            date=date_str,
+                            strategy="b2",
+                            close=float(row["close"]),
+                            turnover_n=float(row["turnover_n"]),
+                            extra={
+                                "daily_return": float(row["_b2_daily_return"]),
+                                "today_body_pct": float(row["_b2_today_body_pct"]),
+                                "volume_ratio": float(row["_b2_volume_ratio"]),
+                                "prior_b1_lag": int(row["_b2_prior_b1_lag"]),
+                                "prior_b1_j": float(row["_b2_prior_b1_j"]),
+                                "j": float(row["J"]),
+                                "j_turn_up": bool(row["_b2_j_turn_up"]),
+                                "strict_yang_bao_yin": bool(row["_b2_strict_yang_bao_yin"]),
+                                "upper_shadow_ratio": float(row["_b2_upper_shadow_ratio"]),
+                                "b2_quality_score": float(row["_b2_quality_score"]),
+                            },
+                        )
+                    )
+            except Exception as exc:
+                logger.debug("B2 skip %s: %s", code, exc)
+
+        candidates.sort(key=lambda candidate: float(candidate.extra.get("b2_quality_score", -999)), reverse=True)
+        logger.info("B2 选出: %d 只", len(candidates))
+        return candidates
+
+    def _run_brick(
+        self,
+        prepared: dict[str, Any],
+        pick_date: Any,
+        pool_codes: list[str],
+        config: dict[str, Any],
+    ) -> list[SelectionCandidate]:
+        selector = self.formula_factory.create_brick_selector(
+            daily_return_threshold=float(config.get("daily_return_threshold", 0.05)),
+            brick_growth_ratio=float(config.get("brick_growth_ratio", 1.0)),
+            min_prior_green_bars=int(config.get("min_prior_green_bars", 2)),
+            zxdq_ratio=config.get("zxdq_ratio"),
+            zxdq_span=int(config.get("zxdq_span", 10)),
+            require_zxdq_gt_zxdkx=bool(config.get("require_zxdq_gt_zxdkx", True)),
+            zxdkx_m1=int(config.get("zxdkx_m1", 14)),
+            zxdkx_m2=int(config.get("zxdkx_m2", 28)),
+            zxdkx_m3=int(config.get("zxdkx_m3", 57)),
+            zxdkx_m4=int(config.get("zxdkx_m4", 114)),
+            require_weekly_ma_bull=bool(config.get("require_weekly_ma_bull", True)),
+            wma_short=int(config.get("wma_short", 20)),
+            wma_mid=int(config.get("wma_mid", 60)),
+            wma_long=int(config.get("wma_long", 120)),
+            n=int(config.get("n", 4)),
+            m1=int(config.get("m1", 4)),
+            m2=int(config.get("m2", 6)),
+            m3=int(config.get("m3", 6)),
+            t=float(config.get("t", 4.0)),
+            shift1=float(config.get("shift1", 90.0)),
+            shift2=float(config.get("shift2", 100.0)),
+            sma_w1=int(config.get("sma_w1", 1)),
+            sma_w2=int(config.get("sma_w2", 1)),
+            sma_w3=int(config.get("sma_w3", 1)),
+        )
+
+        date_str = pick_date.strftime("%Y-%m-%d")
+        candidates: list[SelectionCandidate] = []
+        for code in pool_codes:
+            frame = prepared.get(code)
+            if frame is None or pick_date not in frame.index:
+                continue
+            try:
+                prepared_frame = selector.prepare_df(frame)
+                if selector.vec_picks_from_prepared(prepared_frame, start=pick_date, end=pick_date):
+                    row = prepared_frame.loc[pick_date]
+                    if "brick_growth" in prepared_frame.columns:
+                        brick_growth = float(row["brick_growth"])
+                    else:
+                        brick_growth = float(selector.brick_growth_on_date(prepared_frame, pick_date))
+                    candidates.append(
+                        SelectionCandidate(
+                            code=code,
+                            date=date_str,
+                            strategy="brick",
+                            close=float(row["close"]),
+                            turnover_n=float(row["turnover_n"]),
+                            brick_growth=brick_growth if math.isfinite(brick_growth) else None,
+                        )
+                    )
+            except Exception as exc:
+                logger.debug("Brick skip %s: %s", code, exc)
+
+        candidates.sort(key=lambda candidate: candidate.brick_growth or -999, reverse=True)
+        logger.info("Brick 选出: %d 只", len(candidates))
+        return candidates
+
+
 class LegacyStrategySelectorPort:
     def __init__(self, module_provider: Callable[[], Any]):
         self._module_provider = module_provider
@@ -329,7 +568,9 @@ class LegacyPreselectExecutionPort:
         self.market_preparation = market_preparation or LegacyMarketPreparationPort(lambda: self.module)
         self.pick_dates = pick_dates or ProductPickDatePort()
         self.liquidity_pool = liquidity_pool or ProductLiquidityPoolPort()
-        self.strategy_selectors = strategy_selectors or LegacyStrategySelectorPort(lambda: self.module)
+        self.strategy_selectors = strategy_selectors or ProductStrategySelectorPort(
+            LegacyStrategyFormulaFactoryPort(lambda: self.module)
+        )
 
     @property
     def module(self) -> Any:

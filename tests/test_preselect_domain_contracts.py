@@ -25,11 +25,13 @@ sys.path.insert(0, str(ROOT / "src"))
 import select_stock  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     LegacyPreselectExecutionPort,
+    LegacyStrategyFormulaFactoryPort,
     PreselectExecutionSettings,
     PreselectParameters,
     PreselectService,
     ProductLiquidityPoolPort,
     ProductPickDatePort,
+    ProductStrategySelectorPort,
 )
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.preselect import CandidateResponse, PreselectRunRequest, PreselectRunResponse  # noqa: E402
@@ -288,11 +290,91 @@ print("pipeline.select_stock" in sys.modules)
                     list(legacy_pool_by_date.get(pick_date, [])),
                 )
 
+    def test_product_strategy_selector_port_matches_legacy_strategy_dispatch(self) -> None:
+        pick_date = pd.Timestamp("2026-05-22")
+        config = {
+            "b1": {
+                "enabled": True,
+                "zx_m1": 1,
+                "zx_m2": 1,
+                "zx_m3": 1,
+                "zx_m4": 1,
+                "j_threshold": 999.0,
+                "j_q_threshold": 1.0,
+            },
+            "b2": {"enabled": True, "b1_lookback": 2},
+            "brick": {"enabled": True},
+        }
+        prepared = {
+            "000001": pd.DataFrame(
+                {
+                    "close": [12.0],
+                    "turnover_n": [71000.0],
+                    "_fixture_b1": [1],
+                    "_fixture_b2": [1],
+                    "_fixture_brick": [0],
+                    "_fixture_b2_quality_score": [110.0],
+                    "_fixture_brick_growth": [0.0],
+                },
+                index=[pick_date],
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "close": [10.0],
+                    "turnover_n": [54000.0],
+                    "_fixture_b1": [0],
+                    "_fixture_b2": [1],
+                    "_fixture_brick": [1],
+                    "_fixture_b2_quality_score": [120.0],
+                    "_fixture_brick_growth": [2.5],
+                },
+                index=[pick_date],
+            ),
+            "000003": pd.DataFrame(
+                {
+                    "close": [8.5],
+                    "turnover_n": [1000.0],
+                    "_fixture_b1": [1],
+                    "_fixture_b2": [1],
+                    "_fixture_brick": [1],
+                    "_fixture_b2_quality_score": [130.0],
+                    "_fixture_brick_growth": [3.5],
+                },
+                index=[pick_date],
+            ),
+        }
+        pool_codes = ["000001", "000002", "000003", "missing"]
+
+        with (
+            patch.object(select_stock, "B1Selector", FixtureB1Selector),
+            patch.object(select_stock, "B2Selector", FixtureB2Selector),
+            patch.object(select_stock, "BrickChartSelector", FixtureBrickSelector),
+        ):
+            port = ProductStrategySelectorPort(LegacyStrategyFormulaFactoryPort(lambda: select_stock))
+            product_candidates = port.run_strategies(
+                prepared,
+                pick_date=pick_date,
+                pool_codes=pool_codes,
+                config=config,
+            )
+            legacy_candidates = []
+            legacy_candidates.extend(select_stock.run_b1(prepared, pick_date, pool_codes, config["b1"]))
+            legacy_candidates.extend(
+                select_stock.run_b2(prepared, pick_date, pool_codes, config["b2"], config["b1"])
+            )
+            legacy_candidates.extend(select_stock.run_brick(prepared, pick_date, pool_codes, config["brick"]))
+
+        self.assertEqual(
+            [candidate.to_dict() for candidate in product_candidates],
+            [candidate.to_dict() for candidate in legacy_candidates],
+        )
+
     def test_legacy_preselect_default_uses_product_owned_date_and_pool_ports(self) -> None:
         port = LegacyPreselectExecutionPort(module_loader=lambda: SimpleNamespace())
 
         self.assertIsInstance(port.pick_dates, ProductPickDatePort)
         self.assertIsInstance(port.liquidity_pool, ProductLiquidityPoolPort)
+        self.assertIsInstance(port.strategy_selectors, ProductStrategySelectorPort)
 
     def test_legacy_port_orchestrates_named_selection_ports_and_preserves_identity_dedupe(self) -> None:
         calls: list[str] = []

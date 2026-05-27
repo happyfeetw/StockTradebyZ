@@ -22,7 +22,12 @@ _DASH = Path(__file__).parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_DASH))
 
-from legacy_compat import LEGACY_UI_FREEZE_NOTICE
+from legacy_compat import (  # noqa: E402
+    LEGACY_DASHBOARD_ENV,
+    LEGACY_DASHBOARD_RETIRED_NOTICE,
+    LEGACY_UI_FREEZE_NOTICE,
+    legacy_dashboard_enabled,
+)
 
 # ── 辅助加载 ─────────────────────────────────────────────────────────────────
 
@@ -80,6 +85,13 @@ if _css_path.exists():
                 unsafe_allow_html=True)
 
 st.warning(LEGACY_UI_FREEZE_NOTICE)
+if not legacy_dashboard_enabled():
+    st.error(LEGACY_DASHBOARD_RETIRED_NOTICE)
+    st.info(
+        "Use the React/FastAPI product for supported workflows. "
+        f"Temporary rollback: start Streamlit with {LEGACY_DASHBOARD_ENV}=1."
+    )
+    st.stop()
 
 # ── 组件导入 ─────────────────────────────────────────────────────────────────
 from components.charts import make_daily_chart, make_weekly_chart

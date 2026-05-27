@@ -100,6 +100,7 @@ For a refactor plan or implementation slice:
 ```bash
 scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh r7-retirement-plan
+scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-product-launcher

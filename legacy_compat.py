@@ -10,6 +10,15 @@ LEGACY_UI_FREEZE_NOTICE = (
     "Use the React/FastAPI product for new workflows; keep this path only for "
     "migration, parity, and rollback evidence."
 )
+LEGACY_DASHBOARD_ENV = "STOCKTRADE_ALLOW_LEGACY_DASHBOARD"
+LEGACY_DASHBOARD_RETIRED_NOTICE = (
+    "R7 dashboard retirement: dashboard/app.py is retired by default. "
+    f"Set {LEGACY_DASHBOARD_ENV}=1 only for migration, parity, or rollback checks."
+)
+
+
+def legacy_dashboard_enabled() -> bool:
+    return os.environ.get(LEGACY_DASHBOARD_ENV) == "1"
 
 
 def print_legacy_write_freeze_notice(*, surface: str, replacement: str, writes: str) -> None:

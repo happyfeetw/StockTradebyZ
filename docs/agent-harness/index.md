@@ -52,6 +52,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   ownership, cutover sequence, validation, and rollback plan for #115.
 - [r7-hardening-retirement-plan.md](r7-hardening-retirement-plan.md): runtime
   hardening, resource evidence, and legacy retirement plan for #152.
+- [r7-dashboard-retirement.md](r7-dashboard-retirement.md): default retirement
+  guard and rollback flag for the legacy Streamlit single-stock dashboard.
 - [r7-final-browser-proof.md](r7-final-browser-proof.md): desktop/mobile
   browser proof for R7 product shell routes and chart artifact inspection.
 - [r7-legacy-write-freeze.md](r7-legacy-write-freeze.md): compatibility-only
@@ -76,6 +78,7 @@ scripts/harness/check.sh refactor-readiness
 scripts/harness/check.sh ui-smoke-fixture
 scripts/harness/check.sh storage-cutover-plan
 scripts/harness/check.sh r7-retirement-plan
+scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-product-launcher

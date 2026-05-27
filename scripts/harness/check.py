@@ -37,6 +37,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r5-ui-browser-smoke.md"),
     Path("docs/agent-harness/r6-storage-cutover-plan.md"),
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
+    Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
@@ -154,6 +155,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
             "scripts/harness/check.sh r7-retirement-plan",
+            "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-legacy-write-freeze",
             "scripts/harness/check.sh r7-product-launcher",
@@ -507,6 +509,8 @@ def check_r7_retirement_plan() -> None:
             "r7-browser-proof",
             "Legacy write freeze",
             "r7-legacy-write-freeze",
+            "Dashboard retirement",
+            "r7-dashboard-retirement",
             "Product launcher",
             "r7-product-launcher",
             "Retirement PRs",
@@ -515,6 +519,52 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_dashboard_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-dashboard-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Dashboard Retirement",
+            "`dashboard/app.py` is no longer a supported product entrypoint",
+            "STOCKTRADE_ALLOW_LEGACY_DASHBOARD=1",
+            "docs/agent-harness/r7-final-browser-proof.md",
+            "r7-legacy-write-freeze",
+            "simulated trading remains out of scope",
+            "scripts/harness/check.sh r7-dashboard-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_DASHBOARD_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_DASHBOARD",
+            "LEGACY_DASHBOARD_RETIRED_NOTICE",
+            "legacy_dashboard_enabled",
+        ],
+    )
+    assert_contains(
+        "dashboard/app.py",
+        [
+            "legacy_dashboard_enabled",
+            "LEGACY_DASHBOARD_RETIRED_NOTICE",
+            "st.stop()",
+            "from components.charts import make_daily_chart",
+        ],
+    )
+    text = read("dashboard/app.py")
+    if text.index("st.stop()") > text.index("from components.charts import make_daily_chart"):
+        raise HarnessError("dashboard/app.py must stop before loading legacy chart components")
+    assert_contains(
+        "tests/test_dashboard_retirement_harness.py",
+        [
+            "test_dashboard_app_stops_before_loading_legacy_chart_surface_by_default",
+            "test_legacy_dashboard_flag_is_explicit_and_suppressed_by_default",
+        ],
+    )
+    print("[r7-dashboard-retirement] ok")
 
 
 def check_r7_runtime_recovery() -> None:
@@ -774,6 +824,7 @@ def parse_args() -> argparse.Namespace:
             "ui-smoke-fixture",
             "storage-cutover-plan",
             "r7-retirement-plan",
+            "r7-dashboard-retirement",
             "r7-browser-proof",
             "r7-legacy-write-freeze",
             "r7-product-launcher",
@@ -806,6 +857,8 @@ def main() -> int:
             check_storage_cutover_plan()
         elif args.gate == "r7-retirement-plan":
             check_r7_retirement_plan()
+        elif args.gate == "r7-dashboard-retirement":
+            check_r7_dashboard_retirement()
         elif args.gate == "r7-browser-proof":
             check_r7_browser_proof()
         elif args.gate == "r7-legacy-write-freeze":

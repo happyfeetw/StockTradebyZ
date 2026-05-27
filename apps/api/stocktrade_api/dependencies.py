@@ -51,12 +51,7 @@ def get_artifact_root(request: Request) -> Path:
 
 
 def get_review_provider_executor(request: Request):
-    executor = getattr(request.app.state, "review_provider_executor", None)
-    if executor is not None:
-        return executor
-    from .services.review_provider_runs import UnconfiguredReviewProviderExecutor
-
-    return UnconfiguredReviewProviderExecutor()
+    return getattr(request.app.state, "review_provider_executor", None)
 
 
 def get_preselect_service():

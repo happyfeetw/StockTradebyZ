@@ -27,6 +27,7 @@ import './App.css'
 import {
   artifactFileUrl,
   cancelRun,
+  createArchiveRun,
   createDiagnosticRun,
   createPreselectRun,
   dryRunLegacyImport,
@@ -174,6 +175,23 @@ function CandidatesView() {
     queryFn: () => getCandidate(activeCandidateId as number),
     enabled: typeof activeCandidateId === 'number',
   })
+  const archiveBatchMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) => {
+      if (!batch.latest_review_run_id) {
+        throw new Error('Selected batch has no review run to archive')
+      }
+      return createArchiveRun({
+        candidate_batch_id: batch.id,
+        review_run_id: batch.latest_review_run_id,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
+    },
+  })
 
   const hasFilters = Object.values(filters).some((value) => value.trim())
 
@@ -228,18 +246,43 @@ function CandidatesView() {
                 : `${candidateBatchesQuery.data?.total ?? 0} batches${activeBatch ? `, selected ${activeBatch.pick_date}` : ''}`}
             </p>
           </div>
-          {activeBatchId ? (
-            <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
-              <XCircle size={17} aria-hidden="true" />
-              <span>Clear batch</span>
-            </button>
-          ) : null}
+          <div className="button-row">
+            {activeBatch ? (
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => archiveBatchMutation.mutate(activeBatch)}
+                disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
+              >
+                {archiveBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Archive size={17} aria-hidden="true" />}
+                <span>Archive selected</span>
+              </button>
+            ) : null}
+            {activeBatchId ? (
+              <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
+                <XCircle size={17} aria-hidden="true" />
+                <span>Clear batch</span>
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {candidateBatchesQuery.isError ? (
           <div className="alert compact-alert" role="alert">
             <ShieldAlert size={18} aria-hidden="true" />
             <span>{errorText(candidateBatchesQuery.error)}</span>
+          </div>
+        ) : null}
+        {archiveBatchMutation.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(archiveBatchMutation.error)}</span>
+          </div>
+        ) : null}
+        {archiveBatchMutation.isSuccess ? (
+          <div className="alert success-alert compact-alert" role="status">
+            <CheckCircle2 size={18} aria-hidden="true" />
+            <span>Archive run {archiveBatchMutation.data.run.id} created from {archiveBatchMutation.data.snapshot.review_run_id}.</span>
           </div>
         ) : null}
 

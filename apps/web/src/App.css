@@ -232,6 +232,12 @@ h3 {
   border: 1px solid var(--danger-line);
 }
 
+.alert.success-alert {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: var(--success-line);
+}
+
 .workspace-grid {
   margin-top: 18px;
   display: grid;

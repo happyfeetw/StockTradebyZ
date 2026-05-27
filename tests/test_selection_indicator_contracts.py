@@ -31,6 +31,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
+    compute_zxdq_ratio_mask,
 )
 
 
@@ -304,6 +305,21 @@ def reference_compute_zx_lines(
         + close.rolling(m4, min_periods=m4).mean()
     ) / 4.0
     return zxdq, zxdkx
+
+
+def reference_compute_zxdq_ratio_mask(
+    frame: pd.DataFrame,
+    zxdq_values: np.ndarray | pd.Series,
+    *,
+    zxdq_ratio: float = 1.0,
+) -> np.ndarray:
+    zxdq = np.asarray(zxdq_values, dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    return (
+        np.isfinite(zxdq)
+        & (zxdq > 0)
+        & (close < zxdq * zxdq_ratio)
+    )
 
 
 def reference_compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
@@ -745,6 +761,39 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         self.assertEqual(zxdq.tolist(), [1.0, 2.0, 5.0])
         self.assertEqual(zxdkx.tolist(), [3.0, 4.0, 99.0])
+
+    def test_product_zxdq_ratio_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"close": [9.0, 10.0, 11.0, 8.0, 7.0]})
+        zxdq = np.array([10.0, 10.0, 10.0, 0.0, np.nan])
+
+        actual = compute_zxdq_ratio_mask(frame, zxdq, zxdq_ratio=1.0)
+        expected = reference_compute_zxdq_ratio_mask(frame, zxdq, zxdq_ratio=1.0)
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([True, False, False, False, False]))
+
+    def test_legacy_selector_zxdq_ratio_filter_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame({"close": [9.0, 10.0, 11.0], "zxdq": [10.0, 10.0, 10.0]})
+
+        def fake_product_compute_zxdq_ratio_mask(
+            input_frame: pd.DataFrame,
+            zxdq_values: np.ndarray,
+            *,
+            zxdq_ratio: float = 1.0,
+        ) -> np.ndarray:
+            self.assertIs(input_frame, frame)
+            np.testing.assert_allclose(zxdq_values, np.array([10.0, 10.0, 10.0]))
+            self.assertEqual(zxdq_ratio, 0.95)
+            return np.array([False, True, False])
+
+        with patch.object(
+            selector_module,
+            "_product_compute_zxdq_ratio_mask",
+            fake_product_compute_zxdq_ratio_mask,
+        ):
+            actual = selector_module.ZXDQRatioFilter(zxdq_ratio=0.95).vec_mask(frame)
+
+        np.testing.assert_array_equal(actual, np.array([False, True, False]))
 
     def test_product_weekly_close_matches_reference_formula_for_datetime_index(self) -> None:
         frame = pd.DataFrame(

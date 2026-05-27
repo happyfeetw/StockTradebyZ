@@ -55,6 +55,7 @@ try:
         compute_weekly_close as _product_compute_weekly_close,
         compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
         compute_zx_lines as _product_compute_zx_lines,
+        compute_zxdq_ratio_mask as _product_compute_zxdq_ratio_mask,
     )
 except ImportError:
     _product_compute_body_pct = None
@@ -73,6 +74,7 @@ except ImportError:
     _product_compute_weekly_close = None
     _product_compute_weekly_ma_bull = None
     _product_compute_zx_lines = None
+    _product_compute_zxdq_ratio_mask = None
 
 # =============================================================================
 # Numba 加速核心函数
@@ -757,6 +759,9 @@ class ZXDQRatioFilter:
 
     def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
         zxdq_v  = self._zxdq_arr(df)
+        if _product_compute_zxdq_ratio_mask is not None:
+            return _product_compute_zxdq_ratio_mask(df, zxdq_v, zxdq_ratio=self.zxdq_ratio)
+
         close_v = df["close"].to_numpy(dtype=float)
         return (
             np.isfinite(zxdq_v)

@@ -18,6 +18,7 @@ from .indicators import (
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
+    compute_zxdq_ratio_mask,
 )
 from .preselect import (
     LegacyLiquidityPoolPort,
@@ -67,6 +68,7 @@ __all__ = [
     "compute_weekly_close",
     "compute_weekly_ma_bull",
     "compute_zx_lines",
+    "compute_zxdq_ratio_mask",
     "LegacyLiquidityPoolPort",
     "LegacyMarketDataPort",
     "LegacyMarketPreparationPort",

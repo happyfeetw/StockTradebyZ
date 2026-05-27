@@ -18,15 +18,15 @@ R6. The remaining work is still substantial because the final goal requires a
 product-quality UI, product-owned storage cutover, core business logic rewritten
 behind parity tests, and legacy path retirement.
 
-Default next phase focus: R4 backend runtime/API contract completion, tracked
-by #113.
+Default next phase focus: R5 React workstation UI/UX productization, tracked
+by #114.
 
 Rationale: #112 has moved strategy selection behavior behind product-owned
 domain helpers, ports, and parity tests. The remaining selector classes are
-compatibility adapters/fallbacks, not the source of product-owned formulas. The
-next blocking surface is backend contract coverage for settings, strategy
-metadata, and analytics summaries before UI and storage cutover work can rely
-on a complete product API.
+compatibility adapters/fallbacks, not the source of product-owned formulas. #113
+has added product settings read/write contracts, strategy metadata, and
+DuckDB-backed strategy summary contracts, so the next blocking surface is the
+R5 workstation UI that consumes those APIs.
 
 ## Phase Status
 
@@ -36,7 +36,7 @@ on a complete product API.
 | R1 Business logic specification | Partial and active | #26, `tests/fixtures/golden_master/`, `tests/test_golden_master_contracts.py` | Add parity fixtures before each remaining domain rewrite |
 | R2 Target architecture and data model | Baseline complete, needs drift control | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep this file and architecture design in sync with implementation |
 | R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | Retire legacy selector compatibility adapters during R7 only after product API/storage/UI cutover evidence exists |
-| R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings/strategy/analytics read contracts | #113 still needs any write-side settings decisions before it can close |
+| R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Scaffold plus workflow views | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109 | #114 must productize IA, dense tables, chart evidence, and state coverage |
 | R6 Data migration and storage cutover | Migration/import tooling partial | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96 | #115 must define and execute source-of-truth cutover for in-scope workflows |
 | R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
@@ -65,9 +65,9 @@ evidence:
   chart lineage.
 - Product chart export workflow that creates both compatibility `code_day.jpg`
   chart artifacts and strategy-scoped `code_strategy_day.jpg` artifacts.
-- Product backend read contracts for safe local settings metadata, strategy
-  metadata, and DuckDB-backed strategy summary analytics are exposed through
-  FastAPI for the future React workstation.
+- Product backend contracts for safe local settings metadata, SQLite-backed
+  product preferences, strategy metadata, and DuckDB-backed strategy summary
+  analytics are exposed through FastAPI for the future React workstation.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -127,8 +127,9 @@ full objective:
 
 - Legacy selector compatibility adapters still exist. Retiring them is an R7
   task after parity, migration, UI smoke, and rollback evidence exist.
-- Backend route coverage is incomplete for settings, strategy metadata, and
-  analytics summary workflows named in the target architecture.
+- Backend route coverage for the named #113 settings, strategy metadata, and
+  analytics summary workflows has landed; broader R4 hardening should now be
+  driven by concrete R5/R6 workflow gaps instead of speculative endpoints.
 - The frontend has a usable scaffold but not yet the final product-grade
   workstation UI/UX quality bar.
 - File-system state is still a live compatibility and migration source. The
@@ -142,17 +143,14 @@ full objective:
 
 Use these issues unless a newer issue supersedes them:
 
-1. #113: R4 add product settings, strategy metadata, and analytics summary API
-   contracts.
-2. #114: R5 productize React workstation UI information architecture and core
+1. #114: R5 productize React workstation UI information architecture and core
    surfaces.
-3. #115: R6 define and execute product storage cutover plan for in-scope
+2. #115: R6 define and execute product storage cutover plan for in-scope
    workflows.
 
-The default next issue is #113 because #112 has isolated current strategy
-selection behavior behind parity-tested product-domain helpers and adapters.
-Backend settings, strategy metadata, and analytics summary contracts are now
-the next product-surface blocker before deeper UI/storage cutover work.
+The default next issue is #114 because #113 has supplied the backend settings,
+strategy metadata, and analytics summary contracts that the R5 workstation UI
+needs to consume.
 
 ## Completion Boundary
 

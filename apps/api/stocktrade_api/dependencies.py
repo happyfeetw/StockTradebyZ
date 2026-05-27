@@ -12,6 +12,7 @@ from .storage.duckdb import DuckDBAnalyticsReader, DuckDBAnalyticsWriter
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
+from .storage.settings_repository import SettingsRepository
 
 
 def get_run_repository(request: Request) -> RunRepository:
@@ -48,6 +49,10 @@ def get_backup_service(request: Request) -> BackupService:
 
 def get_migration_repository(request: Request) -> MigrationRepository:
     return request.app.state.migration_repository
+
+
+def get_settings_repository(request: Request) -> SettingsRepository:
+    return request.app.state.settings_repository
 
 
 def get_artifact_root(request: Request) -> Path:

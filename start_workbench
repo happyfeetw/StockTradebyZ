@@ -26,7 +26,7 @@ if [ ! -x ".venv/bin/streamlit" ]; then
   exit 1
 fi
 
-echo "[WARN] R7 legacy write freeze: start_workbench is compatibility-only; use the React/FastAPI product for new workflows." >&2
+echo "[WARN] R7 legacy write freeze: start_workbench is compatibility-only; use ./start_product for React/FastAPI workflows." >&2
 
 exec .venv/bin/streamlit run workbench/app.py \
   --server.port 8601 \

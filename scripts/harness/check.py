@@ -41,6 +41,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-gemini-api-review-retirement.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
+    Path("docs/agent-harness/r7-preselect-cli-retirement.md"),
     Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
     Path("docs/agent-harness/r7-workbench-retirement.md"),
@@ -162,6 +163,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-gemini-api-review-retirement",
             "scripts/harness/check.sh r7-legacy-write-freeze",
+            "scripts/harness/check.sh r7-preselect-cli-retirement",
             "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
             "scripts/harness/check.sh r7-workbench-retirement",
@@ -515,6 +517,8 @@ def check_r7_retirement_plan() -> None:
             "r7-browser-proof",
             "Legacy write freeze",
             "r7-legacy-write-freeze",
+            "Preselect CLI retirement",
+            "r7-preselect-cli-retirement",
             "Gemini API reviewer retirement",
             "r7-gemini-api-review-retirement",
             "Dashboard retirement",
@@ -530,6 +534,58 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_preselect_cli_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-preselect-cli-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Preselect CLI Retirement",
+            "`pipeline.cli preselect`",
+            "POST /api/runs/preselect",
+            "STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1",
+            "data/candidates",
+            "candidates_latest.json",
+            "simulated trading logic, which remains out of scope",
+            "scripts/harness/check.sh r7-preselect-cli-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_PRESELECT_CLI_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI",
+            "LEGACY_PRESELECT_CLI_RETIRED_NOTICE",
+            "legacy_preselect_cli_enabled",
+        ],
+    )
+    assert_contains(
+        "pipeline/cli.py",
+        [
+            "legacy_preselect_cli_enabled",
+            "LEGACY_PRESELECT_CLI_RETIRED_NOTICE",
+            "POST /api/runs/preselect",
+            "raise SystemExit(2)",
+            "save_candidates(",
+        ],
+    )
+    text = read("pipeline/cli.py")
+    guard_index = text.index("if not legacy_preselect_cli_enabled()")
+    for needle in ("run_preselect(", "save_candidates("):
+        if guard_index > text.index(needle, guard_index):
+            raise HarnessError(f"pipeline/cli.py must stop before {needle}")
+    assert_contains(
+        "tests/test_preselect_cli_retirement_harness.py",
+        [
+            "test_preselect_cli_exits_before_legacy_execution_by_default",
+            "test_preselect_cli_guard_runs_before_config_load_and_candidate_write",
+            "test_preselect_cli_rollback_flag_is_explicit_and_suppressed_by_default",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_preselect_cli_retirement_harness"])
+    print("[r7-preselect-cli-retirement] ok")
 
 
 def check_r7_gemini_api_review_retirement() -> None:
@@ -987,6 +1043,7 @@ def parse_args() -> argparse.Namespace:
             "r7-browser-proof",
             "r7-gemini-api-review-retirement",
             "r7-legacy-write-freeze",
+            "r7-preselect-cli-retirement",
             "r7-chart-export-retirement",
             "r7-product-launcher",
             "r7-workbench-retirement",
@@ -1027,6 +1084,8 @@ def main() -> int:
             check_r7_gemini_api_review_retirement()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
+        elif args.gate == "r7-preselect-cli-retirement":
+            check_r7_preselect_cli_retirement()
         elif args.gate == "r7-chart-export-retirement":
             check_r7_chart_export_retirement()
         elif args.gate == "r7-product-launcher":

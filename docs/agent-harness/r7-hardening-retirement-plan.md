@@ -34,7 +34,7 @@ Out of scope:
 
 | Surface | Current Role | R7 Decision | Required Proof Before Retirement |
 | --- | --- | --- | --- |
-| `pipeline/cli.py` | Legacy preselect CLI writes `data/candidates/` | Freeze as compatibility CLI, then retire after product API run proof covers local workflow docs | Golden parity, product preselect API proof, rollback note |
+| `pipeline/cli.py` | Legacy preselect CLI writes `data/candidates/` | Retire by default behind explicit rollback flag | Golden parity, product preselect API proof, rollback note |
 | `pipeline/pipeline_io.py` | Candidate JSON writer/reader for `candidates_latest.json` | Keep import/read compatibility; block new product writes from depending on it | Legacy import verify, product UI/API no-read proof |
 | `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Retire by default behind explicit rollback flag | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
@@ -98,6 +98,10 @@ Out of scope:
      product replacement proof.
    - Chart export retirement is guarded by
      `scripts/harness/check.sh r7-chart-export-retirement`.
+   - Preselect CLI retirement uses
+     `docs/agent-harness/r7-preselect-cli-retirement.md` and
+     `scripts/harness/check.sh r7-preselect-cli-retirement` for the legacy
+     `data/candidates` writer.
    - Do not combine paper-trading changes with product retirement work.
    - Gemini API reviewer retirement uses
      `docs/agent-harness/r7-gemini-api-review-retirement.md` and
@@ -137,6 +141,9 @@ prove the touched path:
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof, compatibility import test,
   and `scripts/harness/check.sh r7-legacy-write-freeze`;
+- preselect CLI retirement: default stop guard, explicit rollback flag, product
+  preselect replacement proof, and
+  `scripts/harness/check.sh r7-preselect-cli-retirement`;
 - Gemini API reviewer retirement: default stop guard, explicit rollback flag,
   product provider replacement proof, and
   `scripts/harness/check.sh r7-gemini-api-review-retirement`;

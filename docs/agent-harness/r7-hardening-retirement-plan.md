@@ -63,6 +63,9 @@ Out of scope:
    - Capture credential-free fixture evidence for API startup, product workflow
      runtime, memory envelope, artifact size, and SQLite/DuckDB growth.
    - Keep thresholds conservative and local-first.
+   - Use `docs/agent-harness/r7-resource-envelope.md` and
+     `scripts/harness/check.sh r7-resource-envelope` as the reproducible
+     evidence path.
 
 4. Final browser proof.
    - Use deterministic fixtures, not live Tushare or Gemini.
@@ -98,7 +101,7 @@ prove the touched path:
 
 - runtime hardening: targeted job lifecycle/cancellation tests plus `quick`;
 - resource evidence: fixture command output or checked-in report with
-  reproducible command;
+  reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and
   no-overflow notes;
 - legacy write freeze: product API no-read proof and compatibility import test;

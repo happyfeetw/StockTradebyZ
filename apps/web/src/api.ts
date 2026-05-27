@@ -1,5 +1,9 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+export function artifactFileUrl(artifactId: string): string {
+  return `${API_BASE}/api/artifacts/${encodeURIComponent(artifactId)}`
+}
+
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
 export type RunKind = 'preselect' | 'review' | 'archive' | 'legacy_import' | 'backup' | 'restore' | 'diagnostic'
 

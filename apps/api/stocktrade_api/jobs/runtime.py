@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from ..storage.run_repository import TERMINAL_STATUSES, RunRepository
@@ -24,6 +25,10 @@ __all__ = ["JobRuntime"]
 class JobRuntime:
     def __init__(self, repository: RunRepository):
         self.repository = repository
+        self._workflow_lock = RLock()
+
+    def recover_interrupted_runs(self, *, reason: str = "FastAPI startup recovery") -> list[Run]:
+        return self.repository.recover_interrupted_active_runs(reason=reason)
 
     def queue_diagnostic_job(self) -> Run:
         run = self.repository.create_run(
@@ -34,6 +39,10 @@ class JobRuntime:
         return run
 
     def run_diagnostic_job(self, *, fail: bool = False) -> Run:
+        with self._workflow_lock:
+            return self._run_diagnostic_job(fail=fail)
+
+    def _run_diagnostic_job(self, *, fail: bool = False) -> Run:
         run = self.queue_diagnostic_job()
         step = self.repository.add_step(run.id, name="diagnostic")
         self.repository.transition_run(run.id, status="running")
@@ -69,6 +78,16 @@ class JobRuntime:
         )
 
     def run_preselect_job(
+        self,
+        parameters: "PreselectParameters",
+        *,
+        service: "PreselectService",
+        analytics_writer: "DuckDBAnalyticsWriter | None" = None,
+    ) -> tuple[Run, CandidateBatch, "PreselectResult"]:
+        with self._workflow_lock:
+            return self._run_preselect_job(parameters, service=service, analytics_writer=analytics_writer)
+
+    def _run_preselect_job(
         self,
         parameters: "PreselectParameters",
         *,
@@ -121,6 +140,15 @@ class JobRuntime:
         *,
         service: "ReviewRunService",
     ) -> tuple[Run, "CreatedReviewRun"]:
+        with self._workflow_lock:
+            return self._run_review_job(request, service=service)
+
+    def _run_review_job(
+        self,
+        request: "ReviewRunCreateRequest",
+        *,
+        service: "ReviewRunService",
+    ) -> tuple[Run, "CreatedReviewRun"]:
         run = self.repository.create_run(
             kind="review",
             summary={
@@ -158,6 +186,15 @@ class JobRuntime:
             raise
 
     def run_archive_job(
+        self,
+        request: "ArchiveRunCreateRequest",
+        *,
+        service: "ArchiveRunService",
+    ) -> tuple[Run, "CreatedArchive"]:
+        with self._workflow_lock:
+            return self._run_archive_job(request, service=service)
+
+    def _run_archive_job(
         self,
         request: "ArchiveRunCreateRequest",
         *,
@@ -201,6 +238,15 @@ class JobRuntime:
             raise
 
     def run_chart_export_job(
+        self,
+        request: "ChartExportRunCreateRequest",
+        *,
+        service: "ChartExportRunService",
+    ) -> tuple[Run, "CreatedChartExport"]:
+        with self._workflow_lock:
+            return self._run_chart_export_job(request, service=service)
+
+    def _run_chart_export_job(
         self,
         request: "ChartExportRunCreateRequest",
         *,

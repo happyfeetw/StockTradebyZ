@@ -40,6 +40,7 @@ def create_app(
     backup_root: str | Path = DEFAULT_BACKUP_ROOT,
     artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
     session_factory: sessionmaker[Session] | None = None,
+    recover_on_create: bool = False,
 ) -> FastAPI:
     app = FastAPI(title=API_TITLE, version=API_VERSION)
     sqlite_engine: Engine | None = None
@@ -77,7 +78,11 @@ def create_app(
         product_version=API_VERSION,
         dispose_sqlite=dispose_sqlite,
     )
-    app.state.job_runtime = JobRuntime(run_repository)
+    job_runtime = JobRuntime(run_repository)
+    app.state.job_runtime = job_runtime
+    app.state.recovered_runs = []
+    if recover_on_create:
+        app.state.recovered_runs = job_runtime.recover_interrupted_runs()
     app.state.review_provider_executor = None
     app.state.session_factory = session_factory
     app.state.sqlite_path = sqlite_path
@@ -97,6 +102,10 @@ def create_app(
     app.include_router(reviews_router, prefix="/api")
     app.include_router(archive_router, prefix="/api")
     app.include_router(migrations_router, prefix="/api")
+
+    @app.on_event("startup")
+    def recover_runtime_state() -> None:
+        app.state.recovered_runs = job_runtime.recover_interrupted_runs()
 
     @app.on_event("shutdown")
     def shutdown_storage() -> None:

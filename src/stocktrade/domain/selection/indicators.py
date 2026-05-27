@@ -26,6 +26,27 @@ def _kdj_core(rsv: np.ndarray) -> tuple:
     return k, d, j
 
 
+@_njit(cache=True)
+def _max_volume_not_bearish_core(
+    volume: np.ndarray,
+    open_: np.ndarray,
+    close: np.ndarray,
+    lookback: int,
+) -> np.ndarray:
+    length = len(volume)
+    mask = np.zeros(length, dtype=np.bool_)
+    for i in range(length):
+        start = max(0, i - lookback + 1)
+        max_volume = volume[start]
+        max_index = start
+        for j in range(start + 1, i + 1):
+            if volume[j] > max_volume:
+                max_volume = volume[j]
+                max_index = j
+        mask[i] = close[max_index] >= open_[max_index]
+    return mask
+
+
 def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     if frame.empty:
         return frame.assign(K=np.nan, D=np.nan, J=np.nan)
@@ -36,6 +57,15 @@ def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
 
     k, d, j = _kdj_core(rsv)
     return frame.assign(K=k, D=d, J=j)
+
+
+def compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
+    return _max_volume_not_bearish_core(
+        frame["volume"].to_numpy(dtype=np.float64),
+        frame["open"].to_numpy(dtype=np.float64),
+        frame["close"].to_numpy(dtype=np.float64),
+        lookback,
+    )
 
 
 def compute_zx_lines(

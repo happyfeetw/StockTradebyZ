@@ -2,6 +2,7 @@
 
 from .indicators import (
     compute_kdj,
+    compute_max_volume_not_bearish,
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
@@ -38,6 +39,7 @@ from .preselect import (
 
 __all__ = [
     "compute_kdj",
+    "compute_max_volume_not_bearish",
     "compute_weekly_close",
     "compute_weekly_ma_bull",
     "compute_zx_lines",

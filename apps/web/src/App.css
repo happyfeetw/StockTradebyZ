@@ -672,7 +672,7 @@ button {
 }
 
 .candidate-list {
-  margin-top: 14px;
+  margin-top: 10px;
   display: grid;
   gap: 8px;
 }
@@ -1055,23 +1055,80 @@ button {
 }
 
 .review-list {
-  margin-top: 14px;
+  margin-top: 10px;
   display: grid;
   gap: 8px;
 }
 
 .archive-snapshot-list,
 .archive-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.list-summary-chips {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.list-summary-chip {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.list-summary-chip.selected {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-color: var(--primary-line);
+}
+
+.list-summary-chip.filtered {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.dense-list-header {
   margin-top: 14px;
   display: grid;
   gap: 8px;
+  padding: 0 11px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dense-list-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-result-header,
+.candidate-row {
+  grid-template-columns: minmax(132px, 0.98fr) minmax(96px, 0.68fr) minmax(86px, 0.58fr) minmax(96px, 0.7fr) minmax(104px, 0.74fr);
 }
 
 .candidate-row {
   width: 100%;
-  min-height: 112px;
+  min-height: 98px;
   display: grid;
-  grid-template-columns: minmax(132px, 0.95fr) repeat(4, minmax(92px, 0.72fr));
   align-items: stretch;
   gap: 8px;
   padding: 11px;
@@ -1080,13 +1137,17 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+}
+
+.review-result-header,
+.review-row {
+  grid-template-columns: minmax(132px, 0.92fr) minmax(112px, 0.68fr) minmax(86px, 0.52fr) minmax(82px, 0.5fr) minmax(104px, 0.64fr);
 }
 
 .review-row {
   width: 100%;
-  min-height: 112px;
+  min-height: 98px;
   display: grid;
-  grid-template-columns: minmax(132px, 0.9fr) minmax(104px, 0.62fr) repeat(3, minmax(92px, 0.72fr));
   align-items: stretch;
   gap: 8px;
   padding: 11px;
@@ -1097,11 +1158,15 @@ button {
   cursor: pointer;
 }
 
+.archive-result-header,
+.archive-row {
+  grid-template-columns: minmax(140px, 0.95fr) minmax(112px, 0.7fr) minmax(76px, 0.48fr) minmax(88px, 0.55fr);
+}
+
 .archive-row {
   width: 100%;
-  min-height: 112px;
+  min-height: 98px;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(112px, 0.68fr);
   align-items: stretch;
   gap: 8px;
   padding: 11px;
@@ -1348,6 +1413,44 @@ button {
 
 .candidate-cell .numeric {
   font-variant-numeric: tabular-nums;
+}
+
+.row-lineage-strip {
+  min-width: 0;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+.row-lineage-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.row-lineage-item span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.row-lineage-item strong {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-lineage-item strong.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .strategy-chip {
@@ -2123,6 +2226,14 @@ code {
     justify-content: flex-start;
   }
 
+  .list-summary-chips {
+    justify-content: flex-start;
+  }
+
+  .dense-list-header {
+    display: none;
+  }
+
   .run-row {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -2164,6 +2275,10 @@ code {
 
   .archive-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row-lineage-strip {
+    grid-template-columns: 1fr;
   }
 
   .candidate-row-head,

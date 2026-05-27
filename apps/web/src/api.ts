@@ -253,6 +253,25 @@ export interface ReviewDetailResponse {
   review: Review
 }
 
+export interface ReviewProviderRunCreateRequest {
+  candidate_batch_id: string
+  provider: string
+  reviewer?: string
+  min_score?: number
+  classic_pattern_config?: Record<string, unknown>
+  codes?: string[]
+  strategies?: string[]
+  require_charts?: boolean
+  provider_config?: Record<string, unknown>
+}
+
+export interface ReviewRunCreateResponse {
+  run: RunSummary
+  review_run: ReviewRun
+  reviews: Review[]
+  recommendations: Recommendation[]
+}
+
 export interface ReviewFilters {
   pick_date?: string
   run_id?: string
@@ -562,6 +581,13 @@ export function listReviews(filters: ReviewFilters = {}): Promise<ReviewListResp
 
 export function getReview(reviewId: number): Promise<ReviewDetailResponse> {
   return request<ReviewDetailResponse>(`/api/reviews/${reviewId}`)
+}
+
+export function createReviewProviderRun(payload: ReviewProviderRunCreateRequest): Promise<ReviewRunCreateResponse> {
+  return request<ReviewRunCreateResponse>('/api/runs/review/provider', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function listArchiveSnapshots(filters: ArchiveSnapshotFilters = {}): Promise<ArchiveSnapshotListResponse> {

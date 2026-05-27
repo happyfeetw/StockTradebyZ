@@ -31,6 +31,7 @@ import {
   createChartExportRun,
   createDiagnosticRun,
   createPreselectRun,
+  createReviewProviderRun,
   dryRunLegacyImport,
   getArchiveRow,
   getCandidate,
@@ -198,6 +199,23 @@ function CandidatesView() {
       queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
     },
   })
+  const reviewBatchMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) =>
+      createReviewProviderRun({
+        candidate_batch_id: batch.id,
+        provider: 'gemini-cli',
+        require_charts: true,
+        provider_config: {
+          skip_existing: true,
+        },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
+      queryClient.invalidateQueries({ queryKey: ['review'] })
+    },
+  })
 
   const hasFilters = Object.values(filters).some((value) => value.trim())
 
@@ -205,6 +223,7 @@ function CandidatesView() {
     const nextFilters = { ...filters, [key]: value }
     archiveBatchMutation.reset()
     chartExportMutation.reset()
+    reviewBatchMutation.reset()
     setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
   }
@@ -213,6 +232,7 @@ function CandidatesView() {
     const nextFilters = emptyCandidateFilters()
     archiveBatchMutation.reset()
     chartExportMutation.reset()
+    reviewBatchMutation.reset()
     setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
   }
@@ -220,6 +240,7 @@ function CandidatesView() {
   function selectBatch(batch: CandidateBatchSummary) {
     archiveBatchMutation.reset()
     chartExportMutation.reset()
+    reviewBatchMutation.reset()
     const nextFilters = {
       ...filters,
       batch_id: batch.id,
@@ -228,6 +249,14 @@ function CandidatesView() {
     }
     setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
+  }
+
+  function runGeminiReview(batch: CandidateBatchSummary) {
+    const confirmed = window.confirm(
+      `Run Gemini CLI review for ${batch.pick_date} (${batch.candidate_count} candidates)? This may consume Gemini quota.`
+    )
+    if (!confirmed) return
+    reviewBatchMutation.mutate(batch)
   }
 
   return (
@@ -276,6 +305,15 @@ function CandidatesView() {
                 <button
                   type="button"
                   className="action-button secondary"
+                  onClick={() => runGeminiReview(activeBatch)}
+                  disabled={activeBatch.candidate_count === 0 || reviewBatchMutation.isPending}
+                >
+                  {reviewBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+                  <span>Gemini review</span>
+                </button>
+                <button
+                  type="button"
+                  className="action-button secondary"
                   onClick={() => archiveBatchMutation.mutate(activeBatch)}
                   disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
                 >
@@ -311,6 +349,12 @@ function CandidatesView() {
             <span>{errorText(chartExportMutation.error)}</span>
           </div>
         ) : null}
+        {reviewBatchMutation.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(reviewBatchMutation.error)}</span>
+          </div>
+        ) : null}
         {archiveBatchMutation.isSuccess ? (
           <div className="alert success-alert compact-alert" role="status">
             <CheckCircle2 size={18} aria-hidden="true" />
@@ -335,6 +379,21 @@ function CandidatesView() {
                 <span>Open first chart</span>
               </a>
             ) : null}
+          </div>
+        ) : null}
+        {reviewBatchMutation.isSuccess ? (
+          <div className="alert success-alert compact-alert chart-export-alert" role="status">
+            <CheckCircle2 size={18} aria-hidden="true" />
+            <span>
+              Review run {reviewBatchMutation.data.review_run.id} recorded {reviewBatchMutation.data.reviews.length} reviews.
+            </span>
+            <Link
+              className="artifact-open-link"
+              to={`/reviews?candidate_batch_id=${encodeURIComponent(reviewBatchMutation.data.review_run.candidate_batch_id ?? activeBatchId)}`}
+            >
+              <FileSearch size={15} aria-hidden="true" />
+              <span>Open reviews</span>
+            </Link>
           </div>
         ) : null}
 

@@ -40,6 +40,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-gemini-api-review-retirement.md"),
+    Path("docs/agent-harness/r7-gemini-cli-review-retirement.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
     Path("docs/agent-harness/r7-archive-retirement.md"),
     Path("docs/agent-harness/r7-preselect-cli-retirement.md"),
@@ -163,6 +164,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-gemini-api-review-retirement",
+            "scripts/harness/check.sh r7-gemini-cli-review-retirement",
             "scripts/harness/check.sh r7-legacy-write-freeze",
             "scripts/harness/check.sh r7-archive-retirement",
             "scripts/harness/check.sh r7-preselect-cli-retirement",
@@ -525,6 +527,8 @@ def check_r7_retirement_plan() -> None:
             "r7-preselect-cli-retirement",
             "Gemini API reviewer retirement",
             "r7-gemini-api-review-retirement",
+            "Gemini CLI reviewer retirement",
+            "r7-gemini-cli-review-retirement",
             "Dashboard retirement",
             "r7-dashboard-retirement",
             "Product launcher",
@@ -724,6 +728,97 @@ def check_r7_gemini_api_review_retirement() -> None:
         ],
     )
     print("[r7-gemini-api-review-retirement] ok")
+
+
+def check_r7_gemini_cli_review_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-gemini-cli-review-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Gemini CLI Review Retirement",
+            "`agent/gemini_cli_review.py`",
+            "POST /api/runs/review/provider",
+            "provider=gemini-cli",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1",
+            "retry/backoff",
+            "skip_existing",
+            "gemini_cli_review_checkpoint.json",
+            "simulated trading logic, which remains out of scope",
+            "scripts/harness/check.sh r7-gemini-cli-review-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_GEMINI_CLI_REVIEW_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW",
+            "LEGACY_GEMINI_CLI_REVIEW_RETIRED_NOTICE",
+            "legacy_gemini_cli_review_enabled",
+        ],
+    )
+    assert_contains(
+        "agent/gemini_cli_review.py",
+        [
+            "legacy_gemini_cli_review_enabled",
+            "LEGACY_GEMINI_CLI_REVIEW_RETIRED_NOTICE",
+            "POST /api/runs/review/provider",
+            "provider=gemini-cli",
+            "raise SystemExit(2)",
+            "print_legacy_write_freeze_notice",
+            "gemini_cli_review_checkpoint.json",
+            "skip_existing",
+            "retry_backoff_seconds",
+        ],
+    )
+    text = read("agent/gemini_cli_review.py")
+    guard_index = text.index("if not legacy_gemini_cli_review_enabled()")
+    for needle in ("config = load_config", "reviewer.run()"):
+        needle_index = text.index(needle, guard_index)
+        if guard_index > needle_index:
+            raise HarnessError(f"agent/gemini_cli_review.py must stop before {needle}")
+    assert_contains(
+        "apps/api/stocktrade_api/services/gemini_cli_provider.py",
+        [
+            "GeminiCliReviewProviderExecutor",
+            "retry_backoff_seconds",
+            "skip_existing",
+            "result_cache_dir",
+            "gemini_cli_review_checkpoint.json",
+            "provider_evidence_files",
+            "raw_stdout",
+            "raw_stderr",
+            "usage_file",
+        ],
+    )
+    assert_contains(
+        "tests/test_gemini_cli_provider_contracts.py",
+        [
+            "test_provider_retries_rate_limit_and_writes_checkpoint_raw_logs_and_usage",
+            "test_provider_uses_skip_existing_result_cache_without_cli_call",
+            "test_provider_rejects_batch_order_mismatch_when_fallback_is_disabled",
+        ],
+    )
+    assert_contains(
+        "tests/test_gemini_cli_retirement_harness.py",
+        [
+            "test_gemini_cli_reviewer_exits_before_config_load_by_default",
+            "test_gemini_cli_guard_runs_before_legacy_config_and_runner",
+            "test_gemini_cli_helpers_remain_importable_for_parity_tests",
+            "test_gemini_cli_rollback_flag_is_explicit_and_suppressed_by_default",
+        ],
+    )
+    assert_contains(
+        "docs/gemini-cli-review-plan.md",
+        [
+            "POST /api/runs/review/provider",
+            "provider=gemini-cli",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_gemini_cli_retirement_harness"])
+    run_command([sys.executable, "-m", "unittest", "tests.test_gemini_cli_provider_contracts"])
+    print("[r7-gemini-cli-review-retirement] ok")
 
 
 def check_r7_dashboard_retirement() -> None:
@@ -1132,6 +1227,7 @@ def parse_args() -> argparse.Namespace:
             "r7-dashboard-retirement",
             "r7-browser-proof",
             "r7-gemini-api-review-retirement",
+            "r7-gemini-cli-review-retirement",
             "r7-legacy-write-freeze",
             "r7-archive-retirement",
             "r7-preselect-cli-retirement",
@@ -1173,6 +1269,8 @@ def main() -> int:
             check_r7_browser_proof()
         elif args.gate == "r7-gemini-api-review-retirement":
             check_r7_gemini_api_review_retirement()
+        elif args.gate == "r7-gemini-cli-review-retirement":
+            check_r7_gemini_cli_review_retirement()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
         elif args.gate == "r7-archive-retirement":

@@ -15,6 +15,7 @@ requires it.
 | ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
 | storage-cutover-plan | `scripts/harness/check.sh storage-cutover-plan` | R6 source-of-truth and rollback planning |
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
+| r7-final-retirement-proof | `scripts/harness/check.sh r7-final-retirement-proof` | R7 completion audit packet and final-cutover closure checklist |
 | r7-dashboard-retirement | `scripts/harness/check.sh r7-dashboard-retirement` | R7 default retirement guard for the legacy single-stock Streamlit dashboard |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-gemini-api-review-retirement | `scripts/harness/check.sh r7-gemini-api-review-retirement` | R7 default retirement guard for the legacy Gemini API reviewer |
@@ -489,6 +490,28 @@ Run this before PRs that change FastAPI job lifecycle behavior, startup
 recovery, local concurrency semantics, cancellation behavior, or final runtime
 hardening evidence.
 
+## R7 Final Retirement Proof Gate
+
+Checks:
+
+- `docs/agent-harness/r7-final-retirement-proof.md` exists and names #152;
+- the audit packet explicitly says the current verdict is `not complete`;
+- every R7 proof document and gate is named in the audit packet or status map;
+- completion boundaries distinguish fixture-backed proof, compatibility-only
+  retirement, unsupported multi-process writes, and deletion decisions;
+- final-cutover closure packet requirements include `r7-final-retirement-proof`,
+  `r7-retirement-plan`, `product-refactor-readiness`, `quick`, and
+  `git diff --check`.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-final-retirement-proof
+```
+
+Run this before claiming R7 completion, closing #152, or publishing a final
+legacy-retirement status comment.
+
 ## Runtime Gates
 
 Runtime gates are intentionally not part of `quick` because they can require
@@ -522,6 +545,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
 | storage cutover plan | storage-cutover-plan + product-refactor-readiness | quick before PR |
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
+| R7 final retirement proof | r7-final-retirement-proof + r7-retirement-plan + product-refactor-readiness | quick before PR and final-cutover closure packet |
 | R7 dashboard retirement | r7-dashboard-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 Gemini API reviewer retirement | r7-gemini-api-review-retirement + r7-retirement-plan | targeted harness test + quick before PR |
@@ -551,4 +575,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement and r7-gemini-cli-review-retirement for reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement, r7-archive-retirement, and r7-preselect-cli-retirement for legacy file-writer retirement, r7-run-all-retirement for one-command wrapper retirement, r7-selector-adapter-retirement for product selector defaults, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-final-retirement-proof for completion audit, r7-gemini-api-review-retirement and r7-gemini-cli-review-retirement for reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement, r7-archive-retirement, and r7-preselect-cli-retirement for legacy file-writer retirement, r7-run-all-retirement for one-command wrapper retirement, r7-selector-adapter-retirement for product selector defaults, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

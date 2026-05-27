@@ -39,6 +39,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
+    Path("docs/agent-harness/r7-final-retirement-proof.md"),
     Path("docs/agent-harness/r7-gemini-api-review-retirement.md"),
     Path("docs/agent-harness/r7-gemini-cli-review-retirement.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
@@ -148,6 +149,7 @@ def check_docs() -> None:
             "docs/agent-harness/architecture-quality-bar.md",
             "docs/agent-harness/target-architecture-design.md",
             "docs/agent-harness/r7-hardening-retirement-plan.md",
+            "docs/agent-harness/r7-final-retirement-proof.md",
             "docs/agent-harness/r7-run-all-retirement.md",
             "docs/agent-harness/r7-selector-adapter-retirement.md",
             "scripts/harness/check.sh quick",
@@ -165,6 +167,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
             "scripts/harness/check.sh r7-retirement-plan",
+            "scripts/harness/check.sh r7-final-retirement-proof",
             "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-gemini-api-review-retirement",
@@ -379,6 +382,7 @@ def check_product_refactor_readiness() -> None:
         ],
     )
     check_r7_retirement_plan()
+    check_r7_final_retirement_proof()
     print("[product-refactor-readiness] ok")
 
 
@@ -527,6 +531,8 @@ def check_r7_retirement_plan() -> None:
             "r7-resource-envelope",
             "Final browser proof",
             "r7-browser-proof",
+            "Final retirement proof",
+            "r7-final-retirement-proof",
             "Legacy write freeze",
             "r7-legacy-write-freeze",
             "Archive writer retirement",
@@ -554,6 +560,65 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_final_retirement_proof() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-final-retirement-proof.md",
+        [
+            "Managing issue: #152",
+            "R7 Final Retirement Proof",
+            "This document is the R7 completion audit packet",
+            "Current verdict: not complete",
+            "Completion Boundary Matrix",
+            "Primary research workflows run through the React/FastAPI product",
+            "Strict-parity business areas pass without live credentials",
+            "SQLite/DuckDB are the product-owned source of truth",
+            "Legacy file-system and Streamlit/workbench paths",
+            "Product UI/UX passes the documented quality bar",
+            "Product runtime is hardened for local use",
+            "Final cutover gates pass on the closing commit",
+            "Required Closing Evidence",
+            "scripts/harness/check.sh r7-final-retirement-proof",
+            "scripts/harness/check.sh r7-retirement-plan",
+            "scripts/harness/check.sh product-refactor-readiness",
+            "scripts/harness/check.sh quick",
+            "git diff --check",
+            "Open Decisions",
+            "pipeline/Selector.py",
+            "Do not reopen simulated or paper trading",
+        ],
+    )
+    assert_contains(
+        "docs/agent-harness/product-refactor-status.md",
+        [
+            "r7-final-retirement-proof.md",
+            "scripts/harness/check.sh r7-final-retirement-proof",
+            "R7 final retirement proof now exists as an audit gate",
+            "Final-cutover closure still requires",
+            "Legacy selector classes still exist in `pipeline/Selector.py`",
+            "legacy file-system state remains a compatibility and migration source",
+            "multi-process writes to the same",
+        ],
+    )
+    assert_contains(
+        "docs/agent-harness/validation-gates.md",
+        [
+            "r7-final-retirement-proof",
+            "R7 Final Retirement Proof Gate",
+            "completion audit packet",
+            "not complete",
+            "final-cutover closure packet",
+        ],
+    )
+    assert_contains(
+        "docs/agent-harness/index.md",
+        [
+            "r7-final-retirement-proof.md",
+            "scripts/harness/check.sh r7-final-retirement-proof",
+        ],
+    )
+    print("[r7-final-retirement-proof] ok")
 
 
 def check_r7_preselect_cli_retirement() -> None:
@@ -1393,6 +1458,7 @@ def parse_args() -> argparse.Namespace:
             "ui-smoke-fixture",
             "storage-cutover-plan",
             "r7-retirement-plan",
+            "r7-final-retirement-proof",
             "r7-dashboard-retirement",
             "r7-browser-proof",
             "r7-gemini-api-review-retirement",
@@ -1434,6 +1500,8 @@ def main() -> int:
             check_storage_cutover_plan()
         elif args.gate == "r7-retirement-plan":
             check_r7_retirement_plan()
+        elif args.gate == "r7-final-retirement-proof":
+            check_r7_final_retirement_proof()
         elif args.gate == "r7-dashboard-retirement":
             check_r7_dashboard_retirement()
         elif args.gate == "r7-browser-proof":

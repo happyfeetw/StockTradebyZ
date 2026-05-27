@@ -30,6 +30,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/target-architecture-design.md](docs/agent-harness/target-architecture-design.md)
 - R7 hardening and retirement plan:
   [docs/agent-harness/r7-hardening-retirement-plan.md](docs/agent-harness/r7-hardening-retirement-plan.md)
+- R7 final retirement proof:
+  [docs/agent-harness/r7-final-retirement-proof.md](docs/agent-harness/r7-final-retirement-proof.md)
 - R7 chart export retirement:
   [docs/agent-harness/r7-chart-export-retirement.md](docs/agent-harness/r7-chart-export-retirement.md)
 - R7 archive writer retirement:
@@ -114,6 +116,7 @@ For a refactor plan or implementation slice:
 ```bash
 scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh r7-retirement-plan
+scripts/harness/check.sh r7-final-retirement-proof
 scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-gemini-api-review-retirement

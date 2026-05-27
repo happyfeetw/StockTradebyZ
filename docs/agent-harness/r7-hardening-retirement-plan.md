@@ -132,6 +132,10 @@ Out of scope:
    - Workbench retirement uses `docs/agent-harness/r7-workbench-retirement.md`
      and `scripts/harness/check.sh r7-workbench-retirement` for the legacy
      Streamlit workbench, background runner, and `start_workbench`.
+   - Final retirement proof uses
+     `docs/agent-harness/r7-final-retirement-proof.md` and
+     `scripts/harness/check.sh r7-final-retirement-proof` to keep the #152
+     closure packet separate from individual retirement PRs.
 
 ## Validation Requirements
 
@@ -139,6 +143,7 @@ Minimum gates for R7 planning PRs:
 
 ```bash
 scripts/harness/check.sh r7-retirement-plan
+scripts/harness/check.sh r7-final-retirement-proof
 scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh quick
 ```
@@ -184,6 +189,9 @@ prove the touched path:
 - workbench retirement: default stop guard, explicit rollback flag, product
   launcher/runtime replacement proof, and
   `scripts/harness/check.sh r7-workbench-retirement`;
+- final retirement proof: completion audit packet, concrete remaining blockers,
+  final-cutover validation checklist, and
+  `scripts/harness/check.sh r7-final-retirement-proof`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 - chart export retirement: `scripts/harness/check.sh
@@ -210,6 +218,8 @@ R7 is complete only when:
 - legacy file-system and Streamlit/workbench paths are retired or explicitly
   documented as compatibility-only with rollback notes;
 - final parity evidence proves business behavior is unchanged;
+- `scripts/harness/check.sh r7-final-retirement-proof` passes and its audit
+  packet has been updated with a completion verdict;
 - `scripts/harness/check.sh r7-retirement-plan`,
   `scripts/harness/check.sh product-refactor-readiness`, and
   `scripts/harness/check.sh quick` pass.

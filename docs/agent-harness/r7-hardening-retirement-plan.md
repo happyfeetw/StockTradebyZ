@@ -81,6 +81,9 @@ Out of scope:
    - Prevent new React/FastAPI code from reading legacy generated files except
      through explicit migration/import services.
    - Preserve compatibility tests for old file formats.
+   - Record the frozen surfaces in
+     `docs/agent-harness/r7-legacy-write-freeze.md` and run
+     `scripts/harness/check.sh r7-legacy-write-freeze`.
 
 6. Retirement PRs.
    - Retire one legacy surface per PR.
@@ -106,7 +109,8 @@ prove the touched path:
   reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
-- legacy write freeze: product API no-read proof and compatibility import test;
+- legacy write freeze: product API no-read proof, compatibility import test,
+  and `scripts/harness/check.sh r7-legacy-write-freeze`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 

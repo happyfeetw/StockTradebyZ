@@ -11,10 +11,14 @@ import datetime as dt
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from legacy_compat import print_legacy_write_freeze_notice
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -219,6 +223,11 @@ def update_index(history_dir: Path, summary: dict[str, Any]) -> None:
 
 
 def archive(args: argparse.Namespace) -> Path:
+    print_legacy_write_freeze_notice(
+        surface="pipeline.archive_results",
+        replacement="POST /api/runs/archive",
+        writes="data/history",
+    )
     candidates_path = resolve(args.candidates, ROOT / "data" / "candidates" / "candidates_latest.json")
     candidates_data = load_json(candidates_path)
     if not candidates_data:

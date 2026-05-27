@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from legacy_compat import print_legacy_write_freeze_notice
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -46,6 +49,11 @@ def append_log(log_path: Path, text: str) -> None:
 
 
 def run(run_dir: Path) -> int:
+    print_legacy_write_freeze_notice(
+        surface="workbench.runner",
+        replacement="React/FastAPI Run Center",
+        writes="data/runs and legacy workflow outputs",
+    )
     config = load_json(run_dir / "run_config.json")
     commands = config.get("commands", [])
     log_path = run_dir / "run.log"

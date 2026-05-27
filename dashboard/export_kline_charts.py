@@ -28,6 +28,7 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "dashboard"))
 
+from legacy_compat import print_legacy_write_freeze_notice  # noqa: E402
 from components.charts import make_daily_chart, make_weekly_chart  # noqa: E402
 
 
@@ -225,6 +226,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    print_legacy_write_freeze_notice(
+        surface="dashboard.export_kline_charts",
+        replacement="POST /api/runs/chart-export",
+        writes="data/kline",
+    )
     candidates_path = Path(CONFIG["candidates"])
     candidates_path = Path(args.candidates)
     raw_dir         = Path(args.raw_dir)

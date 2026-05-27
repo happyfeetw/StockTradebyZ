@@ -58,6 +58,10 @@ Out of scope:
    - Add cancellation and recovery tests for long-running or staged jobs.
    - Ensure failed jobs leave enough SQLite events and summaries for UI
      diagnosis.
+   - Preserve terminal run and step states so late cancellation, retry, or
+     recovery code cannot overwrite `succeeded`, `failed`, or `cancelled`
+     evidence. Guard this with
+     `scripts/harness/check.sh r7-runtime-terminal-integrity`.
 
 3. Resource envelope.
    - Capture credential-free fixture evidence for API startup, product workflow
@@ -108,6 +112,8 @@ Implementation PRs that harden runtime or retire legacy surfaces must also
 prove the touched path:
 
 - runtime hardening: targeted job lifecycle/cancellation tests plus `quick`;
+- runtime terminal integrity: `scripts/harness/check.sh
+  r7-runtime-terminal-integrity` plus targeted job lifecycle tests;
 - resource evidence: fixture command output or checked-in report with
   reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and

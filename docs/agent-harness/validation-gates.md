@@ -18,6 +18,7 @@ requires it.
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
+| r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
@@ -211,6 +212,28 @@ scripts/harness/check.sh r7-product-launcher
 Run this before PRs that change local product startup, replacement launch docs,
 or `start_workbench` retirement.
 
+## R7 Runtime Terminal Integrity Gate
+
+Checks:
+
+- `docs/agent-harness/r7-runtime-terminal-integrity.md` documents the terminal
+  state rule and validation command;
+- `RunRepository.transition_run()` rejects attempts to overwrite a terminal
+  run status or summary;
+- `RunRepository.transition_step()` rejects attempts to overwrite a terminal
+  step status or error payload;
+- late cancellation preserves the existing terminal run state;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-runtime-terminal-integrity
+```
+
+Run this before PRs that change product runtime status transitions,
+cancellation, recovery, or error-diagnostics behavior.
+
 ## R7 Resource Envelope Gate
 
 Checks:
@@ -268,6 +291,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
+| R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |

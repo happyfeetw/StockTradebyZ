@@ -41,7 +41,7 @@ runtime hardening, final browser proof, and legacy retirement sequence.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-product-launcher.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-product-launcher`, and runtime cancellation contract coverage define scope, browser/resource/freeze/launcher guardrails, validation, rollback, and phase order | Broader recovery/concurrency hardening and surface-by-surface retirement |
+| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-product-launcher.md`, `r7-runtime-terminal-integrity.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, and runtime cancellation contract coverage define scope, browser/resource/freeze/launcher guardrails, validation, rollback, and phase order | Broader recovery/concurrency hardening and surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -114,6 +114,8 @@ evidence:
 - R7 product launcher now provides `./start_product` as the local React/FastAPI
   entrypoint and points `start_workbench` users to the product path while
   preserving the legacy workbench as compatibility-only.
+- R7 runtime terminal integrity now prevents terminal product run and step state
+  from being overwritten by late cancellation, retry, or recovery calls.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -185,8 +187,9 @@ full objective:
 - R7 still needs explicit hardening and retirement work before legacy
   file-system, Streamlit/workbench, and compatibility entrypoints can be
   disabled or removed.
-- Runtime cancellation no longer overwrites terminal runs, but broader
-  concurrency and recovery hardening still needs R7 coverage.
+- Runtime cancellation no longer overwrites terminal runs, and terminal run/step
+  state is guarded at repository level. Broader concurrency and recovery
+  hardening still needs R7 coverage.
 - Final retirement proof and broader recovery/concurrency hardening are not yet
   R7-ready.
 

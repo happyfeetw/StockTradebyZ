@@ -17,7 +17,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from stocktrade_api.jobs.runtime import JobRuntime  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.runs import RunDetail, RunEventsResponse, RunListResponse, RunSummary  # noqa: E402
-from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
+from stocktrade_api.storage.run_repository import (  # noqa: E402
+    RunRepository,
+    TerminalRunTransitionError,
+    TerminalStepTransitionError,
+)
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import Artifact, Run  # noqa: E402
 
@@ -115,6 +119,48 @@ class JobRuntimeContractTests(unittest.TestCase):
             self.assertEqual(late_cancelled.status, "succeeded")
             self.assertEqual(detail.status, "succeeded")
             self.assertNotIn("Diagnostic job cancelled", [event.message for event in detail.events])
+            engine.dispose()
+
+    def test_runtime_terminal_run_state_cannot_be_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+
+            run = JobRuntime(repository).run_diagnostic_job()
+            with self.assertRaises(TerminalRunTransitionError):
+                repository.transition_run(
+                    run.id,
+                    status="running",
+                    summary={"mode": "diagnostic", "message": "late overwrite"},
+                )
+
+            detail = repository.get_run_detail(run.id)
+            self.assertEqual(detail.status, "succeeded")
+            self.assertEqual(detail.summary_json["message"], "completed without executing legacy business logic")
+            engine.dispose()
+
+    def test_runtime_terminal_step_state_cannot_be_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+
+            run = repository.create_run(kind="diagnostic")
+            step = repository.add_step(run.id, name="diagnostic")
+            repository.transition_step(step.id, status="running")
+            repository.transition_step(step.id, status="succeeded")
+
+            with self.assertRaises(TerminalStepTransitionError):
+                repository.transition_step(
+                    step.id,
+                    status="failed",
+                    error={"type": "LateFailure", "message": "late overwrite"},
+                )
+
+            detail = repository.get_run_detail(run.id)
+            self.assertEqual(detail.steps[0].status, "succeeded")
+            self.assertIsNone(detail.steps[0].error_json)
             engine.dispose()
 
     def test_runtime_imports_do_not_pull_heavy_legacy_modules(self) -> None:

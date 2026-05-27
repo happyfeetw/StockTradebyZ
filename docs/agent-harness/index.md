@@ -58,6 +58,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   notices and product no-read guard for legacy file-system writers.
 - [r7-product-launcher.md](r7-product-launcher.md): default local
   React/FastAPI launcher and replacement path for `start_workbench`.
+- [r7-runtime-terminal-integrity.md](r7-runtime-terminal-integrity.md):
+  terminal run/step immutability rules for R7 product job diagnostics.
 - [r7-resource-envelope.md](r7-resource-envelope.md): credential-free runtime,
   memory, SQLite/DuckDB growth, and artifact-growth evidence for #152.
 - [workflows.md](workflows.md): repeatable agent workflows.
@@ -75,6 +77,7 @@ scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-product-launcher
+scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts

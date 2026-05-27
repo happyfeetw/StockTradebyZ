@@ -659,14 +659,30 @@ button {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
-  cursor: pointer;
 }
 
 .candidate-batch-row:hover,
-.candidate-batch-row:focus-visible,
 .candidate-batch-row.selected {
   border-color: var(--primary-line);
   background: var(--surface-strong);
+}
+
+.candidate-batch-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.candidate-batch-main:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.35);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .batch-row-head {
@@ -718,6 +734,12 @@ button {
 .batch-lineage code {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .batch-empty {

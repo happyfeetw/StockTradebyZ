@@ -6,8 +6,11 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
-from ..schemas.backups import BackupManifest
+from pydantic import ValidationError
+
+from ..schemas.backups import BackupManifest, BackupRestoreResult
 from .run_repository import RunRepository
 from .sqlite import ROOT
 
@@ -60,6 +63,7 @@ class BackupService:
         duckdb_path: str | Path | None = None,
         backup_root: str | Path = DEFAULT_BACKUP_ROOT,
         product_version: str,
+        dispose_sqlite: Callable[[], None] | None = None,
     ):
         self.run_repository = run_repository
         self.sqlite_path = sqlite_path
@@ -68,6 +72,7 @@ class BackupService:
         if not self.backup_root.is_absolute():
             self.backup_root = ROOT / self.backup_root
         self.product_version = product_version
+        self.dispose_sqlite = dispose_sqlite
 
     def create_backup(self) -> BackupManifest:
         sqlite_path = resolve_sqlite_file_path(self.sqlite_path)
@@ -147,6 +152,64 @@ class BackupService:
             )
             raise
 
+    def restore_backup(self, backup_path: str | Path) -> BackupRestoreResult:
+        sqlite_path = resolve_sqlite_file_path(self.sqlite_path)
+        backup_dir = self._resolve_backup_dir(backup_path)
+        manifest = self._load_manifest(backup_dir)
+        sqlite_source = self._required_backup_file(backup_dir, manifest, "sqlite")
+        duckdb_source = self._optional_backup_file(backup_dir, manifest, "duckdb")
+        self._optional_backup_file(backup_dir, manifest, "artifacts_manifest")
+        self._optional_backup_file(backup_dir, manifest, "migration_versions")
+        duckdb_target = resolve_optional_file_path(self.duckdb_path)
+        restored_at = utc_now()
+        files_restored: dict[str, str] = {}
+        missing_optional = list(manifest.missing_optional)
+
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        if duckdb_target is not None:
+            duckdb_target.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.dispose_sqlite is not None:
+            self.dispose_sqlite()
+
+        try:
+            shutil.copy2(sqlite_source, sqlite_path)
+            files_restored["sqlite"] = sqlite_path.as_posix()
+
+            if duckdb_target is not None and duckdb_source is not None:
+                shutil.copy2(duckdb_source, duckdb_target)
+                files_restored["duckdb"] = duckdb_target.as_posix()
+            elif duckdb_target is not None:
+                if duckdb_target.exists():
+                    duckdb_target.unlink()
+                if "duckdb" not in missing_optional:
+                    missing_optional.append("duckdb")
+
+            restore_run = self.run_repository.create_run(
+                kind="restore",
+                status="succeeded",
+                summary={
+                    "backup_id": manifest.backup_id,
+                    "backup_path": backup_dir.as_posix(),
+                    "files_restored": files_restored,
+                    "missing_optional": sorted(missing_optional),
+                },
+            )
+        except BackupError:
+            raise
+        except Exception as exc:
+            raise BackupError(f"failed to restore backup: {exc}", status_code=500) from exc
+
+        return BackupRestoreResult(
+            restore_id=restore_run.id,
+            run_id=restore_run.id,
+            backup_id=manifest.backup_id,
+            backup_path=backup_dir.as_posix(),
+            restored_at=restored_at,
+            files_restored=files_restored,
+            missing_optional=sorted(missing_optional),
+        )
+
     def _backup_sqlite(self, source: Path, target: Path) -> None:
         try:
             with closing(sqlite3.connect(source)) as source_connection:
@@ -154,6 +217,44 @@ class BackupService:
                     source_connection.backup(target_connection)
         except sqlite3.Error as exc:
             raise BackupError(f"failed to backup SQLite database: {exc}", status_code=500) from exc
+
+    def _resolve_backup_dir(self, backup_path: str | Path) -> Path:
+        if not str(backup_path).strip():
+            raise BackupError("backup_path is required", status_code=422)
+        backup_dir = Path(backup_path).expanduser()
+        if not backup_dir.is_absolute():
+            backup_dir = self.backup_root / backup_dir
+        if not backup_dir.is_dir():
+            raise BackupError(f"backup directory does not exist: {backup_dir}", status_code=404)
+        return backup_dir
+
+    def _load_manifest(self, backup_dir: Path) -> BackupManifest:
+        manifest_path = backup_dir / "manifest.json"
+        if not manifest_path.is_file():
+            raise BackupError("backup manifest.json does not exist", status_code=422)
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            return BackupManifest.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise BackupError(f"backup manifest.json is invalid: {exc}", status_code=422) from exc
+
+    def _required_backup_file(self, backup_dir: Path, manifest: BackupManifest, key: str) -> Path:
+        relative = manifest.files.get(key)
+        if not relative:
+            raise BackupError(f"backup manifest is missing required file: {key}", status_code=422)
+        path = backup_dir / relative
+        if not path.is_file():
+            raise BackupError(f"backup file does not exist: {relative}", status_code=422)
+        return path
+
+    def _optional_backup_file(self, backup_dir: Path, manifest: BackupManifest, key: str) -> Path | None:
+        relative = manifest.files.get(key)
+        if not relative:
+            return None
+        path = backup_dir / relative
+        if not path.is_file():
+            raise BackupError(f"backup manifest references missing optional file: {relative}", status_code=422)
+        return path
 
 
 def _relative_to_backup(backup_dir: Path, path: Path) -> str:

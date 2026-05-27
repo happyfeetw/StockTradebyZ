@@ -49,12 +49,18 @@ def create_app(
     analytics_writer = DuckDBAnalyticsWriter(duckdb_path) if duckdb_path is not None else None
     app.state.analytics_writer = analytics_writer
     app.state.migration_repository = MigrationRepository(session_factory, analytics_writer=analytics_writer)
+
+    def dispose_sqlite() -> None:
+        if sqlite_engine is not None:
+            sqlite_engine.dispose()
+
     app.state.backup_service = BackupService(
         run_repository,
         sqlite_path=sqlite_path,
         duckdb_path=duckdb_path,
         backup_root=backup_root,
         product_version=API_VERSION,
+        dispose_sqlite=dispose_sqlite,
     )
     app.state.job_runtime = JobRuntime(run_repository)
     app.state.session_factory = session_factory
@@ -73,8 +79,7 @@ def create_app(
 
     @app.on_event("shutdown")
     def shutdown_storage() -> None:
-        if app.state.sqlite_engine is not None:
-            app.state.sqlite_engine.dispose()
+        dispose_sqlite()
 
     return app
 

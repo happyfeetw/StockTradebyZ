@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.main import create_app  # noqa: E402
-from stocktrade_api.storage.duckdb import apply_migrations  # noqa: E402
+from stocktrade_api.storage.duckdb import apply_migrations, connect_duckdb  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -101,6 +101,117 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["missing_optional"], ["duckdb"])
                 self.assertNotIn("duckdb", payload["files"])
                 self.assertEqual(payload["sources"]["duckdb"], missing_duckdb_path.as_posix())
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_restore_api_replaces_sqlite_duckdb_and_records_restore_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sqlite_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            backup_root = tmp / "backups"
+            migrate_sqlite(sqlite_path)
+            apply_migrations(duckdb_path)
+            app = create_app(sqlite_path=sqlite_path, duckdb_path=duckdb_path, backup_root=backup_root)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                backup_response = await client.post("/api/backups")
+                self.assertEqual(backup_response.status_code, 200)
+                backup = backup_response.json()["backup"]
+
+                with closing(sqlite3.connect(sqlite_path)) as connection:
+                    connection.execute(
+                        "INSERT INTO runs (id, kind, status, summary_json) VALUES (?, ?, ?, ?)",
+                        ["post-backup", "diagnostic", "succeeded", "{}"],
+                    )
+                    connection.commit()
+                with connect_duckdb(duckdb_path) as connection:
+                    connection.execute(
+                        """
+                        INSERT INTO analytics_snapshots (id, kind, params_json, result_json)
+                        VALUES ('post-backup', 'diagnostic', '{}', '{}')
+                        """
+                    )
+
+                restore_response = await client.post("/api/restore", json={"backup_path": backup["backup_path"]})
+                self.assertEqual(restore_response.status_code, 200)
+                restore = restore_response.json()["restore"]
+                self.assertEqual(restore["backup_id"], backup["backup_id"])
+                self.assertEqual(restore["backup_path"], backup["backup_path"])
+                self.assertEqual(restore["files_restored"]["sqlite"], sqlite_path.as_posix())
+                self.assertEqual(restore["files_restored"]["duckdb"], duckdb_path.as_posix())
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                run_ids = {run["id"]: run for run in runs.json()["runs"]}
+                self.assertIn(backup["run_id"], run_ids)
+                self.assertIn(restore["run_id"], run_ids)
+                self.assertNotIn("post-backup", run_ids)
+                self.assertEqual(run_ids[restore["run_id"]]["kind"], "restore")
+                self.assertEqual(run_ids[restore["run_id"]]["status"], "succeeded")
+
+                with closing(sqlite3.connect(sqlite_path)) as connection:
+                    post_backup_count = connection.execute(
+                        "SELECT count(*) FROM runs WHERE id = 'post-backup'"
+                    ).fetchone()[0]
+                    restore_count = connection.execute(
+                        "SELECT count(*) FROM runs WHERE id = ? AND kind = 'restore'",
+                        [restore["run_id"]],
+                    ).fetchone()[0]
+                    self.assertEqual(post_backup_count, 0)
+                    self.assertEqual(restore_count, 1)
+                with connect_duckdb(duckdb_path, read_only=True) as connection:
+                    post_backup_count = connection.execute(
+                        "SELECT count(*) FROM analytics_snapshots WHERE id = 'post-backup'"
+                    ).fetchone()[0]
+                    self.assertEqual(post_backup_count, 0)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_restore_api_removes_stale_duckdb_when_backup_missing_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sqlite_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "missing-at-backup.duckdb"
+            migrate_sqlite(sqlite_path)
+            app = create_app(sqlite_path=sqlite_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                backup_response = await client.post("/api/backups")
+                self.assertEqual(backup_response.status_code, 200)
+                backup = backup_response.json()["backup"]
+                self.assertEqual(backup["missing_optional"], ["duckdb"])
+                apply_migrations(duckdb_path)
+                self.assertTrue(duckdb_path.exists())
+
+                restore_response = await client.post("/api/restore", json={"backup_path": backup["backup_path"]})
+                self.assertEqual(restore_response.status_code, 200)
+                restore = restore_response.json()["restore"]
+                self.assertIn("duckdb", restore["missing_optional"])
+                self.assertNotIn("duckdb", restore["files_restored"])
+                self.assertFalse(duckdb_path.exists())
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_restore_api_rejects_missing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sqlite_path = tmp / "app.sqlite"
+            backup_dir = tmp / "backups" / "broken"
+            backup_dir.mkdir(parents=True)
+            migrate_sqlite(sqlite_path)
+            app = create_app(sqlite_path=sqlite_path, duckdb_path=None, backup_root=tmp / "backups")
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/restore", json={"backup_path": backup_dir.as_posix()})
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("manifest.json", response.json()["detail"])
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

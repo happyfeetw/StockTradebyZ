@@ -50,6 +50,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   fixture and evidence checklist for #114 R5 UI/UX validation.
 - [r6-storage-cutover-plan.md](r6-storage-cutover-plan.md): source-of-truth
   ownership, cutover sequence, validation, and rollback plan for #115.
+- [r7-hardening-retirement-plan.md](r7-hardening-retirement-plan.md): runtime
+  hardening, resource evidence, and legacy retirement plan for #152.
 - [workflows.md](workflows.md): repeatable agent workflows.
 - [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.
 
@@ -61,6 +63,7 @@ scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh refactor-readiness
 scripts/harness/check.sh ui-smoke-fixture
 scripts/harness/check.sh storage-cutover-plan
+scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts
 scripts/harness/check.sh python

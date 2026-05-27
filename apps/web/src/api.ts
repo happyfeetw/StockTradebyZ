@@ -97,6 +97,41 @@ export interface RunArtifactsResponse {
   artifacts: Artifact[]
 }
 
+export interface PreselectRunRequest {
+  config_path?: string
+  data_dir?: string
+  pick_date?: string
+  end_date?: string
+}
+
+export interface PreselectCandidate {
+  id: number | null
+  batch_id: string | null
+  code: string
+  date: string
+  strategy: string
+  close: number | null
+  turnover_n: number | null
+  brick_growth: number | null
+  extra: Record<string, unknown>
+}
+
+export interface PreselectCandidateBatch {
+  id: string
+  run_id: string
+  pick_date: string
+  source: string
+  strategy_counts: Record<string, number>
+  total: number
+  created_at: string
+  candidates: PreselectCandidate[]
+}
+
+export interface PreselectRunResponse {
+  run: RunSummary
+  batch: PreselectCandidateBatch
+}
+
 export interface CandidateBatch {
   id: string
   run_id: string
@@ -413,6 +448,13 @@ export function createDiagnosticRun(fail = false): Promise<RunDetail> {
   return request<RunDetail>('/api/runs/diagnostic', {
     method: 'POST',
     body: JSON.stringify({ fail }),
+  })
+}
+
+export function createPreselectRun(payload: PreselectRunRequest): Promise<PreselectRunResponse> {
+  return request<PreselectRunResponse>('/api/runs/preselect', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 

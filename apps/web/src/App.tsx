@@ -28,6 +28,7 @@ import {
   artifactFileUrl,
   cancelRun,
   createDiagnosticRun,
+  createPreselectRun,
   dryRunLegacyImport,
   getArchiveRow,
   getCandidate,
@@ -58,6 +59,7 @@ import {
   type LegacyImportSummary,
   type LegacyImportVerifyReport,
   type LegacyImportVerifyScope,
+  type PreselectRunRequest,
   type RecommendationStatus,
   type Review,
   type ReviewFilters,
@@ -975,6 +977,12 @@ function MigrationsView() {
 function RunsView() {
   const queryClient = useQueryClient()
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [preselectForm, setPreselectForm] = useState<Record<keyof PreselectRunRequest, string>>({
+    config_path: '',
+    data_dir: '',
+    pick_date: '',
+    end_date: '',
+  })
 
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 10_000 })
@@ -1007,6 +1015,16 @@ function RunsView() {
     },
   })
 
+  const preselectMutation = useMutation({
+    mutationFn: () => createPreselectRun(compactPreselectRequest(preselectForm)),
+    onSuccess: (response) => {
+      setSelectedRunId(response.run.id)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidates'] })
+      queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+    },
+  })
+
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => cancelRun(runId),
     onSuccess: (run) => {
@@ -1017,6 +1035,11 @@ function RunsView() {
   })
 
   const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
+  const preselectResult = preselectMutation.isSuccess ? preselectMutation.data : null
+
+  function updatePreselectField(key: keyof PreselectRunRequest, value: string) {
+    setPreselectForm((current) => ({ ...current, [key]: value }))
+  }
 
   return (
     <div className="run-center">
@@ -1072,6 +1095,62 @@ function RunsView() {
               </button>
             </div>
           </div>
+
+          <form
+            className="run-setup-form"
+            aria-label="Preselect run setup"
+            onSubmit={(event) => {
+              event.preventDefault()
+              preselectMutation.mutate()
+            }}
+          >
+            <FilterInput
+              label="Config path"
+              placeholder="config/rules_preselect.yaml"
+              value={preselectForm.config_path}
+              onChange={(value) => updatePreselectField('config_path', value)}
+            />
+            <FilterInput
+              label="Data dir"
+              placeholder="data/daily"
+              value={preselectForm.data_dir}
+              onChange={(value) => updatePreselectField('data_dir', value)}
+            />
+            <FilterInput
+              label="Pick date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={preselectForm.pick_date}
+              onChange={(value) => updatePreselectField('pick_date', value)}
+            />
+            <FilterInput
+              label="End date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={preselectForm.end_date}
+              onChange={(value) => updatePreselectField('end_date', value)}
+            />
+            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending}>
+              {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+              <span>Run preselect</span>
+            </button>
+          </form>
+
+          {preselectMutation.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(preselectMutation.error)}</span>
+            </div>
+          ) : null}
+
+          {preselectResult ? (
+            <div className="run-setup-result" aria-label="Preselect result">
+              <StatusBadge status={preselectResult.run.status} />
+              <DataPair label="Batch" value={preselectResult.batch.id} />
+              <DataPair label="Pick date" value={preselectResult.batch.pick_date} />
+              <DataPair label="Candidates" value={preselectResult.batch.total.toString()} />
+            </div>
+          ) : null}
 
           {runsQuery.isLoading ? <RunSkeleton /> : null}
           {!runsQuery.isLoading && runs.length === 0 ? (
@@ -1796,6 +1875,10 @@ function sectionLabel(section: string) {
   if (section === 'reviews') return 'Reviews'
   if (section === 'history') return 'History'
   return section
+}
+
+function compactPreselectRequest(form: Record<keyof PreselectRunRequest, string>): PreselectRunRequest {
+  return Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]))
 }
 
 function isProductOwnedArtifactPath(path: string | null) {

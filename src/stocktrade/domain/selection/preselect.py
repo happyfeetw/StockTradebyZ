@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .selectors import ProductStrategyFormulaFactoryPort
+
 ROOT = Path(__file__).resolve().parents[4]
 PIPELINE_DIR = ROOT / "pipeline"
 logger = logging.getLogger(__name__)
@@ -758,7 +760,7 @@ class LegacyPreselectExecutionPort:
         self.pick_dates = pick_dates or ProductPickDatePort()
         self.liquidity_pool = liquidity_pool or ProductLiquidityPoolPort()
         self.strategy_selectors = strategy_selectors or ProductStrategySelectorPort(
-            LegacyStrategyFormulaFactoryPort(lambda: self.module)
+            ProductStrategyFormulaFactoryPort()
         )
 
     @property

@@ -40,6 +40,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/r7-product-launcher.md](docs/agent-harness/r7-product-launcher.md)
 - R7 run_all retirement:
   [docs/agent-harness/r7-run-all-retirement.md](docs/agent-harness/r7-run-all-retirement.md)
+- R7 selector adapter retirement:
+  [docs/agent-harness/r7-selector-adapter-retirement.md](docs/agent-harness/r7-selector-adapter-retirement.md)
 - R7 workbench retirement:
   [docs/agent-harness/r7-workbench-retirement.md](docs/agent-harness/r7-workbench-retirement.md)
 - R7 runtime terminal integrity:
@@ -122,6 +124,7 @@ scripts/harness/check.sh r7-preselect-cli-retirement
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-run-all-retirement
+scripts/harness/check.sh r7-selector-adapter-retirement
 scripts/harness/check.sh r7-workbench-retirement
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope

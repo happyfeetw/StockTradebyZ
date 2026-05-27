@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+import numpy as np
 import pandas as pd
 from alembic import command
 from alembic.config import Config
@@ -23,6 +24,7 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import select_stock  # noqa: E402
+import stocktrade.domain.selection.selectors as product_selectors  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     LegacyMarketPreparationPort,
     LegacyPreselectExecutionPort,
@@ -32,9 +34,13 @@ from stocktrade.domain.selection import (  # noqa: E402
     PreselectParameters,
     PreselectService,
     ProductCsvMarketDataPort,
+    ProductB1Selector,
+    ProductB2Selector,
+    ProductBrickChartSelector,
     ProductLiquidityPoolPort,
     ProductMarketPreparationPort,
     ProductPickDatePort,
+    ProductStrategyFormulaFactoryPort,
     ProductStrategySelectorPort,
     ProductWarmupBarsPort,
 )
@@ -111,6 +117,45 @@ def write_strategy_case_files(tmp: Path, case: dict) -> tuple[Path, Path]:
     return raw_dir, config_path
 
 
+def make_selector_parity_frame(rows: int = 180) -> pd.DataFrame:
+    dates = pd.bdate_range("2025-09-01", periods=rows)
+    index = np.arange(rows, dtype=float)
+    close = 10.0 + index * 0.03 + np.sin(index / 7.0) * 0.25
+    open_ = close * (1.0 + np.cos(index / 5.0) * 0.01)
+    high = np.maximum(open_, close) * 1.015
+    low = np.minimum(open_, close) * 0.985
+    volume = 1000.0 + (index % 17) * 53.0 + index * 2.0
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        },
+        index=dates,
+    )
+
+
+def assert_prepared_columns_equal(
+    testcase: unittest.TestCase,
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    columns: list[str],
+) -> None:
+    for column in columns:
+        with testcase.subTest(column=column):
+            pd.testing.assert_series_equal(
+                left[column],
+                right[column],
+                check_dtype=False,
+                check_names=False,
+                rtol=1e-12,
+                atol=1e-12,
+            )
+
+
 def alembic_config(db_path: Path) -> Config:
     config = Config()
     config.set_main_option("script_location", str(SQLITE_MIGRATIONS))
@@ -177,9 +222,9 @@ class PreselectDomainContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _, config_path = write_strategy_case_files(Path(tmpdir), case)
             with (
-                patch.object(select_stock, "B1Selector", FixtureB1Selector),
-                patch.object(select_stock, "B2Selector", FixtureB2Selector),
-                patch.object(select_stock, "BrickChartSelector", FixtureBrickSelector),
+                patch.object(product_selectors, "ProductB1Selector", FixtureB1Selector),
+                patch.object(product_selectors, "ProductB2Selector", FixtureB2Selector),
+                patch.object(product_selectors, "ProductBrickChartSelector", FixtureBrickSelector),
             ):
                 result = PreselectService().run(
                     PreselectParameters(
@@ -374,6 +419,102 @@ print("pipeline.select_stock" in sys.modules)
             [candidate.to_dict() for candidate in legacy_candidates],
         )
 
+    def test_product_strategy_formula_factory_matches_legacy_selector_preparation(self) -> None:
+        frame = make_selector_parity_frame()
+
+        b1_parameters = {
+            "j_threshold": 15.0,
+            "j_q_threshold": 0.10,
+            "zx_m1": 14,
+            "zx_m2": 28,
+            "zx_m3": 57,
+            "zx_m4": 114,
+        }
+        legacy_b1 = select_stock.B1Selector(**b1_parameters).prepare_df(frame)
+        product_b1 = ProductB1Selector(**b1_parameters).prepare_df(frame)
+        assert_prepared_columns_equal(
+            self,
+            product_b1,
+            legacy_b1,
+            ["zxdq", "zxdkx", "K", "D", "J", "wma_bull", "_vec_pick"],
+        )
+
+        b2_parameters = {
+            "j_threshold": 15.0,
+            "j_q_threshold": 0.10,
+            "kdj_n": 9,
+            "zx_m1": 14,
+            "zx_m2": 28,
+            "zx_m3": 57,
+            "zx_m4": 114,
+            "b1_lookback": 2,
+            "min_return": 0.04,
+            "volume_ratio_min": 1.0,
+        }
+        legacy_b2 = select_stock.B2Selector(**b2_parameters).prepare_df(frame)
+        product_b2 = ProductB2Selector(**b2_parameters).prepare_df(frame)
+        assert_prepared_columns_equal(
+            self,
+            product_b2,
+            legacy_b2,
+            [
+                "zxdq",
+                "zxdkx",
+                "K",
+                "D",
+                "J",
+                "wma_bull",
+                "_b1_pick",
+                "_b2_prior_b1_lag",
+                "_b2_prior_b1_j",
+                "_b2_j_turn_up",
+                "_b2_daily_return",
+                "_b2_today_body_pct",
+                "_b2_volume_ratio",
+                "_b2_strict_yang_bao_yin",
+                "_b2_upper_shadow_ratio",
+                "_b2_quality_score",
+                "_vec_pick",
+            ],
+        )
+
+        brick_parameters = {
+            "daily_return_threshold": 0.2,
+            "brick_growth_ratio": 0.5,
+            "min_prior_green_bars": 1,
+            "zxdq_ratio": 1.47,
+            "wma_short": 5,
+            "wma_mid": 10,
+            "wma_long": 20,
+            "n": 8,
+            "m1": 3,
+            "m2": 12,
+            "m3": 12,
+            "t": 8.0,
+            "shift1": 92.0,
+            "shift2": 114.0,
+        }
+        legacy_brick = select_stock.BrickChartSelector(**brick_parameters).prepare_df(frame)
+        product_brick = ProductBrickChartSelector(**brick_parameters).prepare_df(frame)
+        assert_prepared_columns_equal(
+            self,
+            product_brick,
+            legacy_brick,
+            ["zxdq", "zxdkx", "wma_bull", "brick", "brick_growth", "_vec_pick"],
+        )
+        self.assertEqual(
+            ProductBrickChartSelector(**brick_parameters).vec_picks_from_prepared(
+                product_brick,
+                start=frame.index[-20],
+                end=frame.index[-1],
+            ),
+            select_stock.BrickChartSelector(**brick_parameters).vec_picks_from_prepared(
+                legacy_brick,
+                start=frame.index[-20],
+                end=frame.index[-1],
+            ),
+        )
+
     def test_product_warmup_bars_port_matches_legacy_warmup_calculation(self) -> None:
         cases = [
             ({}, 10),
@@ -565,6 +706,7 @@ print("pipeline.select_stock" in sys.modules)
         self.assertIsInstance(port.pick_dates, ProductPickDatePort)
         self.assertIsInstance(port.liquidity_pool, ProductLiquidityPoolPort)
         self.assertIsInstance(port.strategy_selectors, ProductStrategySelectorPort)
+        self.assertIsInstance(port.strategy_selectors.formula_factory, ProductStrategyFormulaFactoryPort)
 
     def test_legacy_port_orchestrates_named_selection_ports_and_preserves_identity_dedupe(self) -> None:
         calls: list[str] = []
@@ -689,9 +831,9 @@ print("pipeline.select_stock" in sys.modules)
             repository: RunRepository = app.state.run_repository
 
             with (
-                patch.object(select_stock, "B1Selector", FixtureB1Selector),
-                patch.object(select_stock, "B2Selector", FixtureB2Selector),
-                patch.object(select_stock, "BrickChartSelector", FixtureBrickSelector),
+                patch.object(product_selectors, "ProductB1Selector", FixtureB1Selector),
+                patch.object(product_selectors, "ProductB2Selector", FixtureB2Selector),
+                patch.object(product_selectors, "ProductBrickChartSelector", FixtureBrickSelector),
             ):
                 response = asyncio.run(
                     self._post_preselect(

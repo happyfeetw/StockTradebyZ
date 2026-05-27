@@ -2,7 +2,7 @@
 
 Managing issue: #152
 Parent epic: #23
-Status date: 2026-05-27
+Status date: 2026-05-28
 
 This document defines how R7 turns the rebuilt React/FastAPI/SQLite/DuckDB
 product into the supported local product while retiring legacy compatibility
@@ -36,6 +36,7 @@ Out of scope:
 | --- | --- | --- | --- |
 | `pipeline/cli.py` | Legacy preselect CLI writes `data/candidates/` | Retire by default behind explicit rollback flag | Golden parity, product preselect API proof, rollback note |
 | `pipeline/pipeline_io.py` | Candidate JSON writer/reader for `candidates_latest.json` | Keep import/read compatibility; block new product writes from depending on it | Legacy import verify, product UI/API no-read proof |
+| `pipeline/Selector.py` and `LegacyStrategyFormulaFactoryPort` | Legacy selector classes and product compatibility adapter | Product default uses `ProductStrategyFormulaFactoryPort`; legacy factory remains compatibility-only | Product selector preparation parity and `r7-selector-adapter-retirement` |
 | `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Retire by default behind explicit rollback flag | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Retire executable by default behind explicit rollback flag; keep helpers as behavior oracle | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Retire by default behind explicit rollback flag | Product archive API proof, history import verify, rollback note |
@@ -124,6 +125,10 @@ Out of scope:
    - Run-all retirement uses `docs/agent-harness/r7-run-all-retirement.md` and
      `scripts/harness/check.sh r7-run-all-retirement` for the legacy
      one-command orchestration wrapper.
+   - Selector adapter retirement uses
+     `docs/agent-harness/r7-selector-adapter-retirement.md` and
+     `scripts/harness/check.sh r7-selector-adapter-retirement` for product
+     formula-factory defaults.
    - Workbench retirement uses `docs/agent-harness/r7-workbench-retirement.md`
      and `scripts/harness/check.sh r7-workbench-retirement` for the legacy
      Streamlit workbench, background runner, and `start_workbench`.
@@ -172,6 +177,10 @@ prove the touched path:
 - run-all retirement: default stop guard, explicit rollback flag, product
   Run Center/API replacement proof, child flag rollback notes, and
   `scripts/harness/check.sh r7-run-all-retirement`;
+- selector adapter retirement: product-owned B1/B2/brick selector preparation
+  parity, default `ProductStrategyFormulaFactoryPort`, explicit legacy factory
+  rollback notes, and
+  `scripts/harness/check.sh r7-selector-adapter-retirement`;
 - workbench retirement: default stop guard, explicit rollback flag, product
   launcher/runtime replacement proof, and
   `scripts/harness/check.sh r7-workbench-retirement`;

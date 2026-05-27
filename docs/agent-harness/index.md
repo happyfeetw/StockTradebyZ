@@ -73,6 +73,9 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   React/FastAPI launcher and replacement path for `start_workbench`.
 - [r7-run-all-retirement.md](r7-run-all-retirement.md): default retirement
   guard and rollback flag for the legacy `run_all.py` orchestration wrapper.
+- [r7-selector-adapter-retirement.md](r7-selector-adapter-retirement.md):
+  product-owned selector formula factory and default retirement of legacy
+  selector compatibility adapters.
 - [r7-workbench-retirement.md](r7-workbench-retirement.md): default retirement
   guard and rollback flag for the legacy Streamlit workbench and runner.
 - [r7-runtime-terminal-integrity.md](r7-runtime-terminal-integrity.md):
@@ -103,6 +106,7 @@ scripts/harness/check.sh r7-preselect-cli-retirement
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-run-all-retirement
+scripts/harness/check.sh r7-selector-adapter-retirement
 scripts/harness/check.sh r7-workbench-retirement
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope

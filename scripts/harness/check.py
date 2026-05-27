@@ -47,6 +47,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
     Path("docs/agent-harness/r7-run-all-retirement.md"),
+    Path("docs/agent-harness/r7-selector-adapter-retirement.md"),
     Path("docs/agent-harness/r7-workbench-retirement.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
@@ -148,6 +149,7 @@ def check_docs() -> None:
             "docs/agent-harness/target-architecture-design.md",
             "docs/agent-harness/r7-hardening-retirement-plan.md",
             "docs/agent-harness/r7-run-all-retirement.md",
+            "docs/agent-harness/r7-selector-adapter-retirement.md",
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "(code, strategy)",
@@ -173,6 +175,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
             "scripts/harness/check.sh r7-run-all-retirement",
+            "scripts/harness/check.sh r7-selector-adapter-retirement",
             "scripts/harness/check.sh r7-workbench-retirement",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
@@ -508,6 +511,7 @@ def check_r7_retirement_plan() -> None:
             "`data/trading`",
             "`pipeline/cli.py`",
             "`pipeline/pipeline_io.py`",
+            "`pipeline/Selector.py`",
             "`agent/gemini_cli_review.py`",
             "`pipeline/archive_results.py`",
             "`dashboard/app.py`",
@@ -539,6 +543,8 @@ def check_r7_retirement_plan() -> None:
             "r7-product-launcher",
             "Run-all retirement",
             "r7-run-all-retirement",
+            "Selector adapter retirement",
+            "r7-selector-adapter-retirement",
             "Workbench retirement",
             "r7-workbench-retirement",
             "Retirement PRs",
@@ -1048,6 +1054,77 @@ def check_r7_run_all_retirement() -> None:
     print("[r7-run-all-retirement] ok")
 
 
+def check_r7_selector_adapter_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-selector-adapter-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Selector Adapter Retirement",
+            "ProductStrategyFormulaFactoryPort",
+            "ProductB1Selector",
+            "ProductB2Selector",
+            "ProductBrickChartSelector",
+            "LegacyStrategyFormulaFactoryPort",
+            "pipeline/Selector.py",
+            "src/stocktrade/domain/selection/selectors.py",
+            "simulated or paper trading",
+            "scripts/harness/check.sh r7-selector-adapter-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "src/stocktrade/domain/selection/selectors.py",
+        [
+            "class ProductB1Selector",
+            "class ProductB2Selector",
+            "class ProductBrickChartSelector",
+            "class ProductStrategyFormulaFactoryPort",
+            "compute_b1_pick_mask",
+            "compute_b2_pick_mask",
+            "compute_brick_pick_mask",
+            "vec_picks_from_prepared",
+            "brick_growth_on_date",
+        ],
+    )
+    assert_contains(
+        "src/stocktrade/domain/selection/preselect.py",
+        [
+            "ProductStrategyFormulaFactoryPort",
+            "LegacyStrategyFormulaFactoryPort",
+            "ProductStrategySelectorPort",
+            "strategy_selectors or ProductStrategySelectorPort",
+        ],
+    )
+    text = read("src/stocktrade/domain/selection/preselect.py")
+    default_index = text.index("strategy_selectors or ProductStrategySelectorPort")
+    product_index = text.index("ProductStrategyFormulaFactoryPort()", default_index)
+    self_module_index = text.find("LegacyStrategyFormulaFactoryPort(lambda: self.module)", default_index)
+    if self_module_index != -1 and self_module_index < product_index:
+        raise HarnessError("default product strategy selector must not use LegacyStrategyFormulaFactoryPort")
+    assert_contains(
+        "src/stocktrade/domain/selection/__init__.py",
+        [
+            "ProductB1Selector",
+            "ProductB2Selector",
+            "ProductBrickChartSelector",
+            "ProductStrategyFormulaFactoryPort",
+        ],
+    )
+    assert_contains(
+        "tests/test_preselect_domain_contracts.py",
+        [
+            "test_product_strategy_formula_factory_matches_legacy_selector_preparation",
+            "ProductStrategyFormulaFactoryPort",
+            "ProductB1Selector",
+            "ProductB2Selector",
+            "ProductBrickChartSelector",
+            "LegacyStrategyFormulaFactoryPort",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_preselect_domain_contracts"])
+    print("[r7-selector-adapter-retirement] ok")
+
+
 def check_r7_workbench_retirement() -> None:
     assert_contains(
         "docs/agent-harness/r7-workbench-retirement.md",
@@ -1326,6 +1403,7 @@ def parse_args() -> argparse.Namespace:
             "r7-chart-export-retirement",
             "r7-product-launcher",
             "r7-run-all-retirement",
+            "r7-selector-adapter-retirement",
             "r7-workbench-retirement",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
@@ -1376,6 +1454,8 @@ def main() -> int:
             check_r7_product_launcher()
         elif args.gate == "r7-run-all-retirement":
             check_r7_run_all_retirement()
+        elif args.gate == "r7-selector-adapter-retirement":
+            check_r7_selector_adapter_retirement()
         elif args.gate == "r7-workbench-retirement":
             check_r7_workbench_retirement()
         elif args.gate == "r7-runtime-terminal-integrity":

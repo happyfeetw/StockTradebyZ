@@ -25,6 +25,7 @@ requires it.
 | r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
 | r7-run-all-retirement | `scripts/harness/check.sh r7-run-all-retirement` | R7 default retirement guard for the legacy one-command orchestration wrapper |
+| r7-selector-adapter-retirement | `scripts/harness/check.sh r7-selector-adapter-retirement` | R7 product selector formula factory and legacy selector adapter retirement |
 | r7-workbench-retirement | `scripts/harness/check.sh r7-workbench-retirement` | R7 default retirement guard for the legacy Streamlit workbench and runner |
 | r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
@@ -375,6 +376,28 @@ scripts/harness/check.sh r7-run-all-retirement
 Run this before PRs that disable or remove the legacy one-command orchestration
 wrapper.
 
+## R7 Selector Adapter Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-selector-adapter-retirement.md` documents the product
+  selector factory, legacy compatibility boundary, validation, and rollback;
+- product selector classes live under `src/stocktrade/domain/selection/`;
+- default `LegacyPreselectExecutionPort` wiring uses
+  `ProductStrategyFormulaFactoryPort`, not `LegacyStrategyFormulaFactoryPort`;
+- parity tests compare product selector preparation columns against the legacy
+  selector oracle;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-selector-adapter-retirement
+```
+
+Run this before PRs that change product preselect selector defaults, retire
+legacy selector adapters, or remove legacy selector compatibility.
+
 ## R7 Workbench Retirement Gate
 
 Checks:
@@ -509,6 +532,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
 | R7 run_all retirement | r7-run-all-retirement + r7-retirement-plan | targeted harness test + quick before PR |
+| R7 selector adapter retirement | r7-selector-adapter-retirement + r7-retirement-plan | preselect domain contracts + quick before PR |
 | R7 workbench retirement | r7-workbench-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
@@ -527,4 +551,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement and r7-gemini-cli-review-retirement for reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement, r7-archive-retirement, and r7-preselect-cli-retirement for legacy file-writer retirement, r7-run-all-retirement for one-command wrapper retirement, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement and r7-gemini-cli-review-retirement for reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement, r7-archive-retirement, and r7-preselect-cli-retirement for legacy file-writer retirement, r7-run-all-retirement for one-command wrapper retirement, r7-selector-adapter-retirement for product selector defaults, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

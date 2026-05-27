@@ -6,13 +6,19 @@ Humans decide product boundaries, trading risk posture, and whether a workflow
 should exist. Agents should turn those decisions into small, reviewable patches,
 tests, docs, and validation evidence.
 
+The current product-level refactor boundaries are fixed unless the user changes
+them: Python domain logic, React/Vite/TypeScript frontend, FastAPI backend,
+SQLite product state, DuckDB analytical data, and no simulated trading rewrite.
+Within those boundaries, agents own routine implementation decisions and should
+record durable choices in issues, PRs, docs, tests, or harness checks.
+
 For this repo, humans should explicitly decide before agents:
 
 - change strategy semantics;
 - change Gemini scoring prompts or thresholds;
 - change simulated trading rules, which are outside the product-level refactor
   unless explicitly reopened;
-- add production dependencies;
+- add production dependencies outside the confirmed stack;
 - migrate storage contracts.
 
 ## 2. Repository Is the Record System

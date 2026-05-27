@@ -37,7 +37,7 @@ R5 workstation UI that consumes those APIs.
 | R2 Target architecture and data model | Baseline complete, needs drift control | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep this file and architecture design in sync with implementation |
 | R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | Retire legacy selector compatibility adapters during R7 only after product API/storage/UI cutover evidence exists |
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
-| R5 Frontend product UI/UX | Scaffold plus workflow views | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109 | #114 must productize IA, dense tables, chart evidence, and state coverage |
+| R5 Frontend product UI/UX | Scaffold plus workflow views; workstation IA first slice active | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts | #114 still needs deeper dense-table refinement, chart evidence surfacing, and broader browser evidence across core workflows |
 | R6 Data migration and storage cutover | Migration/import tooling partial | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96 | #115 must define and execute source-of-truth cutover for in-scope workflows |
 | R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
 
@@ -60,6 +60,9 @@ evidence:
 - Backup and restore APIs for local SQLite/DuckDB/artifact state.
 - React/Vite app shell with runs, candidates, reviews, archive, and migrations
   views wired to typed API calls.
+- React workstation IA now includes Overview, Analytics, and Settings routes
+  wired to typed settings, strategy metadata, and DuckDB strategy-summary
+  contracts.
 - Product review provider boundary plus Gemini CLI provider adapter preserving
   checkpoint, retry/backoff, raw logs, skip cache, batch order validation, and
   chart lineage.

@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   Archive,
   Ban,
+  BarChart3,
   CheckCircle2,
   Clock3,
+  Cog,
   Database,
   ExternalLink,
   FileSearch,
@@ -18,8 +20,10 @@ import {
   RefreshCw,
   Search,
   Server,
+  Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Upload,
   XCircle,
 } from 'lucide-react'
@@ -33,6 +37,9 @@ import {
   createPreselectRun,
   createReviewProviderRun,
   dryRunLegacyImport,
+  getSettings,
+  getStrategies,
+  getStrategySummary,
   getArchiveRow,
   getCandidate,
   getHealth,
@@ -49,6 +56,7 @@ import {
   listCandidates,
   listRuns,
   listReviews,
+  putSettings,
   verifyLegacyImport,
   type ArchiveRow,
   type ArchiveRowFilters,
@@ -65,19 +73,28 @@ import {
   type LegacyImportVerifyReport,
   type LegacyImportVerifyScope,
   type PreselectRunRequest,
+  type ProductPreferenceSettings,
+  type ProductSettingsResponse,
   type RecommendationStatus,
   type Review,
   type ReviewFilters,
   type RunStatus,
   type RunSummary,
+  type StrategyDefinition,
+  type StrategyPreferenceId,
+  type StrategySummaryFilters,
+  type StrategySummaryRow,
 } from './api'
 
 const navItems = [
-  { to: '/runs', label: 'Runs', icon: Activity, state: 'active' },
+  { to: '/overview', label: 'Overview', icon: Gauge, state: 'active' },
+  { to: '/runs', label: 'Run Center', icon: Activity, state: 'active' },
   { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
   { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
   { to: '/archive', label: 'Archive', icon: Archive, state: 'active' },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, state: 'active' },
   { to: '/migrations', label: 'Migrations', icon: Database, state: 'active' },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon, state: 'active' },
 ]
 
 const statusLabels: Record<RunStatus, string> = {
@@ -122,14 +139,496 @@ function App() {
 
       <main className="main-surface">
         <Routes>
-          <Route path="/" element={<Navigate to="/runs" replace />} />
+          <Route path="/" element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<OverviewView />} />
           <Route path="/runs" element={<RunsView />} />
           <Route path="/candidates" element={<CandidatesView />} />
           <Route path="/reviews" element={<ReviewsView />} />
           <Route path="/archive" element={<ArchiveView />} />
+          <Route path="/analytics" element={<AnalyticsView />} />
           <Route path="/migrations" element={<MigrationsView />} />
+          <Route path="/settings" element={<SettingsView />} />
         </Routes>
       </main>
+    </div>
+  )
+}
+
+function OverviewView() {
+  const queryClient = useQueryClient()
+  const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
+  const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: getStrategies })
+  const analyticsQuery = useQuery({
+    queryKey: ['strategy-summary', { limit: '5' }],
+    queryFn: () => getStrategySummary({ limit: '5' }),
+  })
+  const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 5_000 })
+
+  const recentRuns = runsQuery.data?.runs.slice(0, 5) ?? []
+  const defaultStrategies = settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? []
+  const configuredIntegrations = settingsQuery.data?.external_integrations.filter((integration) => integration.configured).length ?? 0
+  const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Research workstation</p>
+          <h1>Overview</h1>
+        </div>
+        <button
+          type="button"
+          className="icon-button secondary"
+          aria-label="Refresh overview"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['health'] })
+            queryClient.invalidateQueries({ queryKey: ['settings'] })
+            queryClient.invalidateQueries({ queryKey: ['strategies'] })
+            queryClient.invalidateQueries({ queryKey: ['strategy-summary'] })
+            queryClient.invalidateQueries({ queryKey: ['runs'] })
+          }}
+        >
+          <RefreshCw size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      <section className="summary-strip" aria-label="Workstation summary">
+        <Metric label="API" value={healthState === 'online' ? 'Online' : healthState === 'offline' ? 'Offline' : 'Checking'} />
+        <Metric label="Settings" value={settingsQuery.data?.product_preferences.source === 'sqlite' ? 'Saved' : 'Defaults'} />
+        <Metric label="Strategies" value={(strategiesQuery.data?.strategies.length ?? 0).toString()} />
+        <Metric label="Analytics rows" value={(analyticsQuery.data?.totals.total ?? 0).toString()} />
+      </section>
+
+      {healthQuery.isError || settingsQuery.isError || strategiesQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(healthQuery.error ?? settingsQuery.error ?? strategiesQuery.error)}</span>
+        </div>
+      ) : null}
+
+      <div className="overview-grid">
+        <section className="overview-panel" aria-label="System state">
+          <div className="panel-heading">
+            <div>
+              <h2>System state</h2>
+              <p>{settingsQuery.isLoading ? 'Loading product settings' : `${configuredIntegrations} integrations configured`}</p>
+            </div>
+            <Link className="artifact-open-link" to="/settings">
+              <SettingsIcon size={15} aria-hidden="true" />
+              <span>Settings</span>
+            </Link>
+          </div>
+          {settingsQuery.isLoading ? <RunSkeleton /> : null}
+          {settingsQuery.data ? (
+            <div className="overview-state-list">
+              <DataPair label="SQLite" value={settingsQuery.data.local_state.sqlite_path} />
+              <DataPair label="DuckDB" value={settingsQuery.data.local_state.duckdb_path ?? 'Disabled'} />
+              <DataPair label="Preferences" value={settingsQuery.data.product_preferences.source === 'sqlite' ? 'Stored in SQLite' : 'Using defaults'} />
+              <DataPair label="Simulated trading" value={settingsQuery.data.simulated_trading_in_scope ? 'In scope' : 'Out of scope'} />
+            </div>
+          ) : null}
+        </section>
+
+        <section className="overview-panel" aria-label="Strategy readiness">
+          <div className="panel-heading">
+            <div>
+              <h2>Strategy readiness</h2>
+              <p>{strategiesQuery.isLoading ? 'Loading strategies' : `Default: ${defaultStrategies.join(', ') || 'none'}`}</p>
+            </div>
+            <Link className="artifact-open-link" to="/analytics">
+              <BarChart3 size={15} aria-hidden="true" />
+              <span>Analytics</span>
+            </Link>
+          </div>
+          {strategiesQuery.isLoading ? <RunSkeleton /> : null}
+          <div className="strategy-card-grid">
+            {strategiesQuery.data?.strategies.map((strategy) => (
+              <StrategyCard key={strategy.id} strategy={strategy} selected={defaultStrategies.includes(strategy.id)} />
+            ))}
+          </div>
+        </section>
+
+        <section className="overview-panel" aria-label="Recent runs">
+          <div className="panel-heading">
+            <div>
+              <h2>Recent runs</h2>
+              <p>{runsQuery.isLoading ? 'Loading run history' : `${recentRuns.length} latest runs`}</p>
+            </div>
+            <Link className="artifact-open-link" to="/runs">
+              <Activity size={15} aria-hidden="true" />
+              <span>Run center</span>
+            </Link>
+          </div>
+          {runsQuery.isLoading ? <RunSkeleton /> : null}
+          {runsQuery.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(runsQuery.error)}</span>
+            </div>
+          ) : null}
+          {!runsQuery.isLoading && !runsQuery.isError && recentRuns.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <Activity size={24} aria-hidden="true" />
+              <h3>No runs yet</h3>
+            </div>
+          ) : null}
+          <div className="overview-run-list">
+            {recentRuns.map((run) => (
+              <Link key={run.id} className="overview-run-row" to={`/runs?run_id=${encodeURIComponent(run.id)}`}>
+                <StatusBadge status={run.status} />
+                <span>
+                  <strong>{run.kind}</strong>
+                  <small>{run.pick_date ?? 'No pick date'} / {formatDateTime(run.created_at)}</small>
+                </span>
+                <code>{run.id}</code>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        <section className="overview-panel" aria-label="Strategy analytics">
+          <div className="panel-heading">
+            <div>
+              <h2>Strategy summary</h2>
+              <p>{analyticsQuery.isLoading ? 'Loading DuckDB summary' : `${analyticsQuery.data?.rows.length ?? 0} rows`}</p>
+            </div>
+          </div>
+          {analyticsQuery.isLoading ? <RunSkeleton /> : null}
+          {analyticsQuery.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(analyticsQuery.error)}</span>
+            </div>
+          ) : null}
+          {!analyticsQuery.isLoading && !analyticsQuery.isError && (analyticsQuery.data?.rows.length ?? 0) === 0 ? (
+            <div className="empty-state compact-empty">
+              <BarChart3 size={24} aria-hidden="true" />
+              <h3>No strategy metrics yet</h3>
+            </div>
+          ) : null}
+          <StrategySummaryList rows={analyticsQuery.data?.rows ?? []} />
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function AnalyticsView() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = strategySummaryFiltersFromParams(searchParams)
+  const normalizedFilters = {
+    pick_date: filters.pick_date.trim(),
+    run_id: filters.run_id.trim(),
+    strategy: filters.strategy.trim(),
+    limit: filters.limit.trim() || '100',
+  }
+  const hasFilters = Boolean(normalizedFilters.pick_date || normalizedFilters.run_id || normalizedFilters.strategy || normalizedFilters.limit !== '100')
+  const summaryQuery = useQuery({
+    queryKey: ['strategy-summary', normalizedFilters],
+    queryFn: () => getStrategySummary(normalizedFilters),
+  })
+
+  function updateFilter(key: keyof Required<StrategySummaryFilters>, value: string) {
+    const nextFilters = { ...filters, [key]: value }
+    setSearchParams(strategySummaryFiltersToParams(nextFilters), { replace: true })
+  }
+
+  function resetFilters() {
+    setSearchParams(strategySummaryFiltersToParams(emptyStrategySummaryFilters()), { replace: true })
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">DuckDB analysis</p>
+          <h1>Strategy analytics</h1>
+        </div>
+      </header>
+
+      <form className="filter-bar analytics-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Strategy analytics filters">
+        <FilterInput
+          label="Pick date"
+          placeholder="2026-05-27"
+          type="date"
+          value={filters.pick_date}
+          onChange={(value) => updateFilter('pick_date', value)}
+        />
+        <FilterInput label="Run id" placeholder="run id" value={filters.run_id} onChange={(value) => updateFilter('run_id', value)} />
+        <FilterInput label="Strategy" placeholder="b1 / b2 / brick" value={filters.strategy} onChange={(value) => updateFilter('strategy', value)} />
+        <FilterInput label="Limit" placeholder="100" value={filters.limit} onChange={(value) => updateFilter('limit', value)} />
+        <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
+          <XCircle size={17} aria-hidden="true" />
+          <span>Clear</span>
+        </button>
+      </form>
+
+      {summaryQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(summaryQuery.error)}</span>
+        </div>
+      ) : null}
+
+      <section className="summary-strip" aria-label="Analytics totals">
+        <Metric label="Total" value={(summaryQuery.data?.totals.total ?? 0).toString()} />
+        <Metric label="Reviewed" value={(summaryQuery.data?.totals.reviewed ?? 0).toString()} />
+        <Metric label="Recommended" value={(summaryQuery.data?.totals.recommended ?? 0).toString()} />
+        <Metric label="Recommended rate" value={formatPercent(summaryQuery.data?.totals.recommended_rate ?? 0)} />
+      </section>
+
+      <section className="analytics-panel" aria-label="Strategy summary table">
+        <div className="panel-heading">
+          <div>
+            <h2>Strategy/date/run comparison</h2>
+            <p>{summaryQuery.isLoading ? 'Loading summary rows' : `${summaryQuery.data?.rows.length ?? 0} rows`}</p>
+          </div>
+        </div>
+        {summaryQuery.isLoading ? <RunSkeleton /> : null}
+        {!summaryQuery.isLoading && (summaryQuery.data?.rows.length ?? 0) === 0 ? (
+          <div className="empty-state">
+            <BarChart3 size={24} aria-hidden="true" />
+            <h3>{hasFilters ? 'No strategy metrics match the filters' : 'No strategy metrics yet'}</h3>
+          </div>
+        ) : null}
+        {(summaryQuery.data?.rows.length ?? 0) > 0 ? (
+          <div className="analytics-table-wrap">
+            <table className="data-table strategy-summary-table">
+              <thead>
+                <tr>
+                  <th>Pick date</th>
+                  <th>Strategy</th>
+                  <th>Total</th>
+                  <th>Reviewed</th>
+                  <th>Recommended</th>
+                  <th>Unreviewed</th>
+                  <th>Rate</th>
+                  <th>Run</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryQuery.data?.rows.map((row) => (
+                  <tr key={`${row.pick_date}-${row.run_id}-${row.strategy}`}>
+                    <td>{row.pick_date}</td>
+                    <td><span className="strategy-chip">{row.strategy}</span></td>
+                    <td>{row.total}</td>
+                    <td>{row.reviewed}</td>
+                    <td>{row.recommended}</td>
+                    <td>{row.unreviewed}</td>
+                    <td>{formatPercent(row.recommended_rate)}</td>
+                    <td><code>{row.run_id}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  )
+}
+
+function SettingsView() {
+  const queryClient = useQueryClient()
+  const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: getStrategies })
+  const [formDraft, setFormDraft] = useState<ProductPreferenceSettings | null>(null)
+  const serverPreferences = settingsQuery.data?.product_preferences.preferences ?? null
+  const form = formDraft ?? serverPreferences
+  const settingsMutation = useMutation({
+    mutationFn: (preferences: ProductPreferenceSettings) => putSettings({ preferences }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['settings'], data)
+      setFormDraft(null)
+    },
+  })
+
+  function updateForm<K extends keyof ProductPreferenceSettings>(key: K, value: ProductPreferenceSettings[K]) {
+    setFormDraft((current) => {
+      const base = current ?? serverPreferences
+      return base ? { ...base, [key]: value } : current
+    })
+  }
+
+  function toggleStrategy(strategyId: StrategyPreferenceId) {
+    setFormDraft((current) => {
+      const base = current ?? serverPreferences
+      if (!base) return current
+      const selected = base.default_strategy_ids.includes(strategyId)
+      const next = selected
+        ? base.default_strategy_ids.filter((id) => id !== strategyId)
+        : [...base.default_strategy_ids, strategyId]
+      return { ...base, default_strategy_ids: next }
+    })
+  }
+
+  function submitSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!form) return
+    settingsMutation.mutate(form)
+  }
+
+  return (
+    <div className="run-center">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Product configuration</p>
+          <h1>Settings</h1>
+        </div>
+        <button
+          type="button"
+          className="icon-button secondary"
+          aria-label="Refresh settings"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['settings'] })
+            queryClient.invalidateQueries({ queryKey: ['strategies'] })
+          }}
+        >
+          <RefreshCw size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      {settingsQuery.isError || strategiesQuery.isError || settingsMutation.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(settingsQuery.error ?? strategiesQuery.error ?? settingsMutation.error)}</span>
+        </div>
+      ) : null}
+      {settingsMutation.isSuccess ? (
+        <div className="alert success-alert" role="status">
+          <CheckCircle2 size={18} aria-hidden="true" />
+          <span>Product preferences saved to SQLite.</span>
+        </div>
+      ) : null}
+
+      <div className="settings-grid">
+        <section className="settings-panel" aria-label="Product preferences">
+          <div className="panel-heading">
+            <div>
+              <h2>Product preferences</h2>
+              <p>
+                {settingsQuery.isLoading
+                  ? 'Loading preferences'
+                  : `${settingsQuery.data?.product_preferences.source === 'sqlite' ? 'SQLite saved' : 'Default values'} / ${formatDateTime(settingsQuery.data?.product_preferences.updated_at ?? null)}`}
+              </p>
+            </div>
+          </div>
+          {settingsQuery.isLoading || !form ? <RunSkeleton /> : null}
+          {form ? (
+            <form className="settings-form" onSubmit={submitSettings}>
+              <div className="settings-form-grid">
+                <label className="filter-field">
+                  <span>Timezone</span>
+                  <input value={form.timezone} onChange={(event) => updateForm('timezone', event.target.value)} />
+                </label>
+                <label className="filter-field">
+                  <span>Theme</span>
+                  <select value={form.theme} onChange={(event) => updateForm('theme', event.target.value as ProductPreferenceSettings['theme'])}>
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Table density</span>
+                  <select
+                    value={form.table_density}
+                    onChange={(event) => updateForm('table_density', event.target.value as ProductPreferenceSettings['table_density'])}
+                  >
+                    <option value="comfortable">Comfortable</option>
+                    <option value="compact">Compact</option>
+                  </select>
+                </label>
+                <NumberPreference
+                  label="Analytics limit"
+                  value={form.analytics_default_limit}
+                  min={1}
+                  max={500}
+                  onChange={(value) => updateForm('analytics_default_limit', value)}
+                />
+                <NumberPreference
+                  label="Candidate page size"
+                  value={form.candidate_page_size}
+                  min={10}
+                  max={500}
+                  onChange={(value) => updateForm('candidate_page_size', value)}
+                />
+                <NumberPreference
+                  label="Review page size"
+                  value={form.review_page_size}
+                  min={10}
+                  max={500}
+                  onChange={(value) => updateForm('review_page_size', value)}
+                />
+                <NumberPreference
+                  label="Archive page size"
+                  value={form.archive_page_size}
+                  min={10}
+                  max={500}
+                  onChange={(value) => updateForm('archive_page_size', value)}
+                />
+              </div>
+
+              <fieldset className="strategy-selector">
+                <legend>Default strategies</legend>
+                <div className="strategy-toggle-grid">
+                  {(strategiesQuery.data?.strategies ?? []).map((strategy) => (
+                    <label key={strategy.id} className="strategy-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.default_strategy_ids.includes(strategy.id)}
+                        onChange={() => toggleStrategy(strategy.id)}
+                      />
+                      <span>
+                        <strong>{strategy.label}</strong>
+                        <small>{strategy.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className="settings-toggle-row">
+                <label className="binary-toggle">
+                  <input
+                    type="checkbox"
+                    checked={form.chart_export_enabled}
+                    onChange={(event) => updateForm('chart_export_enabled', event.target.checked)}
+                  />
+                  <span>Chart export enabled</span>
+                </label>
+                <label className="binary-toggle">
+                  <input
+                    type="checkbox"
+                    checked={form.auto_archive_after_review}
+                    onChange={(event) => updateForm('auto_archive_after_review', event.target.checked)}
+                  />
+                  <span>Auto archive after review</span>
+                </label>
+              </div>
+
+              <div className="button-row settings-actions">
+                <button type="submit" className="action-button" disabled={settingsMutation.isPending || form.default_strategy_ids.length === 0}>
+                  {settingsMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <SlidersHorizontal size={17} aria-hidden="true" />}
+                  <span>Save preferences</span>
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </section>
+
+        <section className="settings-panel" aria-label="Local state and integrations">
+          <div className="panel-heading">
+            <div>
+              <h2>Local state</h2>
+              <p>SQLite owns product state; DuckDB owns analytics.</p>
+            </div>
+          </div>
+          {settingsQuery.isLoading ? <RunSkeleton /> : null}
+          {settingsQuery.data ? <SettingsInventory settings={settingsQuery.data} /> : null}
+        </section>
+      </div>
     </div>
   )
 }
@@ -1912,6 +2411,116 @@ function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
   )
 }
 
+function StrategyCard({ strategy, selected }: { strategy: StrategyDefinition; selected: boolean }) {
+  return (
+    <article className={selected ? 'strategy-card selected' : 'strategy-card'}>
+      <span className="strategy-card-head">
+        <strong>{strategy.label}</strong>
+        <span className="strategy-chip">{selected ? 'Default' : strategy.enabled_by_default ? 'Config default' : 'Available'}</span>
+      </span>
+      <p>{strategy.description}</p>
+      <small>{strategy.config_provenance.path} / {strategy.config_provenance.section}</small>
+    </article>
+  )
+}
+
+function StrategySummaryList({ rows }: { rows: StrategySummaryRow[] }) {
+  if (rows.length === 0) return null
+  return (
+    <div className="strategy-summary-list">
+      {rows.map((row) => (
+        <div key={`${row.pick_date}-${row.run_id}-${row.strategy}`} className="strategy-summary-row">
+          <span>
+            <strong>{row.pick_date}</strong>
+            <small>{row.run_id}</small>
+          </span>
+          <span className="strategy-chip">{row.strategy}</span>
+          <span>{row.total} total</span>
+          <span>{formatPercent(row.recommended_rate)} rec</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function NumberPreference({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="filter-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  )
+}
+
+function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) {
+  return (
+    <div className="settings-inventory">
+      <div className="overview-state-list">
+        <DataPair label="SQLite" value={settings.local_state.sqlite_path} />
+        <DataPair label="DuckDB" value={settings.local_state.duckdb_path ?? 'Disabled'} />
+        <DataPair label="Artifacts" value={settings.local_state.artifact_root} />
+        <DataPair label="Backups" value={settings.local_state.backup_root} />
+      </div>
+
+      <div className="settings-subsection">
+        <h3>Safe config files</h3>
+        <div className="settings-list">
+          {settings.config_files.map((config) => (
+            <div key={config.key} className="settings-list-row">
+              <Cog size={16} aria-hidden="true" />
+              <span>
+                <strong>{config.key}</strong>
+                <small>{config.path}</small>
+              </span>
+              <span className={config.exists ? 'status-badge succeeded' : 'status-badge failed'}>
+                {config.exists ? <CheckCircle2 size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}
+                {config.exists ? 'Found' : 'Missing'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-subsection">
+        <h3>External integrations</h3>
+        <div className="settings-list">
+          {settings.external_integrations.map((integration) => (
+            <div key={integration.key} className="settings-list-row">
+              <Server size={16} aria-hidden="true" />
+              <span>
+                <strong>{integration.label}</strong>
+                <small>{integration.source}</small>
+              </span>
+              <span className={integration.configured ? 'status-badge succeeded' : 'status-badge queued'}>
+                {integration.configured ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldAlert size={15} aria-hidden="true" />}
+                {integration.configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FilterInput({
   label,
   value,
@@ -2065,6 +2674,10 @@ function formatDateTime(value: string | null) {
 function formatNumber(value: number | null) {
   if (value === null || Number.isNaN(value)) return 'Not set'
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value)
+}
+
+function formatPercent(value: number) {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value * 100)}%`
 }
 
 function formatRank(review: Review) {
@@ -2222,6 +2835,36 @@ function archiveFiltersToParams(filters: Required<ArchiveRowFilters>) {
   })
   if (filters.status !== 'all') {
     params.set('status', filters.status)
+  }
+  return params
+}
+
+function emptyStrategySummaryFilters(): Required<StrategySummaryFilters> {
+  return {
+    pick_date: '',
+    run_id: '',
+    strategy: '',
+    limit: '100',
+  }
+}
+
+function strategySummaryFiltersFromParams(params: URLSearchParams): Required<StrategySummaryFilters> {
+  return {
+    pick_date: paramValue(params, 'pick_date'),
+    run_id: paramValue(params, 'run_id'),
+    strategy: paramValue(params, 'strategy'),
+    limit: paramValue(params, 'limit') || '100',
+  }
+}
+
+function strategySummaryFiltersToParams(filters: Required<StrategySummaryFilters>) {
+  const params = nonEmptyParams({
+    pick_date: filters.pick_date,
+    run_id: filters.run_id,
+    strategy: filters.strategy,
+  })
+  if (filters.limit.trim() && filters.limit.trim() !== '100') {
+    params.set('limit', filters.limit.trim())
   }
   return params
 }

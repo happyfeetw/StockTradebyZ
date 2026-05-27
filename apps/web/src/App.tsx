@@ -665,6 +665,7 @@ function CandidatesView() {
   const activeBatch = candidateBatches.find((batch) => batch.id === activeBatchId) ?? null
   const selectedStillVisible = selectedCandidateId !== null && candidates.some((candidate) => candidate.id === selectedCandidateId)
   const activeCandidateId = selectedStillVisible ? selectedCandidateId : candidates[0]?.id
+  const activeCandidate = candidates.find((candidate) => candidate.id === activeCandidateId) ?? null
 
   const detailQuery = useQuery({
     queryKey: ['candidate', activeCandidateId],
@@ -990,6 +991,12 @@ function CandidatesView() {
               <h2>Candidate rows</h2>
               <p>{candidatesQuery.isLoading ? 'Loading candidate rows' : `${candidatesQuery.data?.total ?? 0} records`}</p>
             </div>
+            <ListSummaryChips
+              loaded={candidates.length}
+              total={candidatesQuery.data?.total ?? 0}
+              selected={activeCandidate ? `${activeCandidate.code} / ${activeCandidate.strategy}` : null}
+              filtered={hasFilters}
+            />
           </div>
 
           {candidatesQuery.isLoading ? <RunSkeleton /> : null}
@@ -1000,6 +1007,9 @@ function CandidatesView() {
             </div>
           ) : null}
 
+          {candidates.length > 0 ? (
+            <DenseListHeader className="candidate-result-header" columns={['Code / strategy', 'Pick date', 'Close', 'Turnover', 'Brick growth']} />
+          ) : null}
           <div className="candidate-list">
             {candidates.map((candidate) => (
               <button
@@ -1008,6 +1018,7 @@ function CandidatesView() {
                 className={candidate.id === activeCandidateId ? 'candidate-row selected' : 'candidate-row'}
                 onClick={() => setSelectedCandidateId(candidate.id)}
                 aria-label={`${candidate.code} ${candidate.strategy} candidate from run ${candidate.run_id}`}
+                aria-pressed={candidate.id === activeCandidateId}
               >
                 <span className="candidate-row-head">
                   <span className="candidate-code">{candidate.code}</span>
@@ -1017,9 +1028,13 @@ function CandidatesView() {
                 <CandidateCell label="Close" value={formatNumber(candidate.close)} strong />
                 <CandidateCell label="Turnover" value={formatNumber(candidate.turnover_n)} />
                 <CandidateCell label="Brick growth" value={formatNumber(candidate.brick_growth)} />
-                <CandidateCell label="Run" value={candidate.run_id} mono wide />
-                <CandidateCell label="Batch" value={candidate.batch_id} mono wide />
-                <CandidateCell label="Extra" value={jsonInline(candidate.extra)} extra />
+                <RowLineageStrip
+                  items={[
+                    { label: 'Run', value: candidate.run_id, mono: true },
+                    { label: 'Batch', value: candidate.batch_id, mono: true },
+                    { label: 'Extra', value: jsonInline(candidate.extra) },
+                  ]}
+                />
               </button>
             ))}
           </div>
@@ -1071,6 +1086,7 @@ function ReviewsView() {
   const reviews = reviewsQuery.data?.reviews ?? []
   const selectedStillVisible = selectedReviewId !== null && reviews.some((review) => review.id === selectedReviewId)
   const activeReviewId = selectedStillVisible ? selectedReviewId : reviews[0]?.id
+  const activeReview = reviews.find((review) => review.id === activeReviewId) ?? null
 
   const detailQuery = useQuery({
     queryKey: ['review', activeReviewId],
@@ -1182,6 +1198,12 @@ function ReviewsView() {
               <h2>Review rows</h2>
               <p>{reviewsQuery.isLoading ? 'Loading review rows' : `${reviewsQuery.data?.total ?? 0} records`}</p>
             </div>
+            <ListSummaryChips
+              loaded={reviews.length}
+              total={reviewsQuery.data?.total ?? 0}
+              selected={activeReview ? `${activeReview.code} / ${activeReview.strategy}` : null}
+              filtered={hasFilters}
+            />
           </div>
 
           {reviewsQuery.isLoading ? <RunSkeleton /> : null}
@@ -1192,6 +1214,9 @@ function ReviewsView() {
             </div>
           ) : null}
 
+          {reviews.length > 0 ? (
+            <DenseListHeader className="review-result-header" columns={['Code / strategy', 'Verdict', 'Score', 'Rank', 'Pick date']} />
+          ) : null}
           <div className="review-list">
             {reviews.map((review) => (
               <button
@@ -1200,6 +1225,7 @@ function ReviewsView() {
                 className={review.id === activeReviewId ? 'review-row selected' : 'review-row'}
                 onClick={() => setSelectedReviewId(review.id)}
                 aria-label={`${review.code} ${review.strategy} review ${review.review_key}`}
+                aria-pressed={review.id === activeReviewId}
               >
                 <span className="review-row-head">
                   <span className="candidate-code">{review.code}</span>
@@ -1209,9 +1235,13 @@ function ReviewsView() {
                 <CandidateCell label="Score" value={formatNumber(review.total_score)} strong />
                 <CandidateCell label="Rank" value={formatRank(review)} />
                 <CandidateCell label="Pick date" value={review.pick_date} />
-                <CandidateCell label="Review key" value={review.review_key} mono wide extra />
-                <CandidateCell label="Run" value={review.run_id} mono wide />
-                <CandidateCell label="Reviewer" value={reviewerName(review)} />
+                <RowLineageStrip
+                  items={[
+                    { label: 'Review key', value: review.review_key, mono: true },
+                    { label: 'Run', value: review.run_id, mono: true },
+                    { label: 'Reviewer', value: reviewerName(review) },
+                  ]}
+                />
               </button>
             ))}
           </div>
@@ -1271,6 +1301,7 @@ function ArchiveView() {
   const rows = rowsQuery.data?.rows ?? []
   const selectedStillVisible = selectedRowId !== null && rows.some((row) => row.id === selectedRowId)
   const activeRowId = selectedStillVisible ? selectedRowId : rows[0]?.id
+  const activeArchiveRow = rows.find((row) => row.id === activeRowId) ?? null
 
   const detailQuery = useQuery({
     queryKey: ['archive-row', activeRowId],
@@ -1431,6 +1462,12 @@ function ArchiveView() {
                     : 'Select an archive date'}
               </p>
             </div>
+            <ListSummaryChips
+              loaded={rows.length}
+              total={rowsQuery.data?.total ?? 0}
+              selected={activeArchiveRow ? `${activeArchiveRow.code} / ${activeArchiveRow.strategy}` : null}
+              filtered={hasFilters}
+            />
           </div>
 
           {rowsQuery.isLoading ? <RunSkeleton /> : null}
@@ -1447,6 +1484,7 @@ function ArchiveView() {
             </div>
           ) : null}
 
+          {rows.length > 0 ? <DenseListHeader className="archive-result-header" columns={['Code / strategy', 'Status', 'Rank', 'Close']} /> : null}
           <div className="archive-list">
             {rows.map((row) => (
               <button
@@ -1455,6 +1493,7 @@ function ArchiveView() {
                 className={row.id === activeRowId ? 'archive-row selected' : 'archive-row'}
                 onClick={() => setSelectedRowId(row.id)}
                 aria-label={`${row.code} ${row.strategy} archive row ${row.review_key}`}
+                aria-pressed={row.id === activeRowId}
               >
                 <span className="review-row-head">
                   <span className="candidate-code">{row.code}</span>
@@ -1463,9 +1502,14 @@ function ArchiveView() {
                 <span className={`archive-status-chip ${archiveStatusClass(row.status)}`}>{archiveStatusLabel(row.status)}</span>
                 <CandidateCell label="Rank" value={formatArchiveRank(row)} />
                 <CandidateCell label="Close" value={formatNumber(row.close)} strong />
-                <CandidateCell label="Review key" value={row.review_key} mono wide extra />
-                <CandidateCell label="Run" value={row.run_id} mono wide />
-                <CandidateCell label="Chart" value={row.chart || 'Not linked'} wide extra />
+                <RowLineageStrip
+                  items={[
+                    { label: 'Review key', value: row.review_key, mono: true },
+                    { label: 'Run', value: row.run_id, mono: true },
+                    { label: 'Chart', value: archiveChartState(row) },
+                    { label: 'Chart path', value: row.chart || 'Not linked' },
+                  ]}
+                />
               </button>
             ))}
           </div>
@@ -2837,6 +2881,57 @@ function CandidateCell({
   )
 }
 
+function DenseListHeader({ className, columns }: { className: string; columns: string[] }) {
+  return (
+    <div className={`dense-list-header ${className}`} aria-hidden="true">
+      {columns.map((column) => (
+        <span key={column}>{column}</span>
+      ))}
+    </div>
+  )
+}
+
+function ListSummaryChips({
+  loaded,
+  total,
+  selected,
+  filtered,
+}: {
+  loaded: number
+  total: number
+  selected: string | null
+  filtered: boolean
+}) {
+  return (
+    <div className="list-summary-chips" aria-label="List summary">
+      <span className="list-summary-chip">{loaded}/{total} loaded</span>
+      {selected ? <span className="list-summary-chip selected">Selected {selected}</span> : null}
+      {filtered ? <span className="list-summary-chip filtered">Filtered</span> : null}
+    </div>
+  )
+}
+
+function RowLineageStrip({
+  items,
+}: {
+  items: Array<{
+    label: string
+    value: string
+    mono?: boolean
+  }>
+}) {
+  return (
+    <span className="row-lineage-strip">
+      {items.map((item) => (
+        <span key={item.label} className="row-lineage-item" title={item.value}>
+          <span>{item.label}</span>
+          <strong className={item.mono ? 'mono' : undefined}>{item.value}</strong>
+        </span>
+      ))}
+    </span>
+  )
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -2931,6 +3026,12 @@ function archiveStatusClass(status: ArchiveRow['status']) {
   if (status === 'recommended') return 'recommended'
   if (status === 'reviewed') return 'reviewed'
   return 'unreviewed'
+}
+
+function archiveChartState(row: ArchiveRow) {
+  if (row.chart_artifact_id) return 'Artifact linked'
+  if (row.chart) return 'Legacy path'
+  return 'Not linked'
 }
 
 function formatArchiveRank(row: ArchiveRow) {

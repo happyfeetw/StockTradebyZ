@@ -151,6 +151,7 @@ def create_preselect_run(
     request: PreselectRunRequest,
     runtime: JobRuntime = Depends(get_job_runtime),
     service: Any = Depends(get_preselect_service),
+    analytics_writer: DuckDBAnalyticsWriter | None = Depends(get_analytics_writer),
 ) -> PreselectRunResponse:
     from stocktrade.domain.selection import PreselectParameters
 
@@ -161,7 +162,11 @@ def create_preselect_run(
         end_date=request.end_date,
     )
     try:
-        run, batch, _result = runtime.run_preselect_job(parameters, service=service)
+        run, batch, _result = runtime.run_preselect_job(
+            parameters,
+            service=service,
+            analytics_writer=analytics_writer,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return PreselectRunResponse(run=run_summary(run), batch=candidate_batch_response(batch))

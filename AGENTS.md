@@ -34,6 +34,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/r7-chart-export-retirement.md](docs/agent-harness/r7-chart-export-retirement.md)
 - R7 product launcher:
   [docs/agent-harness/r7-product-launcher.md](docs/agent-harness/r7-product-launcher.md)
+- R7 workbench retirement:
+  [docs/agent-harness/r7-workbench-retirement.md](docs/agent-harness/r7-workbench-retirement.md)
 - R7 runtime terminal integrity:
   [docs/agent-harness/r7-runtime-terminal-integrity.md](docs/agent-harness/r7-runtime-terminal-integrity.md)
 - Validation gates: [docs/agent-harness/validation-gates.md](docs/agent-harness/validation-gates.md)
@@ -108,6 +110,7 @@ scripts/harness/check.sh r7-gemini-api-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
+scripts/harness/check.sh r7-workbench-retirement
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh r7-runtime-recovery

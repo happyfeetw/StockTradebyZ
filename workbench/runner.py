@@ -19,7 +19,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from legacy_compat import print_legacy_write_freeze_notice
+from legacy_compat import (
+    LEGACY_WORKBENCH_ENV,
+    LEGACY_WORKBENCH_RETIRED_NOTICE,
+    legacy_workbench_enabled,
+    print_legacy_write_freeze_notice,
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -49,6 +54,15 @@ def append_log(log_path: Path, text: str) -> None:
 
 
 def run(run_dir: Path) -> int:
+    if not legacy_workbench_enabled():
+        print(LEGACY_WORKBENCH_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use ./start_product for supported React/FastAPI workflows. "
+            f"Temporary rollback: set {LEGACY_WORKBENCH_ENV}=1.",
+            file=sys.stderr,
+        )
+        return 2
+
     print_legacy_write_freeze_notice(
         surface="workbench.runner",
         replacement="React/FastAPI Run Center",

@@ -71,8 +71,9 @@ pip install -r requirements.txt
 cd apps/web && npm install
 ~~~
 
-旧的 `start_workbench` 仍保留为 Streamlit 兼容入口，但新工作流应使用
-`./start_product`。
+旧的 `start_workbench` 已默认退休；新工作流应使用 `./start_product`。
+仅在迁移、对照或回滚时可显式设置 `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1`
+启动 legacy Streamlit 工作台。
 
 ---
 

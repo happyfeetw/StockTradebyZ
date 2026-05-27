@@ -29,15 +29,18 @@
 5. If model validation is required, use a tiny candidate set and document model,
    command, output path, and whether quota was consumed.
 
-## Workflow 4: Workbench Change
+## Workflow 4: Product UI Or Legacy Workbench Change
 
-1. Read `docs/local-stock-workbench-product-design.md`.
+1. For supported product UI, read `docs/agent-harness/r7-product-launcher.md`
+   and use `./start_product`.
 2. Identify whether the change is UI-only, run orchestration, result loading, or
    config mutation.
 3. Preserve run snapshots under `data/runs/{run_id}`.
 4. Preserve visible background status, log display, and cancellation.
 5. Run `scripts/harness/check.sh python`.
-6. For UI behavior, start `./start_workbench` and capture the page/path tested.
+6. For legacy Streamlit workbench behavior, first justify why rollback evidence
+   is required, then use `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1 ./start_workbench`
+   and capture the page/path tested.
 
 ## Workflow 5: History or Storage Change
 

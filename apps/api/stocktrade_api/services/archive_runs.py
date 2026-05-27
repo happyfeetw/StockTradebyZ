@@ -5,7 +5,7 @@ from typing import Any
 from ..schemas.archive import ArchiveRunCreateRequest
 from ..storage.archive_repository import ArchiveRepository, CreatedArchive, archive_review_key_for
 from ..storage.duckdb import DuckDBAnalyticsWriter
-from ..storage.sqlite_models import Candidate, CandidateBatch, Recommendation, Review, ReviewRun
+from ..storage.sqlite_models import Artifact, Candidate, CandidateBatch, Recommendation, Review, ReviewRun
 
 
 class ArchiveRunValidationError(ValueError):
@@ -34,7 +34,11 @@ class ArchiveRunService:
         if review_run.pick_date != batch.pick_date:
             raise ArchiveRunValidationError("review run date does not match candidate batch date")
 
-        snapshot, rows = _build_archive_payload(batch=batch, review_run=review_run)
+        snapshot, rows = _build_archive_payload(
+            batch=batch,
+            review_run=review_run,
+            chart_artifacts_by_code=sources.chart_artifacts_by_code,
+        )
         created = self.repository.create_archive_snapshot(
             run_id=run_id,
             snapshot=snapshot,
@@ -53,6 +57,7 @@ def _build_archive_payload(
     *,
     batch: CandidateBatch,
     review_run: ReviewRun,
+    chart_artifacts_by_code: dict[str, Artifact] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     reviews_by_key = {review.review_key: review for review in review_run.reviews}
     recommendations_by_key = {
@@ -72,7 +77,8 @@ def _build_archive_payload(
         )
         counts["total"] += 1
         counts[status] += 1
-        rows.append(_row_payload(candidate, review_key, status, review, recommendation))
+        chart_artifact = (chart_artifacts_by_code or {}).get(candidate.code)
+        rows.append(_row_payload(candidate, review_key, status, review, recommendation, chart_artifact))
 
     reviewed_count = sum(1 for row in rows if row["status"] != "unreviewed")
     recommended_count = sum(1 for row in rows if row["status"] == "recommended")
@@ -85,6 +91,7 @@ def _build_archive_payload(
         "candidate_count": len(rows),
         "reviewed_count": reviewed_count,
         "recommended_count": recommended_count,
+        "chart_artifact_count": sum(1 for row in rows if row["chart_artifact_id"]),
         "strategy_counts": strategy_counts,
     }
     snapshot = {
@@ -117,12 +124,13 @@ def _row_payload(
     status: str,
     review: Review | None,
     recommendation: Recommendation | None,
+    chart_artifact: Artifact | None,
 ) -> dict[str, Any]:
     return {
         "candidate_id": candidate.id,
         "review_id": review.id if review else None,
         "recommendation_id": recommendation.id if recommendation else None,
-        "chart_artifact_id": None,
+        "chart_artifact_id": chart_artifact.id if chart_artifact else None,
         "code": candidate.code,
         "strategy": candidate.strategy,
         "review_key": review_key,
@@ -133,7 +141,7 @@ def _row_payload(
         "brick_growth": candidate.brick_growth,
         "extra": candidate.extra_json,
         "review_payload": review.payload_json if review else None,
-        "chart": None,
+        "chart": chart_artifact.path if chart_artifact else None,
     }
 
 

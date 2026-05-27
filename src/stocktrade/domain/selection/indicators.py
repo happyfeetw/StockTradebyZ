@@ -121,6 +121,18 @@ def _compute_brick_core(
     return brick
 
 
+@_njit(cache=True)
+def _brick_green_run_core(brick_values: np.ndarray) -> np.ndarray:
+    length = len(brick_values)
+    out = np.zeros(length, dtype=np.int32)
+    for i in range(1, length):
+        if brick_values[i - 1] < 0.0:
+            out[i] = out[i - 1] + 1
+        else:
+            out[i] = 0
+    return out
+
+
 def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     if frame.empty:
         return frame.assign(K=np.nan, D=np.nan, J=np.nan)
@@ -192,6 +204,52 @@ def compute_brick_chart(
         sma_w3=sma_w3,
     )
     return pd.Series(values, index=frame.index, name="brick")
+
+
+def compute_brick_green_run(brick_values: np.ndarray) -> np.ndarray:
+    return _brick_green_run_core(brick_values.astype(np.float64))
+
+
+def compute_brick_growth(brick_values: np.ndarray) -> np.ndarray:
+    previous = np.empty_like(brick_values, dtype=float)
+    previous[0] = np.nan
+    previous[1:] = brick_values[:-1]
+    previous_abs = np.abs(previous)
+    safe = np.where(previous_abs > 0, previous_abs, 1.0)
+    return np.where(previous_abs > 0, brick_values / safe, brick_values)
+
+
+def compute_brick_pattern_mask(
+    frame: pd.DataFrame,
+    brick_values: np.ndarray,
+    *,
+    daily_return_threshold: float = 0.05,
+    brick_growth_ratio: float = 1.0,
+    min_prior_green_bars: int = 1,
+) -> np.ndarray:
+    close = frame["close"].to_numpy(dtype=float)
+
+    previous_brick = np.empty_like(brick_values, dtype=float)
+    previous_brick[0] = np.nan
+    previous_brick[1:] = brick_values[:-1]
+
+    previous_close = np.empty_like(close)
+    previous_close[0] = np.nan
+    previous_close[1:] = close[:-1]
+
+    previous_abs = np.abs(previous_brick)
+    cond_ret = (close / previous_close - 1.0) < daily_return_threshold
+    cond_red = brick_values > 0
+    cond_green = previous_brick < 0
+    cond_growth = brick_values >= brick_growth_ratio * previous_abs
+
+    if min_prior_green_bars <= 1:
+        cond_green_count = cond_green
+    else:
+        green_run = compute_brick_green_run(brick_values)
+        cond_green_count = cond_green & (green_run >= min_prior_green_bars)
+
+    return cond_ret & cond_red & cond_green_count & cond_growth
 
 
 def compute_daily_return(frame: pd.DataFrame) -> np.ndarray:

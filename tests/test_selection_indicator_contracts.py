@@ -16,6 +16,9 @@ import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     compute_body_pct,
     compute_brick_chart,
+    compute_brick_green_run,
+    compute_brick_growth,
+    compute_brick_pattern_mask,
     compute_brick_values,
     compute_daily_return,
     compute_kdj,
@@ -115,6 +118,54 @@ def reference_compute_brick_values(
     for i in range(1, len(frame)):
         brick[i] = raw[i] - raw[i - 1]
     return brick
+
+
+def reference_compute_brick_green_run(brick_values: np.ndarray) -> np.ndarray:
+    out = np.zeros(len(brick_values), dtype=np.int32)
+    for i in range(1, len(brick_values)):
+        if brick_values[i - 1] < 0.0:
+            out[i] = out[i - 1] + 1
+        else:
+            out[i] = 0
+    return out
+
+
+def reference_compute_brick_growth(brick_values: np.ndarray) -> np.ndarray:
+    previous = np.empty_like(brick_values, dtype=float)
+    previous[0] = np.nan
+    previous[1:] = brick_values[:-1]
+    previous_abs = np.abs(previous)
+    safe = np.where(previous_abs > 0, previous_abs, 1.0)
+    return np.where(previous_abs > 0, brick_values / safe, brick_values)
+
+
+def reference_compute_brick_pattern_mask(
+    frame: pd.DataFrame,
+    brick_values: np.ndarray,
+    *,
+    daily_return_threshold: float = 0.05,
+    brick_growth_ratio: float = 1.0,
+    min_prior_green_bars: int = 1,
+) -> np.ndarray:
+    close = frame["close"].to_numpy(dtype=float)
+    previous_brick = np.empty_like(brick_values, dtype=float)
+    previous_brick[0] = np.nan
+    previous_brick[1:] = brick_values[:-1]
+    previous_close = np.empty_like(close)
+    previous_close[0] = np.nan
+    previous_close[1:] = close[:-1]
+    previous_abs = np.abs(previous_brick)
+
+    cond_ret = (close / previous_close - 1.0) < daily_return_threshold
+    cond_red = brick_values > 0
+    cond_green = previous_brick < 0
+    cond_growth = brick_values >= brick_growth_ratio * previous_abs
+    if min_prior_green_bars <= 1:
+        cond_green_count = cond_green
+    else:
+        green_run = reference_compute_brick_green_run(brick_values)
+        cond_green_count = cond_green & (green_run >= min_prior_green_bars)
+    return cond_ret & cond_red & cond_green_count & cond_growth
 
 
 def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
@@ -353,6 +404,43 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         pd.testing.assert_series_equal(actual, expected)
 
+    def test_product_brick_green_run_matches_reference_formula(self) -> None:
+        brick_values = np.array([0.0, -1.0, -2.0, 3.0, -1.0, -2.0, 4.0])
+
+        actual = compute_brick_green_run(brick_values)
+        expected = reference_compute_brick_green_run(brick_values)
+
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_product_brick_growth_matches_reference_formula(self) -> None:
+        brick_values = np.array([0.0, -1.0, -2.0, 3.0, 0.0, 4.0])
+
+        actual = compute_brick_growth(brick_values)
+        expected = reference_compute_brick_growth(brick_values)
+
+        np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+    def test_product_brick_pattern_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"close": [10.0, 9.8, 9.6, 9.9, 10.0, 10.2, 10.0]})
+        brick_values = np.array([0.0, -1.0, -2.0, 2.5, -1.0, -2.0, 3.0])
+
+        actual = compute_brick_pattern_mask(
+            frame,
+            brick_values,
+            daily_return_threshold=0.05,
+            brick_growth_ratio=1.0,
+            min_prior_green_bars=2,
+        )
+        expected = reference_compute_brick_pattern_mask(
+            frame,
+            brick_values,
+            daily_return_threshold=0.05,
+            brick_growth_ratio=1.0,
+            min_prior_green_bars=2,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+
     def test_legacy_selector_brick_helpers_delegate_to_product_helpers_when_available(self) -> None:
         frame = pd.DataFrame(
             {
@@ -377,6 +465,42 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         self.assertEqual(series.tolist(), [2.0, 3.0, 6.0])
         np.testing.assert_allclose(values, np.array([4.0, 5.0, 1.0]))
+
+    def test_legacy_selector_brick_pattern_helpers_delegate_to_product_helpers_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "close": [10.0, 9.8, 9.9],
+                "brick": [0.0, -1.0, 2.0],
+            }
+        )
+
+        def fake_product_compute_brick_pattern_mask(
+            input_frame: pd.DataFrame,
+            brick_values: np.ndarray,
+            **kwargs: float,
+        ) -> np.ndarray:
+            self.assertEqual(kwargs["min_prior_green_bars"], 2)
+            np.testing.assert_allclose(brick_values, np.array([0.0, -1.0, 2.0]))
+            return np.array([False, False, True], dtype=np.bool_)
+
+        def fake_product_compute_brick_growth(brick_values: np.ndarray) -> np.ndarray:
+            np.testing.assert_allclose(brick_values, np.array([0.0, -1.0, 2.0]))
+            return np.array([0.0, -1.0, 2.0])
+
+        with (
+            patch.object(
+                selector_module,
+                "_product_compute_brick_pattern_mask",
+                fake_product_compute_brick_pattern_mask,
+            ),
+            patch.object(selector_module, "_product_compute_brick_growth", fake_product_compute_brick_growth),
+        ):
+            filter_ = selector_module.BrickPatternFilter(min_prior_green_bars=2)
+            mask = filter_.vec_mask(frame)
+            growth = filter_.brick_growth_arr(frame)
+
+        np.testing.assert_array_equal(mask, np.array([False, False, True], dtype=np.bool_))
+        np.testing.assert_allclose(growth, np.array([0.0, -1.0, 2.0]))
 
     def test_legacy_selector_compute_kdj_delegates_to_product_helper_when_available(self) -> None:
         frame = pd.DataFrame({"high": [1.0], "low": [1.0], "close": [1.0]})

@@ -927,6 +927,7 @@ function CandidatesView() {
                   <span>{batch.latest_recommended_count} rec</span>
                   <span>{batch.archive_snapshot_count} archives</span>
                 </span>
+                <BatchEvidenceFlow batch={batch} />
                 <span className="batch-lineage">
                   <code>{batch.run_id}</code>
                   <code>{batch.latest_review_run_id ?? 'no review run'}</code>
@@ -1710,7 +1711,9 @@ function MigrationsView() {
 
 function RunsView() {
   const queryClient = useQueryClient()
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedRunId = paramValue(searchParams, 'run_id')
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(requestedRunId || null)
   const [preselectForm, setPreselectForm] = useState<Record<keyof PreselectRunRequest, string>>({
     config_path: '',
     data_dir: '',
@@ -1721,7 +1724,7 @@ function RunsView() {
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 10_000 })
   const runs = runsQuery.data?.runs ?? []
-  const activeRunId = selectedRunId ?? runs[0]?.id ?? ''
+  const activeRunId = selectedRunId ?? (requestedRunId || runs[0]?.id || '')
 
   const detailQuery = useQuery({
     queryKey: ['run', activeRunId],
@@ -1743,7 +1746,7 @@ function RunsView() {
   const createMutation = useMutation({
     mutationFn: () => createDiagnosticRun(false),
     onSuccess: (run) => {
-      setSelectedRunId(run.id)
+      selectRun(run.id)
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.setQueryData(['run', run.id], run)
     },
@@ -1752,7 +1755,7 @@ function RunsView() {
   const preselectMutation = useMutation({
     mutationFn: () => createPreselectRun(compactPreselectRequest(preselectForm)),
     onSuccess: (response) => {
-      setSelectedRunId(response.run.id)
+      selectRun(response.run.id)
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['candidates'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
@@ -1773,6 +1776,11 @@ function RunsView() {
 
   function updatePreselectField(key: keyof PreselectRunRequest, value: string) {
     setPreselectForm((current) => ({ ...current, [key]: value }))
+  }
+
+  function selectRun(runId: string) {
+    setSelectedRunId(runId)
+    setSearchParams(nonEmptyParams({ run_id: runId }), { replace: true })
   }
 
   return (
@@ -1904,7 +1912,7 @@ function RunsView() {
                 key={run.id}
                 type="button"
                 className={run.id === activeRunId ? 'run-row selected' : 'run-row'}
-                onClick={() => setSelectedRunId(run.id)}
+                onClick={() => selectRun(run.id)}
               >
                 <span className={`status-dot ${run.status}`} aria-hidden="true" />
                 <span className="run-row-main">
@@ -2055,6 +2063,38 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
       </div>
 
       <section className="subsection">
+        <h3>Evidence route</h3>
+        <div className="evidence-link-grid">
+          <EvidenceLinkCard
+            icon="runs"
+            title="Run center"
+            detail={candidate.run_id}
+            to={evidencePath('/runs', { run_id: candidate.run_id })}
+          />
+          <EvidenceLinkCard
+            icon="reviews"
+            title="Review rows"
+            detail={`${candidate.code} ${candidate.strategy}`}
+            to={evidencePath('/reviews', {
+              candidate_batch_id: candidate.batch_id,
+              code: candidate.code,
+              strategy: candidate.strategy,
+            })}
+          />
+          <EvidenceLinkCard
+            icon="archive"
+            title="Archive rows"
+            detail={candidate.pick_date}
+            to={evidencePath('/archive', {
+              pick_date: candidate.pick_date,
+              code: candidate.code,
+              strategy: candidate.strategy,
+            })}
+          />
+        </div>
+      </section>
+
+      <section className="subsection">
         <h3>Lineage</h3>
         <div className="lineage-grid">
           <DataPair label="Candidate id" value={candidate.id.toString()} />
@@ -2100,6 +2140,41 @@ function ReviewDetailPanel({ review }: { review: Review }) {
         <Metric label="Rank" value={formatRank(review)} />
         <Metric label="Provider" value={reviewerName(review)} />
       </div>
+
+      <section className="subsection">
+        <h3>Evidence route</h3>
+        <div className="evidence-link-grid">
+          <EvidenceLinkCard
+            icon="candidates"
+            title="Candidate row"
+            detail={review.candidate_batch_id ?? 'No batch link'}
+            to={review.candidate_batch_id
+              ? evidencePath('/candidates', {
+                batch_id: review.candidate_batch_id,
+                code: review.code,
+                strategy: review.strategy,
+              })
+              : undefined}
+          />
+          <EvidenceLinkCard
+            icon="archive"
+            title="Archive row"
+            detail={review.review_key}
+            to={evidencePath('/archive', {
+              pick_date: review.pick_date,
+              code: review.code,
+              strategy: review.strategy,
+              review_key: review.review_key,
+            })}
+          />
+          <EvidenceLinkCard
+            icon="runs"
+            title="Run center"
+            detail={review.run_id}
+            to={evidencePath('/runs', { run_id: review.run_id })}
+          />
+        </div>
+      </section>
 
       <section className="subsection">
         <h3>Lineage</h3>
@@ -2156,6 +2231,43 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         <Metric label="Close" value={formatNumber(row.close)} />
         <Metric label="Turnover" value={formatNumber(row.turnover_n)} />
       </div>
+
+      <section className="subsection">
+        <h3>Evidence route</h3>
+        <div className="evidence-link-grid">
+          <EvidenceLinkCard
+            icon="candidates"
+            title="Candidate row"
+            detail={row.candidate_batch_id ?? 'No batch link'}
+            to={row.candidate_batch_id
+              ? evidencePath('/candidates', {
+                batch_id: row.candidate_batch_id,
+                code: row.code,
+                strategy: row.strategy,
+              })
+              : undefined}
+          />
+          <EvidenceLinkCard
+            icon="reviews"
+            title="Review row"
+            detail={row.review_key}
+            to={row.review_run_id
+              ? evidencePath('/reviews', {
+                review_run_id: row.review_run_id,
+                review_key: row.review_key,
+                code: row.code,
+                strategy: row.strategy,
+              })
+              : undefined}
+          />
+          <EvidenceLinkCard
+            icon="runs"
+            title="Run center"
+            detail={row.run_id}
+            to={evidencePath('/runs', { run_id: row.run_id })}
+          />
+        </div>
+      </section>
 
       <section className="subsection">
         <h3>Lineage</h3>
@@ -2594,6 +2706,85 @@ function DataPair({ label, value }: { label: string; value: string }) {
   )
 }
 
+type EvidenceStepState = 'done' | 'ready' | 'waiting'
+
+function BatchEvidenceFlow({ batch }: { batch: CandidateBatchSummary }) {
+  const hasCandidates = batch.candidate_count > 0
+  const hasReview = Boolean(batch.latest_review_run_id)
+  const hasArchive = batch.archive_snapshot_count > 0
+  const steps: { label: string; value: string; state: EvidenceStepState }[] = [
+    {
+      label: 'Candidates',
+      value: `${batch.candidate_count}`,
+      state: hasCandidates ? 'done' : 'waiting',
+    },
+    {
+      label: 'Charts',
+      value: hasCandidates ? 'ready' : 'blocked',
+      state: hasCandidates ? 'ready' : 'waiting',
+    },
+    {
+      label: 'Review',
+      value: hasReview ? `${batch.latest_reviewed_count}` : hasCandidates ? 'ready' : 'blocked',
+      state: hasReview ? 'done' : hasCandidates ? 'ready' : 'waiting',
+    },
+    {
+      label: 'Archive',
+      value: hasArchive ? `${batch.archive_snapshot_count}` : hasReview ? 'ready' : 'blocked',
+      state: hasArchive ? 'done' : hasReview ? 'ready' : 'waiting',
+    },
+  ]
+
+  return (
+    <span className="evidence-flow" aria-label="Batch evidence workflow">
+      {steps.map((step) => (
+        <span key={step.label} className={`evidence-step ${step.state}`}>
+          {step.state === 'done' ? <CheckCircle2 size={14} aria-hidden="true" /> : <Clock3 size={14} aria-hidden="true" />}
+          <span>{step.label}</span>
+          <strong>{step.value}</strong>
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function EvidenceLinkCard({
+  icon,
+  title,
+  detail,
+  to,
+}: {
+  icon: 'archive' | 'candidates' | 'reviews' | 'runs'
+  title: string
+  detail: string
+  to?: string
+}) {
+  const Icon = icon === 'archive' ? Archive : icon === 'reviews' ? FileSearch : icon === 'runs' ? Activity : Search
+  const content = (
+    <>
+      <Icon size={17} aria-hidden="true" />
+      <span>
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+    </>
+  )
+
+  if (!to) {
+    return (
+      <span className="evidence-link-card disabled" aria-disabled="true">
+        {content}
+      </span>
+    )
+  }
+
+  return (
+    <Link className="evidence-link-card" to={to}>
+      {content}
+    </Link>
+  )
+}
+
 function CandidateCell({
   label,
   value,
@@ -2880,6 +3071,16 @@ function nonEmptyParams(values: Record<string, string>) {
     if (trimmed) params.set(key, trimmed)
   }
   return params
+}
+
+function evidencePath(path: string, values: Record<string, string | null | undefined>) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(values)) {
+    const trimmed = value?.trim()
+    if (trimmed) params.set(key, trimmed)
+  }
+  const query = params.toString()
+  return query ? `${path}?${query}` : path
 }
 
 function recommendationStatusValue(value: string | null): RecommendationStatus {

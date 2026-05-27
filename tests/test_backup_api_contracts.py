@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.storage.duckdb import apply_migrations, connect_duckdb  # noqa: E402
+from stocktrade_api.storage.sqlite_models import Artifact, Run  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -41,9 +42,15 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
             sqlite_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             backup_root = tmp / "backups"
+            artifact_root = tmp / "artifacts"
             migrate_sqlite(sqlite_path)
             apply_migrations(duckdb_path)
-            app = create_app(sqlite_path=sqlite_path, duckdb_path=duckdb_path, backup_root=backup_root)
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=duckdb_path,
+                backup_root=backup_root,
+                artifact_root=artifact_root,
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -58,6 +65,7 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["files"]["sqlite"], "db/app.sqlite")
                 self.assertEqual(payload["files"]["duckdb"], "db/analytics.duckdb")
                 self.assertEqual(payload["files"]["manifest"], "manifest.json")
+                self.assertEqual(payload["files"]["artifacts_manifest"], "artifacts_manifest.json")
                 self.assertTrue((backup_path / "db" / "app.sqlite").is_file())
                 self.assertTrue((backup_path / "db" / "analytics.duckdb").is_file())
                 self.assertTrue((backup_path / "artifacts_manifest.json").is_file())
@@ -67,6 +75,7 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(manifest["backup_id"], payload["backup_id"])
                 self.assertEqual(manifest["sources"]["sqlite"], sqlite_path.as_posix())
                 self.assertEqual(manifest["sources"]["duckdb"], duckdb_path.as_posix())
+                self.assertEqual(manifest["sources"]["artifacts"], artifact_root.as_posix())
 
                 with closing(sqlite3.connect(backup_path / "db" / "app.sqlite")) as connection:
                     count = connection.execute(
@@ -91,7 +100,12 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
             sqlite_path = tmp / "app.sqlite"
             missing_duckdb_path = tmp / "missing.duckdb"
             migrate_sqlite(sqlite_path)
-            app = create_app(sqlite_path=sqlite_path, duckdb_path=missing_duckdb_path, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=missing_duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -111,9 +125,15 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
             sqlite_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             backup_root = tmp / "backups"
+            artifact_root = tmp / "artifacts"
             migrate_sqlite(sqlite_path)
             apply_migrations(duckdb_path)
-            app = create_app(sqlite_path=sqlite_path, duckdb_path=duckdb_path, backup_root=backup_root)
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=duckdb_path,
+                backup_root=backup_root,
+                artifact_root=artifact_root,
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -171,13 +191,142 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
+    async def test_restore_api_replaces_product_artifacts_and_serves_restored_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sqlite_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            backup_root = tmp / "backups"
+            artifact_root = tmp / "artifacts"
+            product_file = artifact_root / "run-artifact" / "report.txt"
+            product_file.parent.mkdir(parents=True)
+            product_file.write_text("before restore", encoding="utf-8")
+            migrate_sqlite(sqlite_path)
+            apply_migrations(duckdb_path)
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=duckdb_path,
+                backup_root=backup_root,
+                artifact_root=artifact_root,
+            )
+            transport = httpx.ASGITransport(app=app)
+
+            with app.state.session_factory() as session:
+                session.add(Run(id="run-artifact", kind="diagnostic", status="succeeded"))
+                session.add(
+                    Artifact(
+                        id="artifact-restored",
+                        run_id="run-artifact",
+                        kind="log",
+                        path="run-artifact/report.txt",
+                        content_type="text/plain",
+                        metadata_json={"label": "report"},
+                    )
+                )
+                session.commit()
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                backup_response = await client.post("/api/backups")
+                self.assertEqual(backup_response.status_code, 200)
+                backup = backup_response.json()["backup"]
+                backup_path = Path(backup["backup_path"])
+                self.assertEqual(backup["files"]["artifacts"], "artifacts")
+                artifacts_manifest = json.loads(
+                    (backup_path / "artifacts_manifest.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(artifacts_manifest["artifact_root"], artifact_root.as_posix())
+                self.assertEqual(
+                    artifacts_manifest["artifacts"],
+                    [
+                        {
+                            "path": "run-artifact/report.txt",
+                            "backup_path": "artifacts/run-artifact/report.txt",
+                            "size_bytes": len("before restore"),
+                        }
+                    ],
+                )
+
+                product_file.write_text("after backup mutation", encoding="utf-8")
+                stale_file = artifact_root / "stale" / "stale.txt"
+                stale_file.parent.mkdir(parents=True)
+                stale_file.write_text("stale", encoding="utf-8")
+
+                restore_response = await client.post("/api/restore", json={"backup_path": backup["backup_path"]})
+                self.assertEqual(restore_response.status_code, 200)
+                restore = restore_response.json()["restore"]
+                self.assertEqual(restore["files_restored"]["artifacts"], artifact_root.as_posix())
+                self.assertEqual(product_file.read_text(encoding="utf-8"), "before restore")
+                self.assertFalse(stale_file.exists())
+
+                served = await client.get("/api/artifacts/artifact-restored")
+                self.assertEqual(served.status_code, 200)
+                self.assertTrue(served.headers["content-type"].startswith("text/plain"))
+                self.assertEqual(served.text, "before restore")
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_restore_api_rejects_invalid_artifact_manifest_without_deleting_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sqlite_path = tmp / "app.sqlite"
+            backup_root = tmp / "backups"
+            artifact_root = tmp / "artifacts"
+            product_file = artifact_root / "run-artifact" / "report.txt"
+            product_file.parent.mkdir(parents=True)
+            product_file.write_text("before restore", encoding="utf-8")
+            migrate_sqlite(sqlite_path)
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=None,
+                backup_root=backup_root,
+                artifact_root=artifact_root,
+            )
+            transport = httpx.ASGITransport(app=app)
+
+            with app.state.session_factory() as session:
+                session.add(Run(id="run-artifact", kind="diagnostic", status="succeeded"))
+                session.add(
+                    Artifact(
+                        id="artifact-restored",
+                        run_id="run-artifact",
+                        kind="log",
+                        path="run-artifact/report.txt",
+                        content_type="text/plain",
+                    )
+                )
+                session.commit()
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                backup_response = await client.post("/api/backups")
+                self.assertEqual(backup_response.status_code, 200)
+                backup = backup_response.json()["backup"]
+                manifest_path = Path(backup["backup_path"]) / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["files"]["artifacts"] = "artifacts_manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+                product_file.write_text("current product artifact", encoding="utf-8")
+                restore_response = await client.post("/api/restore", json={"backup_path": backup["backup_path"]})
+                self.assertEqual(restore_response.status_code, 422)
+                self.assertIn("non-directory", restore_response.json()["detail"])
+                self.assertEqual(product_file.read_text(encoding="utf-8"), "current product artifact")
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
     async def test_restore_api_removes_stale_duckdb_when_backup_missing_duckdb(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             sqlite_path = tmp / "app.sqlite"
             duckdb_path = tmp / "missing-at-backup.duckdb"
             migrate_sqlite(sqlite_path)
-            app = create_app(sqlite_path=sqlite_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -205,7 +354,12 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
             backup_dir = tmp / "backups" / "broken"
             backup_dir.mkdir(parents=True)
             migrate_sqlite(sqlite_path)
-            app = create_app(sqlite_path=sqlite_path, duckdb_path=None, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=sqlite_path,
+                duckdb_path=None,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -218,7 +372,13 @@ class BackupApiContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_backup_api_rejects_in_memory_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            app = create_app(sqlite_path=":memory:", duckdb_path=None, backup_root=Path(tmpdir) / "backups")
+            tmp = Path(tmpdir)
+            app = create_app(
+                sqlite_path=":memory:",
+                duckdb_path=None,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

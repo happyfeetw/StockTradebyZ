@@ -60,15 +60,16 @@ Product-owned paths already exist:
 - `MigrationRepository` imports legacy candidates, reviews, history, and chart
   references into SQLite/DuckDB and can copy legacy charts into product
   artifacts.
-- `BackupService` copies SQLite and DuckDB files and records backup/restore runs.
+- `BackupService` copies SQLite, DuckDB, and product artifact files; writes
+  `artifacts_manifest.json`; restores product artifacts; and records
+  backup/restore runs.
 
 Cutover gaps:
 
-- `BackupService` currently writes an empty `artifacts_manifest.json`; it does
-  not copy product artifact files or restore them.
 - Gemini CLI product provider stores raw logs, checkpoints, usage, and cache
-  files under `var/artifacts/review-provider/...`, but these files are not yet
-  indexed as SQLite `artifacts` rows and are not covered by backup/restore.
+  files under `var/artifacts/review-provider/...`. They are covered by artifact
+  backup/restore as files, but they are not yet indexed as SQLite `artifacts`
+  rows with explicit provider-evidence lineage.
 - The legacy CLI still writes candidate files through `pipeline/pipeline_io.py`.
   This is acceptable as a compatibility path, but product UI/API flows should
   not depend on `data/candidates/candidates_latest.json`.
@@ -80,11 +81,13 @@ Cutover gaps:
 
 ## Cutover Sequence
 
-1. Artifact backup/restore.
+1. Artifact backup/restore. Implemented first because later product-owned
+   workflows depend on durable generated evidence.
    - Copy `var/artifacts/` into backups.
-   - Store an artifact manifest with file path, size, content type when known,
-     and SQLite artifact id when known.
-   - Restore artifacts atomically enough for local use.
+   - Store an artifact manifest with file path, backup path, size, and artifact
+     root.
+   - Restore artifacts by replacing the configured product artifact root with
+     the backed-up artifact tree.
    - Verify SQLite artifact rows still resolve through the product artifact API
      after restore.
 
@@ -151,6 +154,8 @@ Implementation PRs that change writes must also prove the touched runtime path:
 
 ## First Implementation Target
 
-The safest first implementation target is artifact backup/restore. It is a
-storage gap independent of trading logic, it protects every later product-owned
-workflow, and it is directly testable without live credentials or market data.
+The first implementation target is artifact backup/restore. It is independent
+of trading logic, protects every later product-owned workflow, and is covered by
+an API contract test that backs up a product artifact, mutates local artifact
+state, restores the backup, and serves the restored file through
+`/api/artifacts/{artifact_id}`.

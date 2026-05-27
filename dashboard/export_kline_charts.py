@@ -1,9 +1,12 @@
-"""
-scripts/export_kline_charts.py
-AgentTrader · 批量导出候选股票 K线图（日线 + 周线）
+"""Legacy candidate K-line chart exporter.
 
-用法：
-    python scripts/export_kline_charts.py [--date YYYY-MM-DD] [--bars 120] [--weekly-bars 60]
+This entrypoint is retired by default in R7. Use the product-owned FastAPI chart
+export workflow instead:
+
+    POST /api/runs/chart-export
+
+Rollback-only usage:
+    STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 python dashboard/export_kline_charts.py
 
 输出目录：
     data/kline/<date>/<code>_day.jpg
@@ -18,18 +21,46 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
-import numpy as np
-import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
-
-# ── 路径设置 ──────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "dashboard"))
 
-from legacy_compat import print_legacy_write_freeze_notice  # noqa: E402
-from components.charts import make_daily_chart, make_weekly_chart  # noqa: E402
+from legacy_compat import (  # noqa: E402
+    legacy_chart_export_enabled,
+    print_legacy_chart_export_retired_notice,
+    print_legacy_write_freeze_notice,
+)
+
+np: Any = None
+pd: Any = None
+Image: Any = None
+ImageDraw: Any = None
+ImageFont: Any = None
+make_daily_chart: Any = None
+make_weekly_chart: Any = None
+
+
+def _load_chart_export_dependencies() -> None:
+    """Load legacy chart dependencies only after the rollback gate passes."""
+    global Image, ImageDraw, ImageFont, make_daily_chart, make_weekly_chart, np, pd
+
+    import numpy as _np
+    import pandas as _pd
+    from PIL import Image as _Image
+    from PIL import ImageDraw as _ImageDraw
+    from PIL import ImageFont as _ImageFont
+    from components.charts import make_daily_chart as _make_daily_chart
+    from components.charts import make_weekly_chart as _make_weekly_chart
+
+    np = _np
+    pd = _pd
+    Image = _Image
+    ImageDraw = _ImageDraw
+    ImageFont = _ImageFont
+    make_daily_chart = _make_daily_chart
+    make_weekly_chart = _make_weekly_chart
 
 
 # ── 数据加载 ──────────────────────────────────────────────────────────────────
@@ -213,7 +244,7 @@ CONFIG = {
 }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="导出候选股票 K 线图")
     parser.add_argument("--candidates", default=CONFIG["candidates"], help="候选 JSON 文件")
     parser.add_argument("--raw-dir", default=CONFIG["raw_dir"], help="原始 K 线 CSV 目录")
@@ -221,17 +252,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bars", type=int, default=CONFIG["bars"], help="日线显示 K 线数量，0=全部")
     parser.add_argument("--engine", choices=("pillow", "plotly"), default=CONFIG["engine"], help="导出引擎")
     parser.add_argument("--limit", type=int, default=CONFIG["limit"], help="最多导出几只，0=不限制")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if not legacy_chart_export_enabled():
+        print_legacy_chart_export_retired_notice()
+        return 2
+
     print_legacy_write_freeze_notice(
         surface="dashboard.export_kline_charts",
         replacement="POST /api/runs/chart-export",
         writes="data/kline",
     )
-    candidates_path = Path(CONFIG["candidates"])
+    _load_chart_export_dependencies()
     candidates_path = Path(args.candidates)
     raw_dir         = Path(args.raw_dir)
 
@@ -300,8 +335,9 @@ def main() -> None:
     )
     if ok_count == 0 and codes:
         print("[ERROR] 没有成功导出任何图表，流程中止，避免后续复评空跑。")
-        sys.exit(1)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

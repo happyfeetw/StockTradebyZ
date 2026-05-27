@@ -17,6 +17,7 @@ requires it.
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
+| r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
@@ -190,6 +191,26 @@ scripts/harness/check.sh r7-legacy-write-freeze
 Run this before PRs that freeze legacy writes, add new product storage paths,
 or start surface-specific retirement.
 
+## R7 Chart Export Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-chart-export-retirement.md` documents the retirement
+  decision, product replacement proof, rollback override, and validation;
+- `dashboard/export_kline_charts.py` exits before reading legacy candidate files
+  unless `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1` is set;
+- the default exit explains `R7 legacy retirement` and `POST
+  /api/runs/chart-export`;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-chart-export-retirement
+```
+
+Run this before PRs that disable or remove the legacy chart export writer.
+
 ## R7 Resource Envelope Gate
 
 Checks:
@@ -246,6 +267,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
+| R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |

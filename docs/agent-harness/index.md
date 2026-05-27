@@ -56,6 +56,9 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   browser proof for R7 product shell routes and chart artifact inspection.
 - [r7-legacy-write-freeze.md](r7-legacy-write-freeze.md): compatibility-only
   notices and product no-read guard for legacy file-system writers.
+- [r7-chart-export-retirement.md](r7-chart-export-retirement.md): default
+  retirement, rollback override, and product replacement proof for the legacy
+  chart export writer.
 - [r7-resource-envelope.md](r7-resource-envelope.md): credential-free runtime,
   memory, SQLite/DuckDB growth, and artifact-growth evidence for #152.
 - [workflows.md](workflows.md): repeatable agent workflows.
@@ -72,6 +75,7 @@ scripts/harness/check.sh storage-cutover-plan
 scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
+scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts

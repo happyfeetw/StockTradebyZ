@@ -63,6 +63,7 @@ class ReviewProviderRunService:
         sources = self.repository.get_review_provider_sources(request.candidate_batch_id)
         items = _provider_items(
             sources.candidate_batch,
+            chart_artifacts_by_review_key=sources.chart_artifacts_by_review_key,
             chart_artifacts_by_code=sources.chart_artifacts_by_code,
             codes=request.codes,
             strategies=request.strategies,
@@ -109,6 +110,7 @@ class ReviewProviderRunService:
 def _provider_items(
     batch: CandidateBatch,
     *,
+    chart_artifacts_by_review_key: dict[str, Artifact],
     chart_artifacts_by_code: dict[str, Artifact],
     codes: list[str] | None,
     strategies: list[str] | None,
@@ -123,9 +125,9 @@ def _provider_items(
             continue
         if strategy_filter and candidate.strategy not in strategy_filter:
             continue
-        chart_artifact = chart_artifacts_by_code.get(candidate.code)
         payload = _candidate_payload(candidate)
         review_key = candidate_review_key(payload)
+        chart_artifact = chart_artifacts_by_review_key.get(review_key) or chart_artifacts_by_code.get(candidate.code)
         if require_charts and chart_artifact is None:
             missing_charts.append(review_key)
         items.append(

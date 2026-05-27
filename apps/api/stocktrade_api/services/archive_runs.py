@@ -37,6 +37,7 @@ class ArchiveRunService:
         snapshot, rows = _build_archive_payload(
             batch=batch,
             review_run=review_run,
+            chart_artifacts_by_review_key=sources.chart_artifacts_by_review_key,
             chart_artifacts_by_code=sources.chart_artifacts_by_code,
         )
         created = self.repository.create_archive_snapshot(
@@ -57,6 +58,7 @@ def _build_archive_payload(
     *,
     batch: CandidateBatch,
     review_run: ReviewRun,
+    chart_artifacts_by_review_key: dict[str, Artifact] | None = None,
     chart_artifacts_by_code: dict[str, Artifact] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     reviews_by_key = {review.review_key: review for review in review_run.reviews}
@@ -77,7 +79,9 @@ def _build_archive_payload(
         )
         counts["total"] += 1
         counts[status] += 1
-        chart_artifact = (chart_artifacts_by_code or {}).get(candidate.code)
+        chart_artifact = (chart_artifacts_by_review_key or {}).get(review_key) or (
+            chart_artifacts_by_code or {}
+        ).get(candidate.code)
         rows.append(_row_payload(candidate, review_key, status, review, recommendation, chart_artifact))
 
     reviewed_count = sum(1 for row in rows if row["status"] != "unreviewed")

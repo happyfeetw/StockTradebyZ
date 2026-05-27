@@ -123,31 +123,66 @@ class ChartExportApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(parsed.run.summary["candidate_batch_id"], "batch-history")
                 self.assertEqual(parsed.run.summary["candidate_count"], 3)
                 self.assertEqual(parsed.run.summary["unique_code_count"], 2)
-                self.assertEqual(parsed.run.summary["exported_count"], 1)
+                self.assertEqual(parsed.run.summary["exported_count"], 3)
+                self.assertEqual(parsed.run.summary["strategy_chart_count"], 2)
+                self.assertEqual(parsed.run.summary["compatibility_chart_count"], 1)
                 self.assertEqual(parsed.run.summary["skipped_count"], 1)
-                self.assertEqual(len(parsed.artifacts), 1)
+                self.assertEqual(len(parsed.artifacts), 3)
 
-                artifact = parsed.artifacts[0]
-                self.assertEqual(artifact.kind, "chart")
-                self.assertEqual(artifact.content_type, "image/jpeg")
-                self.assertEqual(artifact.metadata["source"], "product:chart_export")
-                self.assertEqual(artifact.metadata["candidate_batch_id"], "batch-history")
-                self.assertEqual(artifact.metadata["pick_date"], "2026-05-25")
-                self.assertEqual(artifact.metadata["code"], "000001")
-                self.assertEqual(artifact.metadata["strategies"], ["b2", "brick"])
-                self.assertTrue((artifact_root / artifact.path).is_file())
-                self.assertTrue(artifact.path.startswith(f"{parsed.run.id}/charts/batch-history/"))
+                artifacts_by_scope = {
+                    (
+                        artifact.metadata.get("artifact_scope"),
+                        artifact.metadata.get("strategy", ""),
+                    ): artifact
+                    for artifact in parsed.artifacts
+                }
+                compatibility = artifacts_by_scope[("code", "")]
+                b2_chart = artifacts_by_scope[("strategy", "b2")]
+                brick_chart = artifacts_by_scope[("strategy", "brick")]
+                self.assertEqual(compatibility.kind, "chart")
+                self.assertEqual(compatibility.content_type, "image/jpeg")
+                self.assertEqual(compatibility.metadata["source"], "product:chart_export")
+                self.assertEqual(compatibility.metadata["candidate_batch_id"], "batch-history")
+                self.assertEqual(compatibility.metadata["pick_date"], "2026-05-25")
+                self.assertEqual(compatibility.metadata["code"], "000001")
+                self.assertEqual(compatibility.metadata["strategies"], ["b2", "brick"])
+                self.assertIsNone(compatibility.metadata.get("review_key"))
+                self.assertEqual(b2_chart.metadata["review_key"], "000001_b2")
+                self.assertEqual(brick_chart.metadata["review_key"], "000001_brick")
+                self.assertFalse(b2_chart.metadata["contains_brick_panel"])
+                self.assertTrue(brick_chart.metadata["contains_brick_panel"])
+                self.assertTrue((artifact_root / compatibility.path).is_file())
+                self.assertTrue((artifact_root / b2_chart.path).is_file())
+                self.assertTrue((artifact_root / brick_chart.path).is_file())
+                self.assertTrue(b2_chart.path.endswith("/000001_b2_day.jpg"))
+                self.assertTrue(brick_chart.path.endswith("/000001_brick_day.jpg"))
+                from PIL import Image, ImageChops
 
-                served = await client.get(f"/api/artifacts/{artifact.id}")
+                with Image.open(artifact_root / b2_chart.path).convert("RGB") as b2_image:
+                    self.assertEqual(b2_image.size, (1400, 760))
+                    self.assertIsNotNone(
+                        ImageChops.difference(b2_image, Image.new("RGB", b2_image.size, "white")).getbbox()
+                    )
+                with Image.open(artifact_root / brick_chart.path).convert("RGB") as brick_image:
+                    self.assertEqual(brick_image.size, (1400, 900))
+                    brick_panel = brick_image.crop((74, 486, 1372, 610))
+                    self.assertIsNotNone(
+                        ImageChops.difference(
+                            brick_panel,
+                            Image.new("RGB", brick_panel.size, "white"),
+                        ).getbbox()
+                    )
+
+                served = await client.get(f"/api/artifacts/{brick_chart.id}")
                 self.assertEqual(served.status_code, 200)
                 self.assertTrue(served.headers["content-type"].startswith("image/jpeg"))
                 self.assertTrue(served.content.startswith(b"\xff\xd8"))
 
                 run_detail = await client.get(f"/api/runs/{parsed.run.id}")
                 self.assertEqual(run_detail.status_code, 200)
-                self.assertEqual(len(run_detail.json()["artifacts"]), 1)
+                self.assertEqual(len(run_detail.json()["artifacts"]), 3)
                 self.assertIn(
-                    "Chart export job generated 1 artifacts",
+                    "Chart export job generated 3 artifacts",
                     [event["message"] for event in run_detail.json()["events"]],
                 )
 

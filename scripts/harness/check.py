@@ -39,6 +39,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
+    Path("docs/agent-harness/r7-gemini-api-review-retirement.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
     Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
@@ -158,6 +159,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-retirement-plan",
             "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
+            "scripts/harness/check.sh r7-gemini-api-review-retirement",
             "scripts/harness/check.sh r7-legacy-write-freeze",
             "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
@@ -511,6 +513,8 @@ def check_r7_retirement_plan() -> None:
             "r7-browser-proof",
             "Legacy write freeze",
             "r7-legacy-write-freeze",
+            "Gemini API reviewer retirement",
+            "r7-gemini-api-review-retirement",
             "Dashboard retirement",
             "r7-dashboard-retirement",
             "Product launcher",
@@ -522,6 +526,54 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_gemini_api_review_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-gemini-api-review-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Gemini API Review Retirement",
+            "`agent/gemini_review.py`",
+            "POST /api/runs/review/provider",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW=1",
+            "simulated trading",
+            "remains out of scope",
+            "scripts/harness/check.sh r7-gemini-api-review-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_GEMINI_API_REVIEW_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW",
+            "LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE",
+            "legacy_gemini_api_review_enabled",
+        ],
+    )
+    assert_contains(
+        "agent/gemini_review.py",
+        [
+            "legacy_gemini_api_review_enabled",
+            "LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE",
+            "POST /api/runs/review/provider",
+            "return 2",
+            "raise SystemExit(main())",
+        ],
+    )
+    text = read("agent/gemini_review.py")
+    if text.index("if not legacy_gemini_api_review_enabled()") > text.index("config = load_config"):
+        raise HarnessError("agent/gemini_review.py must stop before loading legacy review config")
+    assert_contains(
+        "tests/test_gemini_api_retirement_harness.py",
+        [
+            "test_gemini_api_script_stops_before_legacy_review_execution_by_default",
+            "test_gemini_api_script_exits_without_sdk_or_config_by_default",
+            "test_gemini_api_rollback_flag_is_explicit_and_suppressed_by_default",
+        ],
+    )
+    print("[r7-gemini-api-review-retirement] ok")
 
 
 def check_r7_dashboard_retirement() -> None:
@@ -869,6 +921,7 @@ def parse_args() -> argparse.Namespace:
             "r7-retirement-plan",
             "r7-dashboard-retirement",
             "r7-browser-proof",
+            "r7-gemini-api-review-retirement",
             "r7-legacy-write-freeze",
             "r7-chart-export-retirement",
             "r7-product-launcher",
@@ -905,6 +958,8 @@ def main() -> int:
             check_r7_dashboard_retirement()
         elif args.gate == "r7-browser-proof":
             check_r7_browser_proof()
+        elif args.gate == "r7-gemini-api-review-retirement":
+            check_r7_gemini_api_review_retirement()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
         elif args.gate == "r7-chart-export-retirement":

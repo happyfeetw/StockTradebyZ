@@ -36,7 +36,7 @@ Out of scope:
 | --- | --- | --- | --- |
 | `pipeline/cli.py` | Legacy preselect CLI writes `data/candidates/` | Freeze as compatibility CLI, then retire after product API run proof covers local workflow docs | Golden parity, product preselect API proof, rollback note |
 | `pipeline/pipeline_io.py` | Candidate JSON writer/reader for `candidates_latest.json` | Keep import/read compatibility; block new product writes from depending on it | Legacy import verify, product UI/API no-read proof |
-| `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Mark legacy-only; do not expand | Review parity fixtures and product provider evidence proof |
+| `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Retire by default behind explicit rollback flag | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Retired by default behind `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1`; product chart export is supported path | Product chart artifact proof, visual smoke, and `r7-chart-export-retirement` |
@@ -99,6 +99,9 @@ Out of scope:
    - Chart export retirement is guarded by
      `scripts/harness/check.sh r7-chart-export-retirement`.
    - Do not combine paper-trading changes with product retirement work.
+   - Gemini API reviewer retirement uses
+     `docs/agent-harness/r7-gemini-api-review-retirement.md` and
+     `scripts/harness/check.sh r7-gemini-api-review-retirement`.
    - Dashboard retirement uses
      `docs/agent-harness/r7-dashboard-retirement.md` and
      `scripts/harness/check.sh r7-dashboard-retirement` for the legacy
@@ -131,6 +134,9 @@ prove the touched path:
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof, compatibility import test,
   and `scripts/harness/check.sh r7-legacy-write-freeze`;
+- Gemini API reviewer retirement: default stop guard, explicit rollback flag,
+  product provider replacement proof, and
+  `scripts/harness/check.sh r7-gemini-api-review-retirement`;
 - dashboard retirement: default stop guard, explicit rollback flag,
   React/FastAPI replacement proof, and
   `scripts/harness/check.sh r7-dashboard-retirement`;

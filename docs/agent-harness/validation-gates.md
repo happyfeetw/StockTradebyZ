@@ -17,6 +17,7 @@ requires it.
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
 | r7-dashboard-retirement | `scripts/harness/check.sh r7-dashboard-retirement` | R7 default retirement guard for the legacy single-stock Streamlit dashboard |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
+| r7-gemini-api-review-retirement | `scripts/harness/check.sh r7-gemini-api-review-retirement` | R7 default retirement guard for the legacy Gemini API reviewer |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
 | r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
@@ -194,6 +195,28 @@ This gate does not automate browser control. The browser pass is recorded in
 the document and must be refreshed when UI layout, route behavior, artifact
 inspection, or smoke fixture state changes.
 
+## R7 Gemini API Review Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-gemini-api-review-retirement.md` documents the
+  default retirement state, rollback flag, product provider replacement, and
+  non-goals;
+- `agent/gemini_review.py` exits before loading legacy review config or
+  constructing `GeminiReviewer` unless
+  `STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW=1`;
+- the product replacement is `POST /api/runs/review/provider`;
+- no live Gemini call is required for validation;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-gemini-api-review-retirement
+```
+
+Run this before PRs that disable or remove the legacy Gemini API-key reviewer.
+
 ## R7 Legacy Write Freeze Gate
 
 Checks:
@@ -359,6 +382,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
 | R7 dashboard retirement | r7-dashboard-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
+| R7 Gemini API reviewer retirement | r7-gemini-api-review-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
 | R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
@@ -379,4 +403,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-dashboard-retirement for dashboard surface retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement for legacy chart export retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

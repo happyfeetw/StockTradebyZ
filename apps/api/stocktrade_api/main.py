@@ -26,6 +26,7 @@ from .storage.duckdb import DEFAULT_DUCKDB_PATH, DuckDBAnalyticsReader, DuckDBAn
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
+from .storage.settings_repository import SettingsRepository
 from .storage.sqlite import DEFAULT_SQLITE_PATH, create_session_factory, create_sqlite_engine
 
 API_TITLE = "StockTradebyZ API"
@@ -52,6 +53,7 @@ def create_app(
     app.state.candidate_repository = CandidateRepository(session_factory)
     app.state.review_repository = ReviewRepository(session_factory)
     app.state.archive_repository = ArchiveRepository(session_factory)
+    app.state.settings_repository = SettingsRepository(session_factory)
     analytics_writer = DuckDBAnalyticsWriter(duckdb_path) if duckdb_path is not None else None
     analytics_reader = DuckDBAnalyticsReader(duckdb_path) if duckdb_path is not None else None
     app.state.analytics_writer = analytics_writer

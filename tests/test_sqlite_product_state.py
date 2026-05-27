@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import (  # noqa: E402
+    AppSetting,
     ArchiveRow,
     ArchiveSnapshot,
     Candidate,
@@ -70,6 +71,7 @@ print("agent.gemini_cli_review" in sys.modules)
             self.assertTrue(
                 {
                     "alembic_version",
+                    "app_settings",
                     "runs",
                     "job_steps",
                     "job_events",
@@ -92,6 +94,9 @@ print("agent.gemini_cli_review" in sys.modules)
                     run_columns
                 )
             )
+
+            app_setting_columns = {column["name"] for column in inspector.get_columns("app_settings")}
+            self.assertTrue({"key", "value_json", "created_at", "updated_at"}.issubset(app_setting_columns))
 
             job_step_columns = {column["name"] for column in inspector.get_columns("job_steps")}
             self.assertTrue({"id", "run_id", "name", "status", "error_json"}.issubset(job_step_columns))
@@ -190,6 +195,31 @@ print("agent.gemini_cli_review" in sys.modules)
                 with self.assertRaises(IntegrityError):
                     session.commit()
                 session.rollback()
+            engine.dispose()
+
+    def test_app_settings_store_product_preferences_by_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            self.migrate(db_path)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+
+            with session_factory() as session:
+                session.add(
+                    AppSetting(
+                        key="product_preferences",
+                        value_json={"theme": "dark", "default_strategy_ids": ["b1"]},
+                    )
+                )
+                session.commit()
+
+            with session_factory() as session:
+                stored = session.get(AppSetting, "product_preferences")
+                self.assertIsNotNone(stored)
+                assert stored is not None
+                self.assertEqual(stored.value_json["theme"], "dark")
+                self.assertEqual(stored.value_json["default_strategy_ids"], ["b1"])
+
             engine.dispose()
 
     def test_archive_identity_is_unique_per_snapshot_review_key(self) -> None:

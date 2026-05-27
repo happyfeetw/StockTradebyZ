@@ -24,12 +24,14 @@ def build_product_settings(
     duckdb_path: str | Path | None,
     artifact_root: str | Path,
     backup_root: str | Path,
+    product_preferences: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "service": SERVICE_NAME,
         "version": VERSION,
         "stack": PRODUCT_STACK,
         "simulated_trading_in_scope": False,
+        "product_preferences": product_preferences,
         "local_state": {
             "sqlite_path": _path_str(sqlite_path),
             "duckdb_path": _path_str(duckdb_path) if duckdb_path is not None else None,

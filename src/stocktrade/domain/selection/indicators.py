@@ -96,6 +96,91 @@ def compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
     return out
 
 
+def compute_volume_ratio(frame: pd.DataFrame) -> np.ndarray:
+    volume = frame["volume"].to_numpy(dtype=float)
+    prev_volume = np.empty_like(volume)
+    prev_volume[0] = np.nan
+    prev_volume[1:] = volume[:-1]
+    out = np.full(len(frame), np.nan, dtype=float)
+    np.divide(volume, prev_volume, out=out, where=prev_volume > 0)
+    return out
+
+
+def compute_strict_yang_bao_yin(
+    frame: pd.DataFrame,
+    *,
+    min_today_body_pct: float = 0.003,
+    min_yang_bao_yin_body_pct: float = 0.003,
+) -> np.ndarray:
+    open_ = frame["open"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+
+    prev_open = np.empty_like(open_)
+    prev_close = np.empty_like(close)
+    prev_open[0] = np.nan
+    prev_close[0] = np.nan
+    prev_open[1:] = open_[:-1]
+    prev_close[1:] = close[:-1]
+
+    prev_body_pct = np.full(len(frame), np.nan, dtype=float)
+    np.divide(prev_open - prev_close, prev_close, out=prev_body_pct, where=prev_close > 0)
+
+    today_body_pct = np.full(len(frame), np.nan, dtype=float)
+    np.divide(close - open_, open_, out=today_body_pct, where=open_ > 0)
+
+    prev_bear_body_ok = (
+        (prev_close < prev_open)
+        & (prev_body_pct >= min_yang_bao_yin_body_pct)
+    )
+    today_bull_body_ok = (
+        (close > open_)
+        & (today_body_pct >= min_today_body_pct)
+    )
+    return (
+        prev_bear_body_ok
+        & today_bull_body_ok
+        & (open_ <= prev_close)
+        & (close >= prev_open)
+    )
+
+
+def compute_recent_b1_prior_lag(
+    frame: pd.DataFrame,
+    *,
+    lookback: int = 2,
+    pick_column: str = "_b1_pick",
+) -> np.ndarray:
+    if pick_column not in frame.columns:
+        raise KeyError("RecentB1PickFilter requires precomputed '_b1_pick'.")
+    b1_pick = frame[pick_column].to_numpy(dtype=bool)
+    out = np.zeros(len(frame), dtype=np.int16)
+    for lag in range(1, lookback + 1):
+        shifted = np.zeros(len(frame), dtype=bool)
+        shifted[lag:] = b1_pick[:-lag]
+        fill = (out == 0) & shifted
+        out[fill] = lag
+    return out
+
+
+def compute_recent_b1_prior_j(
+    frame: pd.DataFrame,
+    prior_lag: np.ndarray,
+    *,
+    lookback: int = 2,
+    j_column: str = "J",
+) -> np.ndarray:
+    if j_column not in frame.columns:
+        raise KeyError("RecentB1PickFilter requires precomputed 'J'.")
+    j_values = frame[j_column].to_numpy(dtype=float)
+    out = np.full(len(frame), np.nan, dtype=float)
+    for lag in range(1, lookback + 1):
+        mask = prior_lag == lag
+        shifted_j = np.full(len(frame), np.nan, dtype=float)
+        shifted_j[lag:] = j_values[:-lag]
+        out[mask] = shifted_j[mask]
+    return out
+
+
 def compute_zx_lines(
     frame: pd.DataFrame,
     m1: int = 14,

@@ -18,7 +18,11 @@ from stocktrade.domain.selection import (  # noqa: E402
     compute_daily_return,
     compute_kdj,
     compute_max_volume_not_bearish,
+    compute_recent_b1_prior_j,
+    compute_recent_b1_prior_lag,
+    compute_strict_yang_bao_yin,
     compute_upper_shadow_ratio,
+    compute_volume_ratio,
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
@@ -85,6 +89,80 @@ def reference_compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
     span = high - low
     out = np.zeros(len(frame), dtype=float)
     np.divide(high - close, span, out=out, where=span > 0)
+    return out
+
+
+def reference_compute_volume_ratio(frame: pd.DataFrame) -> np.ndarray:
+    volume = frame["volume"].to_numpy(dtype=float)
+    prev_volume = np.empty_like(volume)
+    prev_volume[0] = np.nan
+    prev_volume[1:] = volume[:-1]
+    out = np.full(len(frame), np.nan, dtype=float)
+    np.divide(volume, prev_volume, out=out, where=prev_volume > 0)
+    return out
+
+
+def reference_compute_strict_yang_bao_yin(
+    frame: pd.DataFrame,
+    *,
+    min_today_body_pct: float = 0.003,
+    min_yang_bao_yin_body_pct: float = 0.003,
+) -> np.ndarray:
+    open_ = frame["open"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+
+    prev_open = np.empty_like(open_)
+    prev_close = np.empty_like(close)
+    prev_open[0] = np.nan
+    prev_close[0] = np.nan
+    prev_open[1:] = open_[:-1]
+    prev_close[1:] = close[:-1]
+
+    prev_body_pct = np.full(len(frame), np.nan, dtype=float)
+    np.divide(prev_open - prev_close, prev_close, out=prev_body_pct, where=prev_close > 0)
+
+    today_body_pct = np.full(len(frame), np.nan, dtype=float)
+    np.divide(close - open_, open_, out=today_body_pct, where=open_ > 0)
+
+    prev_bear_body_ok = (
+        (prev_close < prev_open)
+        & (prev_body_pct >= min_yang_bao_yin_body_pct)
+    )
+    today_bull_body_ok = (
+        (close > open_)
+        & (today_body_pct >= min_today_body_pct)
+    )
+    return (
+        prev_bear_body_ok
+        & today_bull_body_ok
+        & (open_ <= prev_close)
+        & (close >= prev_open)
+    )
+
+
+def reference_compute_recent_b1_prior_lag(frame: pd.DataFrame, lookback: int = 2) -> np.ndarray:
+    b1_pick = frame["_b1_pick"].to_numpy(dtype=bool)
+    out = np.zeros(len(frame), dtype=np.int16)
+    for lag in range(1, lookback + 1):
+        shifted = np.zeros(len(frame), dtype=bool)
+        shifted[lag:] = b1_pick[:-lag]
+        fill = (out == 0) & shifted
+        out[fill] = lag
+    return out
+
+
+def reference_compute_recent_b1_prior_j(
+    frame: pd.DataFrame,
+    prior_lag: np.ndarray,
+    lookback: int = 2,
+) -> np.ndarray:
+    j_values = frame["J"].to_numpy(dtype=float)
+    out = np.full(len(frame), np.nan, dtype=float)
+    for lag in range(1, lookback + 1):
+        mask = prior_lag == lag
+        shifted_j = np.full(len(frame), np.nan, dtype=float)
+        shifted_j[lag:] = j_values[:-lag]
+        out[mask] = shifted_j[mask]
     return out
 
 
@@ -285,6 +363,96 @@ class SelectionIndicatorContractTests(unittest.TestCase):
         np.testing.assert_allclose(daily_return, np.array([np.nan, 0.1, 0.2]), equal_nan=True)
         np.testing.assert_allclose(body_pct, np.array([0.05, 0.06, 0.07]))
         np.testing.assert_allclose(upper_shadow, np.array([0.2, 0.1, 0.0]))
+
+    def test_product_volume_ratio_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"volume": [100.0, 120.0, 0.0, 50.0]})
+
+        actual = compute_volume_ratio(frame)
+        expected = reference_compute_volume_ratio(frame)
+
+        np.testing.assert_allclose(actual, expected, equal_nan=True)
+
+    def test_product_strict_yang_bao_yin_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "open": [10.0, 10.5, 9.9, 10.6, 9.0],
+                "close": [10.1, 10.0, 10.6, 10.8, 9.5],
+            }
+        )
+
+        actual = compute_strict_yang_bao_yin(
+            frame,
+            min_today_body_pct=0.003,
+            min_yang_bao_yin_body_pct=0.003,
+        )
+        expected = reference_compute_strict_yang_bao_yin(
+            frame,
+            min_today_body_pct=0.003,
+            min_yang_bao_yin_body_pct=0.003,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_product_recent_b1_prior_arrays_match_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "J": [10.0, 20.0, 30.0, 15.0, 25.0],
+                "_b1_pick": [True, False, False, True, False],
+            }
+        )
+
+        actual_lag = compute_recent_b1_prior_lag(frame, lookback=2)
+        expected_lag = reference_compute_recent_b1_prior_lag(frame, lookback=2)
+        actual_j = compute_recent_b1_prior_j(frame, actual_lag, lookback=2)
+        expected_j = reference_compute_recent_b1_prior_j(frame, expected_lag, lookback=2)
+
+        np.testing.assert_array_equal(actual_lag, expected_lag)
+        np.testing.assert_allclose(actual_j, expected_j, equal_nan=True)
+
+    def test_legacy_b2_volume_and_recent_b1_helpers_delegate_to_product_helpers_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "open": [10.0, 11.0, 12.0],
+                "close": [10.5, 11.5, 12.5],
+                "volume": [100.0, 120.0, 110.0],
+                "J": [10.0, 20.0, 30.0],
+                "_b1_pick": [True, False, True],
+            }
+        )
+
+        with (
+            patch.object(
+                selector_module,
+                "_product_compute_volume_ratio",
+                lambda input_frame: np.array([np.nan, 1.2, 0.9], dtype=float),
+            ),
+            patch.object(
+                selector_module,
+                "_product_compute_strict_yang_bao_yin",
+                lambda input_frame, **kwargs: np.array([False, True, False], dtype=np.bool_),
+            ),
+            patch.object(
+                selector_module,
+                "_product_compute_recent_b1_prior_lag",
+                lambda input_frame, lookback=2: np.array([0, 1, 0], dtype=np.int16),
+            ),
+            patch.object(
+                selector_module,
+                "_product_compute_recent_b1_prior_j",
+                lambda input_frame, prior_lag, lookback=2: np.array([np.nan, 10.0, np.nan], dtype=float),
+            ),
+        ):
+            volume_filter = selector_module.VolumeConfirmFilter()
+            recent_filter = selector_module.RecentB1PickFilter(lookback=2)
+            volume_ratio = volume_filter.volume_ratio_arr(frame)
+            strict_yang_bao_yin = volume_filter.strict_yang_bao_yin_arr(frame)
+            prior_lag = recent_filter.prior_lag_arr(frame)
+            prior_j = recent_filter.prior_j_arr(frame, prior_lag)
+
+        np.testing.assert_allclose(volume_ratio, np.array([np.nan, 1.2, 0.9]), equal_nan=True)
+        np.testing.assert_array_equal(strict_yang_bao_yin, np.array([False, True, False], dtype=np.bool_))
+        np.testing.assert_array_equal(prior_lag, np.array([0, 1, 0], dtype=np.int16))
+        np.testing.assert_allclose(prior_j, np.array([np.nan, 10.0, np.nan]), equal_nan=True)
 
     def test_product_zx_lines_match_reference_formula(self) -> None:
         frame = pd.DataFrame(

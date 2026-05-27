@@ -1,6 +1,7 @@
 """Selection domain boundary for the product rewrite."""
 
 from .indicators import (
+    compute_b1_pick_mask,
     compute_body_pct,
     compute_brick_chart,
     compute_brick_green_run,
@@ -53,6 +54,7 @@ from .preselect import (
 )
 
 __all__ = [
+    "compute_b1_pick_mask",
     "compute_body_pct",
     "compute_brick_chart",
     "compute_brick_green_run",

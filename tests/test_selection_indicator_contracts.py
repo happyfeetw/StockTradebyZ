@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
+    compute_b1_pick_mask,
     compute_body_pct,
     compute_brick_chart,
     compute_brick_green_run,
@@ -202,6 +203,33 @@ def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int 
                 max_index = j
         mask[i] = close[max_index] >= open_[max_index]
     return mask
+
+
+def reference_compute_b1_pick_mask(
+    frame: pd.DataFrame,
+    *,
+    j_threshold: float = -5.0,
+    j_q_threshold: float = 0.10,
+    require_close_gt_long: bool = True,
+    require_short_gt_long: bool = True,
+    max_vol_lookback: int = 20,
+) -> np.ndarray:
+    return (
+        reference_compute_kdj_quantile_mask(
+            frame["J"],
+            j_threshold=j_threshold,
+            j_q_threshold=j_q_threshold,
+        )
+        & reference_compute_zx_condition_mask(
+            frame,
+            frame["zxdq"],
+            frame["zxdkx"],
+            require_close_gt_long=require_close_gt_long,
+            require_short_gt_long=require_short_gt_long,
+        )
+        & frame["wma_bull"].to_numpy(dtype=bool)
+        & reference_compute_max_volume_not_bearish(frame, lookback=max_vol_lookback)
+    )
 
 
 def reference_compute_daily_return(frame: pd.DataFrame) -> np.ndarray:
@@ -641,6 +669,79 @@ class SelectionIndicatorContractTests(unittest.TestCase):
             actual = selector_module.MaxVolNotBearishFilter(n=2).vec_mask(frame)
 
         np.testing.assert_array_equal(actual, np.array([True, False, True], dtype=np.bool_))
+
+    def test_product_b1_pick_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "J": [-10.0, -10.0, 5.0, -6.0],
+                "close": [11.0, 9.0, 12.0, 13.0],
+                "zxdq": [12.0, 12.0, 9.0, 14.0],
+                "zxdkx": [10.0, 10.0, 10.0, 10.0],
+                "wma_bull": [True, True, True, False],
+                "volume": [10.0, 20.0, 5.0, 6.0],
+                "open": [10.0, 10.0, 10.0, 10.0],
+            }
+        )
+
+        actual = compute_b1_pick_mask(frame, j_threshold=-5.0, j_q_threshold=0.50, max_vol_lookback=2)
+        expected = reference_compute_b1_pick_mask(
+            frame,
+            j_threshold=-5.0,
+            j_q_threshold=0.50,
+            max_vol_lookback=2,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([True, False, False, False]))
+
+    def test_legacy_b1_selector_prepare_df_delegates_vec_pick_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.0, 11.0, 12.0],
+                "low": [8.0, 9.0, 10.0],
+                "open": [9.0, 10.0, 11.0],
+                "close": [9.5, 10.5, 11.5],
+                "volume": [100.0, 120.0, 80.0],
+            },
+            index=pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07"]),
+        )
+
+        def fake_product_compute_b1_pick_mask(
+            input_frame: pd.DataFrame,
+            **kwargs: float,
+        ) -> np.ndarray:
+            self.assertIn("J", input_frame.columns)
+            self.assertIn("zxdq", input_frame.columns)
+            self.assertIn("zxdkx", input_frame.columns)
+            self.assertIn("wma_bull", input_frame.columns)
+            self.assertEqual(kwargs["j_threshold"], -4.0)
+            self.assertEqual(kwargs["j_q_threshold"], 0.2)
+            self.assertFalse(kwargs["require_close_gt_long"])
+            self.assertTrue(kwargs["require_short_gt_long"])
+            self.assertEqual(kwargs["max_vol_lookback"], 2)
+            return np.array([False, True, False])
+
+        with patch.object(
+            selector_module,
+            "_product_compute_b1_pick_mask",
+            fake_product_compute_b1_pick_mask,
+        ):
+            prepared = selector_module.B1Selector(
+                j_threshold=-4.0,
+                j_q_threshold=0.2,
+                zx_m1=1,
+                zx_m2=1,
+                zx_m3=1,
+                zx_m4=1,
+                wma_short=1,
+                wma_mid=1,
+                wma_long=1,
+                require_close_gt_long=False,
+                require_short_gt_long=True,
+                max_vol_lookback=2,
+            ).prepare_df(frame)
+
+        np.testing.assert_array_equal(prepared["_vec_pick"].to_numpy(dtype=bool), np.array([False, True, False]))
 
     def test_product_daily_return_matches_reference_formula(self) -> None:
         frame = pd.DataFrame({"close": [100.0, 104.0, 0.0, 10.0, 11.0]})

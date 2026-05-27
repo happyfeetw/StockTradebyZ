@@ -295,6 +295,33 @@ def compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> n
     )
 
 
+def compute_b1_pick_mask(
+    frame: pd.DataFrame,
+    *,
+    j_threshold: float = -5.0,
+    j_q_threshold: float = 0.10,
+    require_close_gt_long: bool = True,
+    require_short_gt_long: bool = True,
+    max_vol_lookback: int = 20,
+) -> np.ndarray:
+    return (
+        compute_kdj_quantile_mask(
+            frame["J"],
+            j_threshold=j_threshold,
+            j_q_threshold=j_q_threshold,
+        )
+        & compute_zx_condition_mask(
+            frame,
+            frame["zxdq"],
+            frame["zxdkx"],
+            require_close_gt_long=require_close_gt_long,
+            require_short_gt_long=require_short_gt_long,
+        )
+        & frame["wma_bull"].to_numpy(dtype=bool)
+        & compute_max_volume_not_bearish(frame, lookback=max_vol_lookback)
+    )
+
+
 def compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
     high = frame["high"].to_numpy(dtype=float)
     low = frame["low"].to_numpy(dtype=float)

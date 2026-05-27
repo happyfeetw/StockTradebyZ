@@ -17,6 +17,8 @@ import {
   Search,
   Server,
   ShieldAlert,
+  ShieldCheck,
+  Upload,
   XCircle,
 } from 'lucide-react'
 import './App.css'
@@ -31,11 +33,15 @@ import {
   getRun,
   getRunArtifacts,
   getRunEvents,
+  importLegacyCandidateBatch,
+  importLegacyHistorySnapshot,
+  importLegacyReviewRun,
   listArchiveRows,
   listArchiveSnapshots,
   listCandidates,
   listRuns,
   listReviews,
+  verifyLegacyImport,
   type ArchiveRow,
   type ArchiveRowFilters,
   type ArchiveSnapshot,
@@ -46,6 +52,9 @@ import {
   type JobEvent,
   type LegacyImportIssue,
   type LegacyImportSectionReport,
+  type LegacyImportSummary,
+  type LegacyImportVerifyReport,
+  type LegacyImportVerifyScope,
   type RecommendationStatus,
   type Review,
   type ReviewFilters,
@@ -69,6 +78,12 @@ const statusLabels: Record<RunStatus, string> = {
   cancelling: 'Cancelling',
   cancelled: 'Cancelled',
 }
+
+const legacyMigrationScopes: { value: LegacyImportVerifyScope; label: string; description: string }[] = [
+  { value: 'candidates', label: 'Candidates', description: 'Batch files and strategy counts' },
+  { value: 'reviews', label: 'Reviews', description: 'Review runs and recommendations' },
+  { value: 'history', label: 'History', description: 'Archive snapshots and rows' },
+]
 
 function App() {
   return (
@@ -738,26 +753,68 @@ function ArchiveView() {
 }
 
 function MigrationsView() {
+  const queryClient = useQueryClient()
   const [dataRoot, setDataRoot] = useState('data')
+  const [importScope, setImportScope] = useState<LegacyImportVerifyScope>('candidates')
+  const [importPickDate, setImportPickDate] = useState('')
+  const [verifyScope, setVerifyScope] = useState<LegacyImportVerifyScope>('candidates')
+  const [verifyPickDate, setVerifyPickDate] = useState('')
+  const [verifyRunId, setVerifyRunId] = useState('')
   const dryRunMutation = useMutation({
     mutationFn: (root: string) => dryRunLegacyImport(root),
   })
+  const importMutation = useMutation({
+    mutationFn: ({ root, scope, pickDate }: { root: string; scope: LegacyImportVerifyScope; pickDate: string }) => {
+      if (scope === 'candidates') return importLegacyCandidateBatch(root, pickDate)
+      if (scope === 'reviews') return importLegacyReviewRun(root, pickDate)
+      return importLegacyHistorySnapshot(root, pickDate)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidates'] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
+    },
+  })
+  const verifyMutation = useMutation({
+    mutationFn: ({ root, scope, pickDate, runId }: { root: string; scope: LegacyImportVerifyScope; pickDate: string; runId: string }) =>
+      verifyLegacyImport(root, scope, pickDate, runId.trim() || undefined),
+  })
   const report = dryRunMutation.data
+  const importSummary = importMutation.isSuccess ? (importMutation.data.import_summary ?? null) : null
+  const verifyReport = verifyMutation.isSuccess ? verifyMutation.data : null
   const totals = report?.totals
   const sectionNames = ['candidates', 'reviews', 'history']
+  const normalizedRoot = dataRoot.trim() || 'data'
 
   function runDryRun() {
-    dryRunMutation.mutate(dataRoot.trim() || 'data')
+    dryRunMutation.mutate(normalizedRoot)
+  }
+
+  function runImport() {
+    if (!importPickDate.trim()) return
+    importMutation.mutate({ root: normalizedRoot, scope: importScope, pickDate: importPickDate.trim() })
+  }
+
+  function runVerify() {
+    if (!verifyPickDate.trim()) return
+    verifyMutation.mutate({
+      root: normalizedRoot,
+      scope: verifyScope,
+      pickDate: verifyPickDate.trim(),
+      runId: verifyRunId,
+    })
   }
 
   return (
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Migration preflight</p>
+          <p className="eyebrow">Migration workbench</p>
           <h1>Migrations</h1>
         </div>
-        <span className="pending-chip">Dry-run only</span>
+        <span className="pending-chip">Candidates / Reviews / History</span>
       </header>
 
       <section className="summary-strip migration-summary-strip" aria-label="Migration dry-run summary">
@@ -782,8 +839,8 @@ function MigrationsView() {
           </button>
         </form>
         <p className="muted migration-note">
-          This dry-run scans candidates, reviews, and history only. Write/import execution and trading account data are intentionally
-          unavailable in this slice.
+          Dry-run scans candidates, reviews, and history before a write operation. Trading account and simulated trading data stay out of this
+          migration flow.
         </p>
       </section>
 
@@ -793,6 +850,79 @@ function MigrationsView() {
           <span>{errorText(dryRunMutation.error)}</span>
         </div>
       ) : null}
+
+      <div className="migration-action-grid" aria-label="Legacy migration actions">
+        <section className="migration-action-panel" aria-label="Legacy import execution">
+          <div className="panel-heading">
+            <div>
+              <h2>Import</h2>
+              <p>Writes one legacy scope into product storage</p>
+            </div>
+            <Upload size={19} aria-hidden="true" />
+          </div>
+          <form
+            className="migration-action-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              runImport()
+            }}
+          >
+            <ScopeSelector label="Import scope" value={importScope} onChange={setImportScope} />
+            <FilterInput label="Pick date" type="date" placeholder="YYYY-MM-DD" value={importPickDate} onChange={setImportPickDate} />
+            <button type="submit" className="action-button danger" disabled={importMutation.isPending || !importPickDate.trim()}>
+              {importMutation.isPending ? (
+                <Loader2 className="spin" size={17} aria-hidden="true" />
+              ) : (
+                <Upload size={17} aria-hidden="true" />
+              )}
+              <span>Import scope</span>
+            </button>
+          </form>
+          {importMutation.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(importMutation.error)}</span>
+            </div>
+          ) : null}
+          {importSummary ? <ImportSummaryPanel summary={importSummary} /> : null}
+        </section>
+
+        <section className="migration-action-panel" aria-label="Legacy import verification">
+          <div className="panel-heading">
+            <div>
+              <h2>Verify</h2>
+              <p>Compares legacy files with SQLite and DuckDB records</p>
+            </div>
+            <ShieldCheck size={19} aria-hidden="true" />
+          </div>
+          <form
+            className="migration-action-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              runVerify()
+            }}
+          >
+            <ScopeSelector label="Verify scope" value={verifyScope} onChange={setVerifyScope} />
+            <FilterInput label="Pick date" type="date" placeholder="YYYY-MM-DD" value={verifyPickDate} onChange={setVerifyPickDate} />
+            <FilterInput label="Run id" placeholder="Optional" value={verifyRunId} onChange={setVerifyRunId} />
+            <button type="submit" className="action-button" disabled={verifyMutation.isPending || !verifyPickDate.trim()}>
+              {verifyMutation.isPending ? (
+                <Loader2 className="spin" size={17} aria-hidden="true" />
+              ) : (
+                <ShieldCheck size={17} aria-hidden="true" />
+              )}
+              <span>Verify</span>
+            </button>
+          </form>
+          {verifyMutation.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(verifyMutation.error)}</span>
+            </div>
+          ) : null}
+          {verifyReport ? <VerifyResultPanel report={verifyReport} /> : null}
+        </section>
+      </div>
 
       {!report && !dryRunMutation.isPending ? (
         <div className="empty-state migration-empty">
@@ -1292,6 +1422,113 @@ function MigrationIssueList({
         </div>
       )}
     </section>
+  )
+}
+
+function ScopeSelector({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: LegacyImportVerifyScope
+  onChange: (value: LegacyImportVerifyScope) => void
+}) {
+  return (
+    <fieldset className="scope-selector">
+      <legend>{label}</legend>
+      <div className="scope-button-grid">
+        {legacyMigrationScopes.map((scope) => (
+          <button
+            key={scope.value}
+            type="button"
+            className={scope.value === value ? 'scope-button selected' : 'scope-button'}
+            aria-pressed={scope.value === value}
+            onClick={() => onChange(scope.value)}
+          >
+            <strong>{scope.label}</strong>
+            <span>{scope.description}</span>
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
+function ImportSummaryPanel({ summary }: { summary: LegacyImportSummary }) {
+  return (
+    <div className="migration-result-panel">
+      <div className="migration-result-head">
+        <span className="status-badge succeeded">
+          <CheckCircle2 size={15} aria-hidden="true" />
+          Imported
+        </span>
+        <span className="muted">{summary.pick_date}</span>
+      </div>
+      <div className="migration-result-grid">
+        <DataPair label="Run id" value={summary.run_id} />
+        <DataPair label="Source file" value={summary.source_file} />
+        <DataPair label="Backup id" value={summary.pre_import_backup_id ?? 'Not created'} />
+        <DataPair label="Backup path" value={summary.pre_import_backup_path ?? 'Not created'} />
+        <DataPair label="Batch id" value={summary.batch_id ?? 'Not linked'} />
+        <DataPair label="Review run" value={summary.review_run_id ?? 'Not linked'} />
+        <DataPair label="Archive snapshot" value={summary.archive_snapshot_id ?? 'Not linked'} />
+      </div>
+      <div className="migration-count-grid" aria-label="Imported record counts">
+        <Metric label="Candidates" value={summary.candidates_imported.toString()} />
+        <Metric label="Reviews" value={summary.reviews_imported.toString()} />
+        <Metric label="Recommendations" value={summary.recommendations_imported.toString()} />
+        <Metric label="Archive rows" value={summary.archive_rows_imported.toString()} />
+      </div>
+      <pre className="json-block compact">{jsonPreview(summary.strategy_counts)}</pre>
+    </div>
+  )
+}
+
+function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
+  const mismatchEntries = [
+    { label: 'Missing in SQLite', values: report.mismatches.missing_in_sqlite },
+    { label: 'Extra in SQLite', values: report.mismatches.extra_in_sqlite },
+    { label: 'Missing in DuckDB', values: report.mismatches.missing_in_duckdb },
+    { label: 'Extra in DuckDB', values: report.mismatches.extra_in_duckdb },
+  ]
+  const mismatchCount = mismatchEntries.reduce((total, entry) => total + entry.values.length, 0)
+
+  return (
+    <div className="migration-result-panel">
+      <div className="migration-result-head">
+        <span className={report.passed ? 'status-badge succeeded' : 'status-badge failed'}>
+          {report.passed ? <CheckCircle2 size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}
+          {report.passed ? 'Verified' : 'Mismatch'}
+        </span>
+        <span className="muted">{sectionLabel(report.scope)} / {report.pick_date}</span>
+      </div>
+      <div className="migration-result-grid">
+        <DataPair label="Source path" value={report.source_path} />
+        <DataPair label="Run id" value={report.run_id ?? 'Not filtered'} />
+        <DataPair label="DuckDB check" value={report.duckdb_checked ? 'Checked' : 'Skipped'} />
+      </div>
+      <div className="migration-count-grid" aria-label="Verification record counts">
+        <Metric label="Legacy" value={report.counts.legacy.toString()} />
+        <Metric label="SQLite" value={report.counts.sqlite.toString()} />
+        <Metric label="DuckDB" value={report.counts.duckdb === null ? 'Skipped' : report.counts.duckdb.toString()} />
+        <Metric label="Mismatches" value={mismatchCount.toString()} />
+      </div>
+      {mismatchCount === 0 ? (
+        <p className="muted migration-issue-empty">No mismatches found.</p>
+      ) : (
+        <div className="migration-mismatch-list">
+          {mismatchEntries
+            .filter((entry) => entry.values.length > 0)
+            .map((entry) => (
+              <div className="migration-mismatch-row" key={entry.label}>
+                <strong>{entry.label}</strong>
+                <code>{entry.values.join(', ')}</code>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
   )
 }
 

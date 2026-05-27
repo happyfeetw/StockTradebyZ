@@ -12,6 +12,7 @@ requires it.
 | python | `scripts/harness/check.sh python` | Python source or tests changed |
 | product-refactor-readiness | `scripts/harness/check.sh product-refactor-readiness` | Product rewrite plans, target-stack proposals, UI/UX/backend/storage redesign |
 | refactor-readiness | `scripts/harness/check.sh refactor-readiness` | Alias for product-refactor-readiness |
+| ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -81,6 +82,25 @@ scripts/harness/check.sh product-refactor-readiness
 Run this before broad edits, new storage layers, backend/runtime scaffolding,
 UI replacement, core business logic rewrite, or deleting legacy paths.
 
+## UI Smoke Fixture Gate
+
+Checks:
+
+- `scripts/harness/seed_ui_smoke.py` and `scripts/harness/ui_smoke_app.py`
+  compile;
+- a temporary SQLite product database can be migrated and seeded;
+- a temporary DuckDB analytics database can be seeded;
+- smoke artifacts for Run Center and Archive chart evidence are written.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh ui-smoke-fixture
+```
+
+This gate is credential-free and safe in a clean clone. It does not replace the
+manual/browser evidence in [r5-ui-browser-smoke.md](r5-ui-browser-smoke.md).
+
 ## Runtime Gates
 
 Runtime gates are intentionally not part of `quick` because they can require
@@ -112,6 +132,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | legacy paper trading rules | python | only when user explicitly reopens that scope |
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
+| R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |
 
 ## Major Refactor Matrix
 
@@ -122,6 +143,6 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R2 target architecture | product-refactor-readiness | stack, schema, API, resource, rollback plan, and status map |
 | R3 core domain rewrite | python | golden master parity tests |
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
-| R5 frontend UI/UX | python | fixture UI smoke and screenshot/browser notes |
+| R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | product-refactor-readiness + quick | migration fixture and rollback drill |
 | R7 hardening/retirement | product-refactor-readiness + quick | performance/resource evidence and final parity |

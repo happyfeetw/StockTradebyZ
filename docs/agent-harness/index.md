@@ -46,6 +46,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   SQLite/DuckDB schema ownership, API contract, job runtime, migration, and
   rollback design.
 - [validation-gates.md](validation-gates.md): what to run for each change type.
+- [r5-ui-browser-smoke.md](r5-ui-browser-smoke.md): deterministic browser-review
+  fixture and evidence checklist for #114 R5 UI/UX validation.
 - [workflows.md](workflows.md): repeatable agent workflows.
 - [quality-scorecard.md](quality-scorecard.md): review scorecard for harness quality.
 
@@ -55,6 +57,7 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
 scripts/harness/check.sh quick
 scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh refactor-readiness
+scripts/harness/check.sh ui-smoke-fixture
 scripts/harness/check.sh docs
 scripts/harness/check.sh contracts
 scripts/harness/check.sh python

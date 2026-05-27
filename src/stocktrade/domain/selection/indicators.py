@@ -145,6 +145,22 @@ def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     return frame.assign(K=k, D=d, J=j)
 
 
+def compute_kdj_quantile_mask(
+    j_values: pd.Series | np.ndarray,
+    *,
+    j_threshold: float = -5.0,
+    j_q_threshold: float = 0.10,
+) -> np.ndarray:
+    j_series = (
+        j_values.astype(float)
+        if isinstance(j_values, pd.Series)
+        else pd.Series(np.asarray(j_values, dtype=float))
+    )
+    j_array = j_series.to_numpy(dtype=float)
+    quantile = j_series.expanding(min_periods=1).quantile(j_q_threshold).to_numpy(dtype=float)
+    return (j_array < j_threshold) | (j_array <= quantile)
+
+
 def compute_brick_values(
     frame: pd.DataFrame,
     *,

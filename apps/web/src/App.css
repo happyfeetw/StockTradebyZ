@@ -278,6 +278,24 @@ h3 {
   align-items: start;
 }
 
+.overview-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: minmax(420px, 0.92fr) minmax(0, 1.08fr);
+  gap: 18px;
+  align-items: start;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .run-list-panel,
 .candidate-batch-panel,
 .candidate-list-panel,
@@ -288,9 +306,14 @@ h3 {
 .migration-action-panel,
 .migration-section-panel,
 .migration-issues-panel,
+.overview-panel,
+.analytics-panel,
+.settings-panel,
 .detail-panel,
 .placeholder-panel {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -317,6 +340,12 @@ h3 {
 .migration-section-panel,
 .migration-issues-panel,
 .migration-control-panel {
+  padding: 16px;
+}
+
+.overview-panel,
+.analytics-panel,
+.settings-panel {
   padding: 16px;
 }
 
@@ -423,6 +452,7 @@ button {
 
 .filter-field input,
 .filter-field select {
+  min-width: 0;
   width: 100%;
   min-height: 40px;
   border-radius: 8px;
@@ -749,6 +779,228 @@ button {
 
 .batch-empty {
   min-height: 160px;
+}
+
+.compact-empty {
+  min-height: 150px;
+}
+
+.overview-state-list,
+.settings-inventory {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.strategy-card-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  min-height: 152px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 12px;
+}
+
+.strategy-card.selected {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+}
+
+.strategy-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.strategy-card p,
+.strategy-card small,
+.strategy-summary-row small,
+.overview-run-row small,
+.settings-list-row small,
+.strategy-toggle small {
+  color: var(--text-muted);
+}
+
+.strategy-card p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.strategy-card small,
+.strategy-summary-row small,
+.overview-run-row small,
+.settings-list-row small,
+.strategy-toggle small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.overview-run-list,
+.strategy-summary-list,
+.settings-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.overview-run-row,
+.strategy-summary-row,
+.settings-list-row {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  text-decoration: none;
+  color: var(--text-strong);
+}
+
+.overview-run-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(120px, 0.55fr);
+}
+
+.strategy-summary-row {
+  grid-template-columns: minmax(0, 1fr) auto repeat(2, minmax(82px, auto));
+}
+
+.settings-list-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.overview-run-row code,
+.settings-list-row code {
+  overflow-wrap: anywhere;
+}
+
+.analytics-filter-bar {
+  grid-template-columns: repeat(4, minmax(140px, 1fr)) auto;
+}
+
+.analytics-panel {
+  margin-top: 18px;
+}
+
+.analytics-table-wrap {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.data-table th {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  background: var(--surface-strong);
+}
+
+.data-table td {
+  color: var(--text-strong);
+}
+
+.settings-form {
+  margin-top: 14px;
+  display: grid;
+  gap: 16px;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.strategy-selector {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.strategy-selector legend {
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.strategy-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-toggle,
+.binary-toggle {
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 10px;
+}
+
+.strategy-toggle input,
+.binary-toggle input {
+  margin-top: 3px;
+}
+
+.strategy-toggle span,
+.binary-toggle span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.settings-toggle-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-actions {
+  justify-content: flex-start;
+}
+
+.settings-subsection {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
 }
 
 .review-list {
@@ -1568,6 +1820,14 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
   .migration-action-grid {
     grid-template-columns: 1fr;
   }
@@ -1626,6 +1886,16 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .overview-grid,
+  .settings-grid {
+    grid-template-columns: 1fr;
+    overflow: hidden;
+  }
+
+  .strategy-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1681,10 +1951,14 @@ code {
   .run-setup-form,
   .run-setup-result,
   .migration-form,
-  .migration-action-form,
-  .migration-count-grid,
-  .migration-result-grid,
-  .section-count-grid {
+    .migration-action-form,
+    .migration-count-grid,
+    .migration-result-grid,
+    .section-count-grid,
+    .analytics-filter-bar,
+    .settings-form-grid,
+    .strategy-toggle-grid,
+    .settings-toggle-row {
     grid-template-columns: 1fr;
   }
 
@@ -1733,6 +2007,13 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .overview-run-row,
+  .strategy-summary-row,
+  .settings-list-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
   .candidate-cell.extra {
     grid-column: span 2;
   }
@@ -1753,6 +2034,10 @@ code {
   }
 
   .archive-row {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-card-grid {
     grid-template-columns: 1fr;
   }
 

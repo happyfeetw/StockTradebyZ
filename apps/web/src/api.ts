@@ -23,6 +23,126 @@ export interface HealthResponse {
   simulated_trading_in_scope: boolean
 }
 
+export type StrategyPreferenceId = 'b1' | 'b2' | 'brick'
+
+export interface ProductPreferenceSettings {
+  timezone: string
+  theme: 'system' | 'light' | 'dark'
+  table_density: 'comfortable' | 'compact'
+  default_strategy_ids: StrategyPreferenceId[]
+  analytics_default_limit: number
+  candidate_page_size: number
+  review_page_size: number
+  archive_page_size: number
+  chart_export_enabled: boolean
+  auto_archive_after_review: boolean
+}
+
+export interface ProductPreferenceState {
+  source: 'defaults' | 'sqlite'
+  updated_at: string | null
+  preferences: ProductPreferenceSettings
+}
+
+export interface ConfigFileMetadata {
+  key: string
+  path: string
+  exists: boolean
+  sections: string[]
+  writable: boolean
+  exposed: boolean
+}
+
+export interface ExternalIntegrationStatus {
+  key: string
+  label: string
+  configured: boolean
+  source: string
+  secret_exposed: boolean
+}
+
+export interface LocalStateSettings {
+  sqlite_path: string
+  duckdb_path: string | null
+  artifact_root: string
+  backup_root: string
+}
+
+export interface ProductSettingsResponse {
+  service: string
+  version: string
+  stack: ProductStack
+  simulated_trading_in_scope: boolean
+  product_preferences: ProductPreferenceState
+  local_state: LocalStateSettings
+  config_files: ConfigFileMetadata[]
+  external_integrations: ExternalIntegrationStatus[]
+}
+
+export interface ProductSettingsUpdateRequest {
+  preferences: ProductPreferenceSettings
+}
+
+export interface StrategyConfigProvenance {
+  path: string
+  exists: boolean
+  section: string
+}
+
+export interface StrategyDefinition {
+  id: StrategyPreferenceId
+  label: string
+  description: string
+  enabled_by_default: boolean
+  candidate_identity: string[]
+  parity_status: 'product_owned_with_legacy_adapter' | 'legacy_only' | 'not_applicable'
+  config_provenance: StrategyConfigProvenance
+  parameters: Record<string, unknown>
+}
+
+export interface StrategyMetadataResponse {
+  config_path: string
+  config_exists: boolean
+  candidate_identity: string[]
+  strategies: StrategyDefinition[]
+}
+
+export interface StrategySummaryRow {
+  pick_date: string
+  run_id: string
+  strategy: string
+  total: number
+  reviewed: number
+  recommended: number
+  unreviewed: number
+  reviewed_rate: number
+  recommended_rate: number
+}
+
+export interface StrategySummaryTotals {
+  total: number
+  reviewed: number
+  recommended: number
+  unreviewed: number
+  reviewed_rate: number
+  recommended_rate: number
+  strategies: string[]
+  pick_dates: string[]
+}
+
+export interface StrategySummaryResponse {
+  rows: StrategySummaryRow[]
+  totals: StrategySummaryTotals
+  filters: Record<string, string | null>
+}
+
+export interface StrategySummaryFilters {
+  pick_date?: string
+  run_id?: string
+  strategy?: string
+  limit?: string
+}
+
 export interface BackupManifest {
   backup_id: string
   run_id: string
@@ -498,6 +618,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/api/health')
+}
+
+export function getSettings(): Promise<ProductSettingsResponse> {
+  return request<ProductSettingsResponse>('/api/settings')
+}
+
+export function putSettings(payload: ProductSettingsUpdateRequest): Promise<ProductSettingsResponse> {
+  return request<ProductSettingsResponse>('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function getStrategies(): Promise<StrategyMetadataResponse> {
+  return request<StrategyMetadataResponse>('/api/strategies')
+}
+
+export function getStrategySummary(filters: StrategySummaryFilters = {}): Promise<StrategySummaryResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value?.trim()) {
+      params.set(key, value.trim())
+    }
+  }
+  const query = params.toString()
+  return request<StrategySummaryResponse>(`/api/analytics/strategy-summary${query ? `?${query}` : ''}`)
 }
 
 export function createBackup(): Promise<BackupCreateResponse> {

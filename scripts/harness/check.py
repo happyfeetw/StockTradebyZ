@@ -40,6 +40,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-dashboard-retirement.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
+    Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
@@ -158,6 +159,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-dashboard-retirement",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-legacy-write-freeze",
+            "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
@@ -514,6 +516,7 @@ def check_r7_retirement_plan() -> None:
             "Product launcher",
             "r7-product-launcher",
             "Retirement PRs",
+            "r7-chart-export-retirement",
             "Rollback Rules",
             "scripts/harness/check.sh r7-retirement-plan",
         ],
@@ -776,6 +779,46 @@ def check_r7_resource_envelope() -> None:
     print("[r7-resource-envelope] ok")
 
 
+def check_r7_chart_export_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-chart-export-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Chart Export Retirement",
+            "dashboard/export_kline_charts.py",
+            "POST /api/runs/chart-export",
+            "STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1",
+            "R7 legacy retirement",
+            "Product Replacement Proof",
+            "Rollback",
+            "scripts/harness/check.sh r7-chart-export-retirement",
+            "Simulated trading remains out of scope",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_CHART_EXPORT_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT",
+            "legacy_chart_export_enabled",
+            "print_legacy_chart_export_retired_notice",
+        ],
+    )
+    assert_contains(
+        "dashboard/export_kline_charts.py",
+        [
+            "legacy_chart_export_enabled",
+            "print_legacy_chart_export_retired_notice",
+            "POST /api/runs/chart-export",
+            "return 2",
+            "_load_chart_export_dependencies",
+            "raise SystemExit(main())",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_chart_export_retirement_harness"])
+    print("[r7-chart-export-retirement] ok")
+
+
 def check_r7_runtime_terminal_integrity() -> None:
     assert_contains(
         "docs/agent-harness/r7-runtime-terminal-integrity.md",
@@ -827,6 +870,7 @@ def parse_args() -> argparse.Namespace:
             "r7-dashboard-retirement",
             "r7-browser-proof",
             "r7-legacy-write-freeze",
+            "r7-chart-export-retirement",
             "r7-product-launcher",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
@@ -863,6 +907,8 @@ def main() -> int:
             check_r7_browser_proof()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
+        elif args.gate == "r7-chart-export-retirement":
+            check_r7_chart_export_retirement()
         elif args.gate == "r7-product-launcher":
             check_r7_product_launcher()
         elif args.gate == "r7-runtime-terminal-integrity":

@@ -30,6 +30,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/target-architecture-design.md](docs/agent-harness/target-architecture-design.md)
 - R7 hardening and retirement plan:
   [docs/agent-harness/r7-hardening-retirement-plan.md](docs/agent-harness/r7-hardening-retirement-plan.md)
+- R7 chart export retirement:
+  [docs/agent-harness/r7-chart-export-retirement.md](docs/agent-harness/r7-chart-export-retirement.md)
 - R7 product launcher:
   [docs/agent-harness/r7-product-launcher.md](docs/agent-harness/r7-product-launcher.md)
 - R7 runtime terminal integrity:
@@ -103,6 +105,7 @@ scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
+scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope

@@ -39,7 +39,7 @@ Out of scope:
 | `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Mark legacy-only; do not expand | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
-| `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Keep as chart oracle; product chart export is supported path | Product chart artifact proof and visual smoke |
+| `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Retired by default behind `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1`; product chart export is supported path | Product chart artifact proof, visual smoke, and `r7-chart-export-retirement` |
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Freeze after product workstation covers primary flows | Product browser smoke, cancellation/error-state proof, user workflow notes |
 | `start_workbench` | Legacy launch script | Keep as compatibility launcher until final retirement | `start_product` React/FastAPI local launch docs and smoke |
@@ -96,6 +96,8 @@ Out of scope:
    - Retire one legacy surface per PR.
    - Each PR must include rollback notes, parity evidence, migration proof, and
      product replacement proof.
+   - Chart export retirement is guarded by
+     `scripts/harness/check.sh r7-chart-export-retirement`.
    - Do not combine paper-trading changes with product retirement work.
    - Dashboard retirement uses
      `docs/agent-harness/r7-dashboard-retirement.md` and
@@ -136,6 +138,8 @@ prove the touched path:
   `scripts/harness/check.sh r7-product-launcher`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
+- chart export retirement: `scripts/harness/check.sh
+  r7-chart-export-retirement` plus product chart artifact/browser proof.
 
 ## Rollback Rules
 

@@ -302,9 +302,9 @@ def compute_b1_pick_mask(
     j_q_threshold: float = 0.10,
     require_close_gt_long: bool = True,
     require_short_gt_long: bool = True,
-    max_vol_lookback: int = 20,
+    max_vol_lookback: int | None = 20,
 ) -> np.ndarray:
-    return (
+    mask = (
         compute_kdj_quantile_mask(
             frame["J"],
             j_threshold=j_threshold,
@@ -318,8 +318,10 @@ def compute_b1_pick_mask(
             require_short_gt_long=require_short_gt_long,
         )
         & frame["wma_bull"].to_numpy(dtype=bool)
-        & compute_max_volume_not_bearish(frame, lookback=max_vol_lookback)
     )
+    if max_vol_lookback is not None:
+        mask &= compute_max_volume_not_bearish(frame, lookback=max_vol_lookback)
+    return mask
 
 
 def compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
@@ -330,6 +332,86 @@ def compute_upper_shadow_ratio(frame: pd.DataFrame) -> np.ndarray:
     out = np.zeros(len(frame), dtype=float)
     np.divide(high - close, span, out=out, where=span > 0)
     return out
+
+
+def compute_b2_quality_score(
+    frame: pd.DataFrame,
+    *,
+    upper_shadow_soft_limit: float = 0.15,
+) -> np.ndarray:
+    score = np.full(len(frame), 100.0, dtype=float)
+    j_values = frame["J"].to_numpy(dtype=float)
+    prior_j = frame["_b2_prior_b1_j"].to_numpy(dtype=float)
+    j_delta = j_values - prior_j
+    volume_ratio = frame["_b2_volume_ratio"].to_numpy(dtype=float)
+    body_pct = frame["_b2_today_body_pct"].to_numpy(dtype=float)
+    upper_shadow = frame["_b2_upper_shadow_ratio"].to_numpy(dtype=float)
+
+    score += np.where(j_values < 25.0, 5.0, 0.0)
+    score += np.where((j_values >= 45.0) & (j_values < 55.0), -5.0, 0.0)
+    score += np.where(j_delta >= 10.0, 5.0, 0.0)
+    score += np.where(volume_ratio > 1.2, 8.0, np.where(volume_ratio > 1.0, 3.0, 0.0))
+    score += np.where(body_pct >= 0.03, 5.0, np.where(body_pct < 0.01, -5.0, 0.0))
+    score += np.where(upper_shadow <= 0.03, 5.0, 0.0)
+    score += np.where(upper_shadow > upper_shadow_soft_limit, -10.0, 0.0)
+    return score
+
+
+def compute_b2_pick_mask(
+    frame: pd.DataFrame,
+    *,
+    require_j_turn_up: bool = True,
+    j_ceiling: float = 55.0,
+    min_return: float = 0.04,
+    return_tolerance: float = 1e-12,
+    min_today_body_pct: float = 0.003,
+    volume_ratio_min: float = 1.0,
+    flat_volume_ratio: float = 0.98,
+) -> np.ndarray:
+    current_zx_ok = compute_zx_condition_mask(frame, frame["zxdq"], frame["zxdkx"])
+    current_weekly_ok = frame["wma_bull"].to_numpy(dtype=bool)
+    prior_lag = frame["_b2_prior_b1_lag"].to_numpy(dtype=np.int16)
+    recent_b1_ok = prior_lag > 0
+
+    if require_j_turn_up:
+        if "_b2_j_turn_up" in frame.columns:
+            j_turn_up_ok = frame["_b2_j_turn_up"].to_numpy(dtype=bool)
+        else:
+            j_turn_up_ok = (
+                frame["J"].to_numpy(dtype=float)
+                > frame["_b2_prior_b1_j"].to_numpy(dtype=float)
+            )
+    else:
+        j_turn_up_ok = np.ones(len(frame), dtype=bool)
+
+    j_ceiling_ok = frame["J"].to_numpy(dtype=float) < j_ceiling
+    daily_return_ok = (
+        frame["_b2_daily_return"].to_numpy(dtype=float)
+        >= min_return - return_tolerance
+    )
+    open_ = frame["open"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    body_ok = (
+        (close > open_)
+        & (frame["_b2_today_body_pct"].to_numpy(dtype=float) >= min_today_body_pct)
+    )
+    volume_ratio = frame["_b2_volume_ratio"].to_numpy(dtype=float)
+    strict_yang_bao_yin = frame["_b2_strict_yang_bao_yin"].to_numpy(dtype=bool)
+    volume_ok = (
+        (volume_ratio > volume_ratio_min)
+        | ((volume_ratio >= flat_volume_ratio) & strict_yang_bao_yin)
+    )
+
+    return (
+        current_zx_ok
+        & current_weekly_ok
+        & recent_b1_ok
+        & j_turn_up_ok
+        & j_ceiling_ok
+        & daily_return_ok
+        & body_ok
+        & volume_ok
+    )
 
 
 def compute_volume_ratio(frame: pd.DataFrame) -> np.ndarray:

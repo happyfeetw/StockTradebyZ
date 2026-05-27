@@ -180,7 +180,13 @@ class GeminiCliReviewProviderExecutor:
         for item in request.items:
             cache_path = _result_cache_path(config, item.review_key)
             if config.skip_existing and cache_path.is_file():
-                cached_results[item.review_key] = _read_json_object(cache_path)
+                cached_result = _read_json_object(cache_path)
+                cached_result["provider_evidence_files"] = _provider_evidence_files(
+                    config,
+                    raw_dir=None,
+                    cache_path=cache_path,
+                )
+                cached_results[item.review_key] = cached_result
                 _write_checkpoint(
                     config,
                     status="skip_existing",
@@ -354,7 +360,13 @@ class GeminiCliReviewProviderExecutor:
             result["provider_output_format"] = config.output_format
             results.append((item, result))
         for item, result in results:
-            _write_json_object(_result_cache_path(config, item.review_key), result)
+            cache_path = _result_cache_path(config, item.review_key)
+            result["provider_evidence_files"] = _provider_evidence_files(
+                config,
+                raw_dir=raw_dir,
+                cache_path=cache_path,
+            )
+            _write_json_object(cache_path, result)
         _write_checkpoint(
             config,
             status="batch_done",
@@ -709,6 +721,32 @@ def _write_raw_response(
         }
     )
     _write_json_object(meta_path, meta)
+
+
+def _provider_evidence_files(
+    config: GeminiCliConfig,
+    *,
+    raw_dir: Path | None,
+    cache_path: Path,
+) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    if raw_dir is not None:
+        entries.extend(
+            [
+                {"role": "raw_prompt", "path": str(raw_dir / "prompt.txt")},
+                {"role": "raw_meta", "path": str(raw_dir / "meta.json")},
+                {"role": "raw_stdout", "path": str(raw_dir / "stdout.jsonl")},
+                {"role": "raw_stderr", "path": str(raw_dir / "stderr.log")},
+            ]
+        )
+    entries.extend(
+        [
+            {"role": "result_cache", "path": str(cache_path)},
+            {"role": "checkpoint", "path": str(config.checkpoint_path)},
+            {"role": "usage", "path": str(config.usage_file)},
+        ]
+    )
+    return entries
 
 
 def _write_checkpoint(

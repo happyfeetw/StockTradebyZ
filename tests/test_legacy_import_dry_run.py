@@ -711,6 +711,21 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(first["extra"]["legacy_run_id"], "legacy-archive-run-1")
                 self.assertEqual(first["review_payload"]["comment"], "clean breakout")
                 self.assertEqual(first["chart"], "data/kline/2026-05-26/000010_day.png")
+                chart_artifact_id = first["chart_artifact_id"]
+                self.assertIsNotNone(chart_artifact_id)
+
+                artifacts = await client.get(f"/api/runs/{migration_id}/artifacts")
+                self.assertEqual(artifacts.status_code, 200)
+                artifacts_payload = artifacts.json()["artifacts"]
+                self.assertEqual(len(artifacts_payload), 1)
+                chart_artifact = artifacts_payload[0]
+                self.assertEqual(chart_artifact["id"], chart_artifact_id)
+                self.assertEqual(chart_artifact["run_id"], migration_id)
+                self.assertEqual(chart_artifact["kind"], "chart")
+                self.assertEqual(chart_artifact["path"], "data/kline/2026-05-26/000010_day.png")
+                self.assertEqual(chart_artifact["content_type"], "image/png")
+                self.assertEqual(chart_artifact["metadata"]["source"], "legacy:kline")
+                self.assertEqual(chart_artifact["metadata"]["review_key"], "000010_b2")
 
                 recommended = await client.get(
                     "/api/archive/2026-05-26",
@@ -736,7 +751,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                     """
                 ).fetchall()
                 self.assertEqual(len(facts), 3)
-                self.assertEqual(facts[0][:6], (migration_id, "000010", "b2", "recommended", 1, None))
+                self.assertEqual(facts[0][:6], (migration_id, "000010", "b2", "recommended", 1, chart_artifact_id))
                 self.assertEqual(json.loads(facts[0][6])["chart_path"], "data/kline/2026-05-26/000010_day.png")
                 metrics = connection.execute(
                     """
@@ -748,6 +763,70 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                     [migration_id],
                 ).fetchall()
                 self.assertEqual(metrics, [("b2", 2, 0, 1, 1), ("brick", 1, 1, 0, 0)])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_reuses_chart_artifact_for_shared_legacy_chart_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_history_import_fixture(tmp)
+            all_path = data_root / "history" / "2026-05-26" / "all.json"
+            all_payload = json.loads(all_path.read_text(encoding="utf-8"))
+            shared_chart_path = all_payload["results"][0]["chart"]
+            all_payload["results"][1]["chart"] = shared_chart_path
+            write_json(all_path, all_payload)
+
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "history",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                migration_id = imported.json()["migration_id"]
+
+                archive = await client.get("/api/archive/2026-05-26", params={"run_id": migration_id})
+                self.assertEqual(archive.status_code, 200)
+                rows_with_chart = [
+                    row
+                    for row in archive.json()["rows"]
+                    if row["chart"] == shared_chart_path and row["chart_artifact_id"] is not None
+                ]
+                self.assertEqual([row["review_key"] for row in rows_with_chart], ["000010_b2", "000011_brick"])
+                self.assertEqual(len({row["chart_artifact_id"] for row in rows_with_chart}), 1)
+
+                artifacts = await client.get(f"/api/runs/{migration_id}/artifacts")
+                self.assertEqual(artifacts.status_code, 200)
+                artifacts_payload = artifacts.json()["artifacts"]
+                self.assertEqual(len(artifacts_payload), 1)
+                self.assertEqual(artifacts_payload[0]["path"], shared_chart_path)
+                self.assertEqual(artifacts_payload[0]["metadata"]["review_keys"], ["000010_b2", "000011_brick"])
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                facts = connection.execute(
+                    """
+                    SELECT code, chart_artifact_id
+                    FROM archive_facts
+                    WHERE pick_date = DATE '2026-05-26' AND run_id = ?
+                    ORDER BY code
+                    """,
+                    [migration_id],
+                ).fetchall()
+                shared_fact_ids = [chart_id for code, chart_id in facts if code in {"000010", "000011"}]
+                self.assertEqual(len(shared_fact_ids), 2)
+                self.assertEqual(len(set(shared_fact_ids)), 1)
+                self.assertIsNotNone(shared_fact_ids[0])
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

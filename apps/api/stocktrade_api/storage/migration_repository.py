@@ -18,6 +18,7 @@ from ..schemas.migrations import (
 from .sqlite_models import (
     ArchiveRow,
     ArchiveSnapshot,
+    Artifact,
     Candidate,
     CandidateBatch,
     MigrationQuarantine,
@@ -409,6 +410,7 @@ class MigrationRepository:
                 archived_at=plan.archived_at,
             )
             session.add(archive_snapshot)
+            chart_artifacts = self._chart_artifacts_for_archive_import(session, run_id=run_id, plan=plan)
             imported_rows: list[ArchiveRow] = []
             for row in plan.rows:
                 archive_row = ArchiveRow(
@@ -426,6 +428,7 @@ class MigrationRepository:
                     extra_json=row.extra,
                     review_payload_json=row.review_payload,
                     chart_path=row.chart,
+                    chart_artifact=chart_artifacts.get(row.chart or ""),
                 )
                 session.add(archive_row)
                 imported_rows.append(archive_row)
@@ -442,6 +445,37 @@ class MigrationRepository:
             if migration_run is None:
                 raise MigrationRunNotFoundError(run_id)
             return migration_run
+
+    def _chart_artifacts_for_archive_import(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+        plan: LegacyArchiveImportPlan,
+    ) -> dict[str, Artifact]:
+        chart_paths = sorted({row.chart for row in plan.rows if row.chart})
+        if not chart_paths:
+            return {}
+
+        artifacts = {
+            artifact.path: artifact
+            for artifact in session.execute(select(Artifact).where(Artifact.path.in_(chart_paths))).scalars()
+        }
+        for chart_path in chart_paths:
+            if chart_path in artifacts:
+                continue
+            rows_for_path = [row for row in plan.rows if row.chart == chart_path]
+            artifact = Artifact(
+                id=uuid4().hex,
+                run_id=run_id,
+                kind="chart",
+                path=chart_path,
+                content_type=_legacy_chart_content_type(chart_path),
+                metadata_json=_legacy_chart_metadata(plan, chart_path, rows_for_path),
+            )
+            session.add(artifact)
+            artifacts[chart_path] = artifact
+        return artifacts
 
     def get_migration_run(self, migration_id: str) -> MigrationRun:
         with self.session_factory() as session:
@@ -486,3 +520,39 @@ def _strategy_counts_for_reviews(plan: LegacyReviewImportPlan) -> dict[str, int]
     for review in plan.reviews:
         counts[review.strategy] = counts.get(review.strategy, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _legacy_chart_content_type(path: str) -> str | None:
+    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+    }.get(suffix)
+
+
+def _legacy_chart_metadata(
+    plan: LegacyArchiveImportPlan,
+    chart_path: str,
+    rows: list[Any],
+) -> dict[str, Any]:
+    review_keys = [row.review_key for row in rows]
+    codes = sorted({row.code for row in rows})
+    strategies = sorted({row.strategy for row in rows})
+    metadata: dict[str, Any] = {
+        "source": "legacy:kline",
+        "pick_date": plan.pick_date,
+        "legacy_run_id": plan.legacy_run_id,
+        "legacy_chart_path": chart_path,
+        "review_keys": review_keys,
+        "codes": codes,
+        "strategies": strategies,
+    }
+    if len(review_keys) == 1:
+        metadata["review_key"] = review_keys[0]
+    if len(codes) == 1:
+        metadata["code"] = codes[0]
+    if len(strategies) == 1:
+        metadata["strategy"] = strategies[0]
+    return metadata

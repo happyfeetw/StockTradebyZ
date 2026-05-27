@@ -41,7 +41,7 @@ hardening, final browser proof, and legacy retirement sequence.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, and runtime cancellation contract coverage define scope, resource guardrails, validation, rollback, and phase order | Final browser proof, legacy write freeze, and surface-by-surface retirement |
+| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, and runtime cancellation contract coverage define scope, browser/resource guardrails, validation, rollback, and phase order | Legacy write freeze, broader recovery/concurrency hardening, and surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -104,6 +104,10 @@ evidence:
   path through `scripts/harness/resource_envelope.py`, recording startup time,
   workflow runtime, memory, SQLite/DuckDB growth, and artifact growth under
   `scripts/harness/check.sh r7-resource-envelope`.
+- R7 final browser proof now covers Overview, Run Center, Candidates, Reviews,
+  Archive, Analytics, Settings, and Migrations at desktop and mobile widths
+  using deterministic UI smoke data, no-overflow checks, console checks, API
+  200 logs, and chart artifact inspection.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -177,8 +181,8 @@ full objective:
   disabled or removed.
 - Runtime cancellation no longer overwrites terminal runs, but broader
   concurrency and recovery hardening still needs R7 coverage.
-- Final browser smoke, screenshot evidence, legacy write freeze, and legacy
-  retirement proof are not yet R7-ready.
+- Legacy write freeze, final retirement proof, and broader recovery/concurrency
+  hardening are not yet R7-ready.
 
 ## Next Issue Queue
 

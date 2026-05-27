@@ -37,6 +37,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r5-ui-browser-smoke.md"),
     Path("docs/agent-harness/r6-storage-cutover-plan.md"),
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
+    Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
@@ -136,6 +137,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
             "scripts/harness/check.sh r7-retirement-plan",
+            "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-resource-envelope",
             "Maintenance Rule",
         ],
@@ -478,6 +480,7 @@ def check_r7_retirement_plan() -> None:
             "Resource envelope",
             "r7-resource-envelope",
             "Final browser proof",
+            "r7-browser-proof",
             "Legacy write freeze",
             "Retirement PRs",
             "Rollback Rules",
@@ -485,6 +488,35 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_browser_proof() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-final-browser-proof.md",
+        [
+            "Managing issue: #152",
+            "R7 Final Browser Proof",
+            "PYTHONPATH=apps/api:src python3 scripts/harness/seed_ui_smoke.py --force",
+            "npm run dev -- --host 127.0.0.1 --port 5173",
+            "scripts/harness/check.sh r7-browser-proof",
+            "desktop `1440x1000` and mobile `430x932`",
+            "Overview",
+            "Run Center",
+            "Candidates",
+            "Reviews",
+            "Archive",
+            "Analytics",
+            "Settings",
+            "Migrations",
+            "documentElement.scrollWidth <= documentElement.clientWidth + 1",
+            "Browser console error log: empty",
+            "artifact-ui-smoke-chart-000001-b2",
+            "simulated trading",
+            "Residual Risk",
+        ],
+    )
+    check_ui_smoke_fixture()
+    print("[r7-browser-proof] ok")
 
 
 def check_r7_resource_envelope() -> None:
@@ -528,6 +560,7 @@ def parse_args() -> argparse.Namespace:
             "ui-smoke-fixture",
             "storage-cutover-plan",
             "r7-retirement-plan",
+            "r7-browser-proof",
             "r7-resource-envelope",
             "quick",
         ],
@@ -555,6 +588,8 @@ def main() -> int:
             check_storage_cutover_plan()
         elif args.gate == "r7-retirement-plan":
             check_r7_retirement_plan()
+        elif args.gate == "r7-browser-proof":
+            check_r7_browser_proof()
         elif args.gate == "r7-resource-envelope":
             check_r7_resource_envelope()
         elif args.gate == "quick":

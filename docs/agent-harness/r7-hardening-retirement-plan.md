@@ -73,6 +73,8 @@ Out of scope:
      Settings, Migrations, and error states at desktop and mobile widths.
    - Verify no horizontal overflow and that chart/provider evidence artifacts
      are inspectable.
+   - Record evidence in `docs/agent-harness/r7-final-browser-proof.md` and run
+     `scripts/harness/check.sh r7-browser-proof`.
 
 5. Legacy write freeze.
    - Add warnings or documentation to legacy entrypoints before removal.
@@ -103,7 +105,7 @@ prove the touched path:
 - resource evidence: fixture command output or checked-in report with
   reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and
-  no-overflow notes;
+  no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof and compatibility import test;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.

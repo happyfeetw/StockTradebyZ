@@ -42,7 +42,7 @@ Out of scope:
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Keep as chart oracle; product chart export is supported path | Product chart artifact proof and visual smoke |
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Mark legacy UI; no new product work | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Freeze after product workstation covers primary flows | Product browser smoke, cancellation/error-state proof, user workflow notes |
-| `start_workbench` | Legacy launch script | Keep until replacement launch/developer docs are complete | React/FastAPI local launch docs and smoke |
+| `start_workbench` | Legacy launch script | Keep as compatibility launcher until final retirement | `start_product` React/FastAPI local launch docs and smoke |
 | `data/candidates`, `data/review`, `data/history`, `data/kline`, `data/runs` | Legacy generated state and migration input | Do not delete in R7 planning; retire reads/writes by surface-specific PR | Backup, migration verify, product no-read proof |
 | `data/trading` | Paper/simulated trading state | Excluded from product refactor | Explicit exclusion remains in gates |
 
@@ -94,6 +94,9 @@ Out of scope:
    - Each PR must include rollback notes, parity evidence, migration proof, and
      product replacement proof.
    - Do not combine paper-trading changes with product retirement work.
+   - Product launcher proof uses `docs/agent-harness/r7-product-launcher.md` and
+     `scripts/harness/check.sh r7-product-launcher` as the replacement launch
+     proof before retiring `start_workbench`.
 
 ## Validation Requirements
 
@@ -117,6 +120,8 @@ prove the touched path:
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof, compatibility import test,
   and `scripts/harness/check.sh r7-legacy-write-freeze`;
+- product launcher: `start_product` replacement path, bash syntax check, and
+  `scripts/harness/check.sh r7-product-launcher`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 

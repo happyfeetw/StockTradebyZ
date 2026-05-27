@@ -39,6 +39,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
+    Path("docs/agent-harness/r7-product-launcher.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/workflows.md"),
@@ -154,6 +155,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-retirement-plan",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-legacy-write-freeze",
+            "scripts/harness/check.sh r7-product-launcher",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
             "Maintenance Rule",
@@ -502,12 +504,57 @@ def check_r7_retirement_plan() -> None:
             "r7-browser-proof",
             "Legacy write freeze",
             "r7-legacy-write-freeze",
+            "Product launcher",
+            "r7-product-launcher",
             "Retirement PRs",
             "Rollback Rules",
             "scripts/harness/check.sh r7-retirement-plan",
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_product_launcher() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-product-launcher.md",
+        [
+            "Managing issue: #152",
+            "R7 Product Launcher",
+            "./start_product",
+            "stocktrade_api.main:app",
+            "127.0.0.1:8000",
+            "127.0.0.1:5173",
+            "start_workbench",
+            "simulated trading",
+            "scripts/harness/check.sh r7-product-launcher",
+            "Rollback",
+        ],
+    )
+    launcher = ROOT / "start_product"
+    if not launcher.exists():
+        raise HarnessError("missing start_product")
+    if not os.access(launcher, os.X_OK):
+        raise HarnessError("start_product must be executable")
+    assert_contains(
+        "start_product",
+        [
+            "stocktrade_api.main:app",
+            "npm run dev",
+            "STOCKTRADE_API_PORT:-8000",
+            "STOCKTRADE_WEB_PORT:-5173",
+            "PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"",
+            "cleanup()",
+        ],
+    )
+    assert_contains("start_workbench", ["R7 legacy write freeze", "./start_product", "React/FastAPI workflows"])
+    assert_contains(
+        "tests/test_product_launcher_harness.py",
+        [
+            "test_start_product_is_executable_and_targets_react_fastapi_stack",
+            "test_legacy_workbench_points_to_product_launcher",
+        ],
+    )
+    print("[r7-product-launcher] ok")
 
 
 def iter_product_source_files() -> list[Path]:
@@ -678,6 +725,7 @@ def parse_args() -> argparse.Namespace:
             "r7-retirement-plan",
             "r7-browser-proof",
             "r7-legacy-write-freeze",
+            "r7-product-launcher",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
             "quick",
@@ -710,6 +758,8 @@ def main() -> int:
             check_r7_browser_proof()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
+        elif args.gate == "r7-product-launcher":
+            check_r7_product_launcher()
         elif args.gate == "r7-runtime-terminal-integrity":
             check_r7_runtime_terminal_integrity()
         elif args.gate == "r7-resource-envelope":

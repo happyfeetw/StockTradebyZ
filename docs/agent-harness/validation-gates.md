@@ -17,6 +17,7 @@ requires it.
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
+| r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
 | r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
@@ -191,6 +192,26 @@ scripts/harness/check.sh r7-legacy-write-freeze
 Run this before PRs that freeze legacy writes, add new product storage paths,
 or start surface-specific retirement.
 
+## R7 Product Launcher Gate
+
+Checks:
+
+- `start_product` exists and is executable;
+- the launcher starts `stocktrade_api.main:app` and the React/Vite workstation
+  with local host/port defaults;
+- `start_workbench` points users to `./start_product` for supported
+  React/FastAPI workflows;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-product-launcher
+```
+
+Run this before PRs that change local product startup, replacement launch docs,
+or `start_workbench` retirement.
+
 ## R7 Runtime Terminal Integrity Gate
 
 Checks:
@@ -269,6 +290,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
+| R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
 | R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
@@ -285,4 +307,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-product-launcher for local launch changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

@@ -30,6 +30,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/target-architecture-design.md](docs/agent-harness/target-architecture-design.md)
 - R7 hardening and retirement plan:
   [docs/agent-harness/r7-hardening-retirement-plan.md](docs/agent-harness/r7-hardening-retirement-plan.md)
+- R7 product launcher:
+  [docs/agent-harness/r7-product-launcher.md](docs/agent-harness/r7-product-launcher.md)
 - R7 runtime terminal integrity:
   [docs/agent-harness/r7-runtime-terminal-integrity.md](docs/agent-harness/r7-runtime-terminal-integrity.md)
 - Validation gates: [docs/agent-harness/validation-gates.md](docs/agent-harness/validation-gates.md)
@@ -100,6 +102,7 @@ scripts/harness/check.sh product-refactor-readiness
 scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-legacy-write-freeze
+scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh quick

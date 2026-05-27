@@ -32,22 +32,67 @@ DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
-from legacy_compat import LEGACY_UI_FREEZE_NOTICE  # noqa: E402
-from dashboard.components.charts import make_daily_chart, make_weekly_chart  # noqa: E402
-from paper_trading.core import (  # noqa: E402
-    complete_history_result,
-    execute_plan,
-    generate_plan,
-    plan_files,
-    plan_path,
-    portfolio_value,
-    required_signal_strategies,
-    save_snapshot,
-    trading_config,
-    trading_dir,
-    update_plan_status,
+from legacy_compat import (  # noqa: E402
+    LEGACY_UI_FREEZE_NOTICE,
+    LEGACY_WORKBENCH_ENV,
+    LEGACY_WORKBENCH_RETIRED_NOTICE,
+    legacy_workbench_enabled,
 )
-import paper_trading.core as paper_trading_core  # noqa: E402
+
+complete_history_result: Any = None
+execute_plan: Any = None
+generate_plan: Any = None
+make_daily_chart: Any = None
+make_weekly_chart: Any = None
+paper_trading_core: Any = None
+plan_files: Any = None
+plan_path: Any = None
+portfolio_value: Any = None
+required_signal_strategies: Any = None
+save_snapshot: Any = None
+trading_config: Any = None
+trading_dir: Any = None
+update_plan_status: Any = None
+
+
+def _load_workbench_dependencies() -> None:
+    """Load legacy UI and paper-trading dependencies only after rollback opt-in."""
+    global complete_history_result, execute_plan, generate_plan, make_daily_chart, make_weekly_chart
+    global paper_trading_core, plan_files, plan_path, portfolio_value, required_signal_strategies
+    global save_snapshot, trading_config, trading_dir, update_plan_status
+
+    if paper_trading_core is not None and make_daily_chart is not None:
+        return
+
+    from dashboard.components.charts import make_daily_chart as _make_daily_chart
+    from dashboard.components.charts import make_weekly_chart as _make_weekly_chart
+    from paper_trading.core import complete_history_result as _complete_history_result
+    from paper_trading.core import execute_plan as _execute_plan
+    from paper_trading.core import generate_plan as _generate_plan
+    from paper_trading.core import plan_files as _plan_files
+    from paper_trading.core import plan_path as _plan_path
+    from paper_trading.core import portfolio_value as _portfolio_value
+    from paper_trading.core import required_signal_strategies as _required_signal_strategies
+    from paper_trading.core import save_snapshot as _save_snapshot
+    from paper_trading.core import trading_config as _trading_config
+    from paper_trading.core import trading_dir as _trading_dir
+    from paper_trading.core import update_plan_status as _update_plan_status
+    import paper_trading.core as _paper_trading_core
+
+    complete_history_result = _complete_history_result
+    execute_plan = _execute_plan
+    generate_plan = _generate_plan
+    make_daily_chart = _make_daily_chart
+    make_weekly_chart = _make_weekly_chart
+    paper_trading_core = _paper_trading_core
+    plan_files = _plan_files
+    plan_path = _plan_path
+    portfolio_value = _portfolio_value
+    required_signal_strategies = _required_signal_strategies
+    save_snapshot = _save_snapshot
+    trading_config = _trading_config
+    trading_dir = _trading_dir
+    update_plan_status = _update_plan_status
 
 
 def _read_text(path: Path) -> str:
@@ -1882,6 +1927,15 @@ def render_paper_trading() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="AgentTrader 工作台", layout="wide", initial_sidebar_state="expanded")
+    if not legacy_workbench_enabled():
+        st.error(LEGACY_WORKBENCH_RETIRED_NOTICE)
+        st.info(
+            "Use ./start_product for supported React/FastAPI workflows. "
+            f"Temporary rollback: start the legacy workbench with {LEGACY_WORKBENCH_ENV}=1."
+        )
+        st.stop()
+
+    _load_workbench_dependencies()
     ensure_session_state()
     css = _read_text(WORKBENCH_DIR / "assets" / "style.css")
     if css:

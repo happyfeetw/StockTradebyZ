@@ -65,6 +65,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   chart export writer.
 - [r7-product-launcher.md](r7-product-launcher.md): default local
   React/FastAPI launcher and replacement path for `start_workbench`.
+- [r7-workbench-retirement.md](r7-workbench-retirement.md): default retirement
+  guard and rollback flag for the legacy Streamlit workbench and runner.
 - [r7-runtime-terminal-integrity.md](r7-runtime-terminal-integrity.md):
   terminal run/step immutability rules for R7 product job diagnostics.
 - [r7-resource-envelope.md](r7-resource-envelope.md): credential-free runtime,
@@ -89,6 +91,7 @@ scripts/harness/check.sh r7-gemini-api-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
+scripts/harness/check.sh r7-workbench-retirement
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
 scripts/harness/check.sh r7-runtime-recovery

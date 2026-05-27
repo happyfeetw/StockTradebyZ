@@ -43,6 +43,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
     Path("docs/agent-harness/r7-chart-export-retirement.md"),
     Path("docs/agent-harness/r7-product-launcher.md"),
+    Path("docs/agent-harness/r7-workbench-retirement.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/r7-runtime-recovery.md"),
@@ -163,6 +164,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-legacy-write-freeze",
             "scripts/harness/check.sh r7-chart-export-retirement",
             "scripts/harness/check.sh r7-product-launcher",
+            "scripts/harness/check.sh r7-workbench-retirement",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
             "scripts/harness/check.sh r7-runtime-recovery",
@@ -519,6 +521,8 @@ def check_r7_retirement_plan() -> None:
             "r7-dashboard-retirement",
             "Product launcher",
             "r7-product-launcher",
+            "Workbench retirement",
+            "r7-workbench-retirement",
             "Retirement PRs",
             "r7-chart-export-retirement",
             "Rollback Rules",
@@ -711,6 +715,66 @@ def check_r7_product_launcher() -> None:
         ],
     )
     print("[r7-product-launcher] ok")
+
+
+def check_r7_workbench_retirement() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-workbench-retirement.md",
+        [
+            "Managing issue: #152",
+            "R7 Workbench Retirement",
+            "./start_product",
+            "STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1",
+            "workbench/app.py",
+            "workbench/runner.py",
+            "token lookup",
+            "paper_trading.core",
+            "data/runs",
+            "simulated trading remains out of scope",
+            "scripts/harness/check.sh r7-workbench-retirement",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "legacy_compat.py",
+        [
+            "LEGACY_WORKBENCH_ENV",
+            "STOCKTRADE_ALLOW_LEGACY_WORKBENCH",
+            "LEGACY_WORKBENCH_RETIRED_NOTICE",
+            "legacy_workbench_enabled",
+        ],
+    )
+    assert_contains(
+        "start_workbench",
+        [
+            "STOCKTRADE_ALLOW_LEGACY_WORKBENCH",
+            "R7 workbench retirement",
+            "./start_product",
+            "exit 2",
+            "streamlit run workbench/app.py",
+        ],
+    )
+    assert_contains(
+        "workbench/app.py",
+        [
+            "legacy_workbench_enabled",
+            "LEGACY_WORKBENCH_RETIRED_NOTICE",
+            "_load_workbench_dependencies",
+            "from paper_trading.core import",
+            "st.stop()",
+        ],
+    )
+    assert_contains(
+        "workbench/runner.py",
+        [
+            "legacy_workbench_enabled",
+            "LEGACY_WORKBENCH_RETIRED_NOTICE",
+            "return 2",
+            'config = load_json(run_dir / "run_config.json")',
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_workbench_retirement_harness"])
+    print("[r7-workbench-retirement] ok")
 
 
 def iter_product_source_files() -> list[Path]:
@@ -925,6 +989,7 @@ def parse_args() -> argparse.Namespace:
             "r7-legacy-write-freeze",
             "r7-chart-export-retirement",
             "r7-product-launcher",
+            "r7-workbench-retirement",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
             "r7-runtime-recovery",
@@ -966,6 +1031,8 @@ def main() -> int:
             check_r7_chart_export_retirement()
         elif args.gate == "r7-product-launcher":
             check_r7_product_launcher()
+        elif args.gate == "r7-workbench-retirement":
+            check_r7_workbench_retirement()
         elif args.gate == "r7-runtime-terminal-integrity":
             check_r7_runtime_terminal_integrity()
         elif args.gate == "r7-resource-envelope":

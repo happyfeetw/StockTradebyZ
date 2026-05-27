@@ -28,10 +28,19 @@ LEGACY_DASHBOARD_RETIRED_NOTICE = (
     "R7 dashboard retirement: dashboard/app.py is retired by default. "
     f"Set {LEGACY_DASHBOARD_ENV}=1 only for migration, parity, or rollback checks."
 )
+LEGACY_WORKBENCH_ENV = "STOCKTRADE_ALLOW_LEGACY_WORKBENCH"
+LEGACY_WORKBENCH_RETIRED_NOTICE = (
+    "R7 workbench retirement: workbench/app.py and start_workbench are retired by default. "
+    f"Set {LEGACY_WORKBENCH_ENV}=1 only for migration, parity, or rollback checks."
+)
 
 
 def legacy_dashboard_enabled() -> bool:
     return os.environ.get(LEGACY_DASHBOARD_ENV) == "1"
+
+
+def legacy_workbench_enabled() -> bool:
+    return os.environ.get(LEGACY_WORKBENCH_ENV) == "1"
 
 
 def print_legacy_write_freeze_notice(*, surface: str, replacement: str, writes: str) -> None:

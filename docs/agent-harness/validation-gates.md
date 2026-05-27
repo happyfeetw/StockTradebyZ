@@ -21,6 +21,7 @@ requires it.
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
 | r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
+| r7-workbench-retirement | `scripts/harness/check.sh r7-workbench-retirement` | R7 default retirement guard for the legacy Streamlit workbench and runner |
 | r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | r7-runtime-recovery | `scripts/harness/check.sh r7-runtime-recovery` | R7 FastAPI startup recovery and local product job concurrency semantics |
@@ -279,6 +280,28 @@ scripts/harness/check.sh r7-product-launcher
 Run this before PRs that change local product startup, replacement launch docs,
 or `start_workbench` retirement.
 
+## R7 Workbench Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-workbench-retirement.md` documents the retirement
+  decision, product replacement proof, rollback flag, and validation;
+- `start_workbench` exits before token lookup, Streamlit checks, or Streamlit
+  launch unless `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1` is set;
+- `workbench/app.py` stops before loading legacy chart or paper-trading
+  dependencies;
+- `workbench/runner.py` exits before reading `run_config.json`;
+- simulated trading logic remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-workbench-retirement
+```
+
+Run this before PRs that disable or remove the legacy Streamlit workbench,
+background runner, or `start_workbench` entrypoint.
+
 ## R7 Runtime Terminal Integrity Gate
 
 Checks:
@@ -386,6 +409,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
 | R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
+| R7 workbench retirement | r7-workbench-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
 | R7 runtime recovery | r7-runtime-recovery + r7-retirement-plan | targeted job lifecycle tests + quick before PR |
@@ -403,4 +427,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement for legacy chart export retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement for legacy chart export retirement, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

@@ -32,9 +32,10 @@ Optional local overrides:
 
 ## Legacy Workbench Relationship
 
-`start_workbench` remains available only as a compatibility launcher while R7
-retires Streamlit/workbench surfaces. It must point users to `./start_product`
-for supported React/FastAPI workflows.
+`start_workbench` is retired by default while R7 retires Streamlit/workbench
+surfaces. It must point users to `./start_product` for supported React/FastAPI
+workflows and may run only with the explicit
+`STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1` rollback flag.
 
 This launcher does not change:
 
@@ -68,6 +69,6 @@ The `r7-product-launcher` gate checks that:
 
 ## Rollback
 
-Rollback is to keep using `start_workbench` as the compatibility path while the
-product launcher is fixed. Do not delete or mutate legacy `data/` records as
-part of launcher rollback.
+Rollback is to use `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1 ./start_workbench` only
+while the product launcher is fixed. Do not delete or mutate legacy `data/`
+records as part of launcher rollback.

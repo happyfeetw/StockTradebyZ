@@ -3,6 +3,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+if [ "${STOCKTRADE_ALLOW_LEGACY_WORKBENCH:-}" != "1" ]; then
+  echo "[ERROR] R7 workbench retirement: start_workbench is retired by default." >&2
+  echo "Use ./start_product for supported React/FastAPI workflows." >&2
+  echo "Temporary rollback: set STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1 for migration, parity, or rollback checks." >&2
+  echo "[WARN] R7 legacy write freeze: start_workbench is compatibility-only; use ./start_product for React/FastAPI workflows." >&2
+  exit 2
+fi
+
 if [ -n "${TS_TOKEN:-}" ] && [ -z "${TUSHARE_TOKEN:-}" ]; then
   export TUSHARE_TOKEN="$TS_TOKEN"
 fi

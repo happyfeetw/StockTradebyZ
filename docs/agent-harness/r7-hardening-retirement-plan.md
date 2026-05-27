@@ -41,8 +41,8 @@ Out of scope:
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Retired by default behind `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1`; product chart export is supported path | Product chart artifact proof, visual smoke, and `r7-chart-export-retirement` |
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
-| `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Freeze after product workstation covers primary flows | Product browser smoke, cancellation/error-state proof, user workflow notes |
-| `start_workbench` | Legacy launch script | Keep as compatibility launcher until final retirement | `start_product` React/FastAPI local launch docs and smoke |
+| `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Retire by default behind explicit rollback flag | Product browser smoke, cancellation/error-state proof, user workflow notes |
+| `start_workbench` | Legacy launch script | Retire by default behind explicit rollback flag | `start_product` React/FastAPI local launch docs and smoke |
 | `data/candidates`, `data/review`, `data/history`, `data/kline`, `data/runs` | Legacy generated state and migration input | Do not delete in R7 planning; retire reads/writes by surface-specific PR | Backup, migration verify, product no-read proof |
 | `data/trading` | Paper/simulated trading state | Excluded from product refactor | Explicit exclusion remains in gates |
 
@@ -109,6 +109,9 @@ Out of scope:
    - Product launcher proof uses `docs/agent-harness/r7-product-launcher.md` and
      `scripts/harness/check.sh r7-product-launcher` as the replacement launch
      proof before retiring `start_workbench`.
+   - Workbench retirement uses `docs/agent-harness/r7-workbench-retirement.md`
+     and `scripts/harness/check.sh r7-workbench-retirement` for the legacy
+     Streamlit workbench, background runner, and `start_workbench`.
 
 ## Validation Requirements
 
@@ -142,6 +145,9 @@ prove the touched path:
   `scripts/harness/check.sh r7-dashboard-retirement`;
 - product launcher: `start_product` replacement path, bash syntax check, and
   `scripts/harness/check.sh r7-product-launcher`;
+- workbench retirement: default stop guard, explicit rollback flag, product
+  launcher/runtime replacement proof, and
+  `scripts/harness/check.sh r7-workbench-retirement`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 - chart export retirement: `scripts/harness/check.sh

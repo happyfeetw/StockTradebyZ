@@ -123,6 +123,8 @@ class MigrationRepository:
         *,
         migration_id: str | None = None,
         batch_id: str | None = None,
+        pre_import_backup_id: str | None = None,
+        pre_import_backup_path: str | None = None,
     ) -> MigrationRun:
         run_id = migration_id or uuid4().hex
         candidate_batch_id = batch_id or uuid4().hex
@@ -133,6 +135,8 @@ class MigrationRepository:
             source_file=plan.source_path,
             strategy_counts=plan.strategy_counts,
             batch_id=candidate_batch_id,
+            pre_import_backup_id=pre_import_backup_id,
+            pre_import_backup_path=pre_import_backup_path,
             candidates_imported=len(plan.candidates),
         )
         stored_report = report.model_copy(
@@ -215,6 +219,8 @@ class MigrationRepository:
         *,
         migration_id: str | None = None,
         review_run_id: str | None = None,
+        pre_import_backup_id: str | None = None,
+        pre_import_backup_path: str | None = None,
     ) -> MigrationRun:
         run_id = migration_id or uuid4().hex
         imported_review_run_id = review_run_id or uuid4().hex
@@ -226,6 +232,8 @@ class MigrationRepository:
             source_file=plan.source_path,
             strategy_counts=strategy_counts,
             review_run_id=imported_review_run_id,
+            pre_import_backup_id=pre_import_backup_id,
+            pre_import_backup_path=pre_import_backup_path,
             reviews_imported=len(plan.reviews),
             recommendations_imported=len(plan.recommendations),
         )
@@ -335,6 +343,8 @@ class MigrationRepository:
         *,
         migration_id: str | None = None,
         archive_snapshot_id: str | None = None,
+        pre_import_backup_id: str | None = None,
+        pre_import_backup_path: str | None = None,
     ) -> MigrationRun:
         run_id = migration_id or uuid4().hex
         snapshot_id = archive_snapshot_id or uuid4().hex
@@ -345,6 +355,8 @@ class MigrationRepository:
             source_file=plan.source_path,
             strategy_counts=plan.strategy_counts,
             archive_snapshot_id=snapshot_id,
+            pre_import_backup_id=pre_import_backup_id,
+            pre_import_backup_path=pre_import_backup_path,
             archive_rows_imported=len(plan.rows),
             archive_reviewed_count=plan.reviewed_count,
             archive_recommended_count=plan.recommended_count,

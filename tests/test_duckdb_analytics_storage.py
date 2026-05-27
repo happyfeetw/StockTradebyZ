@@ -209,6 +209,7 @@ print("agent.gemini_cli_review" in sys.modules)
                         extra_json={"signal": "breakout"},
                         review_payload_json={"comment": "clean breakout"},
                         chart_path="data/kline/2026-05-26/000010_day.png",
+                        chart_artifact_id="artifact-chart-1",
                     ),
                     ArchiveRow(
                         id=4,
@@ -240,6 +241,7 @@ print("agent.gemini_cli_review" in sys.modules)
                         extra_json={"signal": "updated"},
                         review_payload_json={"comment": "updated review"},
                         chart_path="data/kline/2026-05-26/000010_day.png",
+                        chart_artifact_id="artifact-chart-1",
                     ),
                 ],
             )
@@ -262,14 +264,15 @@ print("agent.gemini_cli_review" in sys.modules)
                     "SELECT count(*) FROM archive_facts WHERE pick_date = DATE '2026-05-26' AND run_id = 'run-3'"
                 ).fetchone()[0]
                 self.assertEqual(archive_count, 1)
-                payload = connection.execute(
+                archive = connection.execute(
                     """
-                    SELECT payload_json
+                    SELECT chart_artifact_id, payload_json
                     FROM archive_facts
                     WHERE pick_date = DATE '2026-05-26' AND run_id = 'run-3' AND code = '000010'
                     """
-                ).fetchone()[0]
-                self.assertEqual(json.loads(payload)["archive_row_id"], 3)
+                ).fetchone()
+                self.assertEqual(archive[0], "artifact-chart-1")
+                self.assertEqual(json.loads(archive[1])["archive_row_id"], 3)
 
                 metrics = connection.execute(
                     """

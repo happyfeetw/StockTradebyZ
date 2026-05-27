@@ -24,14 +24,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import select_stock  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
+    LegacyMarketPreparationPort,
     LegacyPreselectExecutionPort,
     LegacyStrategyFormulaFactoryPort,
+    LegacyWarmupBarsPort,
     PreselectExecutionSettings,
     PreselectParameters,
     PreselectService,
     ProductLiquidityPoolPort,
     ProductPickDatePort,
     ProductStrategySelectorPort,
+    ProductWarmupBarsPort,
 )
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.preselect import CandidateResponse, PreselectRunRequest, PreselectRunResponse  # noqa: E402
@@ -368,6 +371,58 @@ print("pipeline.select_stock" in sys.modules)
             [candidate.to_dict() for candidate in product_candidates],
             [candidate.to_dict() for candidate in legacy_candidates],
         )
+
+    def test_product_warmup_bars_port_matches_legacy_warmup_calculation(self) -> None:
+        cases = [
+            ({}, 10),
+            ({"b1": {"enabled": False}, "b2": {"enabled": False}, "brick": {"enabled": False}}, 3),
+            ({"b1": {"enabled": True, "zx_m4": 200, "wma_long": 55}, "brick": {"enabled": False}}, 7),
+            (
+                {
+                    "b1": {
+                        "enabled": True,
+                        "zx_m4": 144,
+                        "wma_long": 33,
+                    },
+                    "b2": {
+                        "enabled": True,
+                        "b1_lookback": 5,
+                    },
+                    "brick": {"enabled": False},
+                },
+                11,
+            ),
+            (
+                {
+                    "b1": {"enabled": False},
+                    "b2": {"enabled": False},
+                    "brick": {
+                        "enabled": True,
+                        "wma_long": 80,
+                        "zxdkx_m4": 260,
+                    },
+                },
+                9,
+            ),
+        ]
+        product_port = ProductWarmupBarsPort()
+        legacy_port = LegacyWarmupBarsPort(lambda: select_stock)
+
+        for config, min_bars_buffer in cases:
+            with self.subTest(config=config, min_bars_buffer=min_bars_buffer):
+                self.assertEqual(
+                    product_port.calculate_warmup(config, min_bars_buffer),
+                    legacy_port.calculate_warmup(config, min_bars_buffer),
+                )
+                self.assertEqual(
+                    product_port.calculate_warmup(config, min_bars_buffer),
+                    select_stock._calc_warmup(config, min_bars_buffer),
+                )
+
+    def test_legacy_market_preparation_default_uses_product_warmup_port(self) -> None:
+        port = LegacyMarketPreparationPort(lambda: SimpleNamespace())
+
+        self.assertIsInstance(port.warmup, ProductWarmupBarsPort)
 
     def test_legacy_preselect_default_uses_product_owned_date_and_pool_ports(self) -> None:
         port = LegacyPreselectExecutionPort(module_loader=lambda: SimpleNamespace())

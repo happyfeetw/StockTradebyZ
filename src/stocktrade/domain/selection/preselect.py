@@ -105,6 +105,11 @@ class MarketPreparationPort(Protocol):
         ...
 
 
+class WarmupBarsPort(Protocol):
+    def calculate_warmup(self, config: dict[str, Any], min_bars_buffer: int) -> int:
+        ...
+
+
 class PickDatePort(Protocol):
     def resolve_pick_date(self, prepared: dict[str, Any], requested_pick_date: str | None) -> Any:
         ...
@@ -210,6 +215,37 @@ def _sorted_zx(m1: int, m2: int, m3: int, m4: int) -> tuple[int, int, int, int]:
     return values[0], values[1], values[2], values[3]
 
 
+def _calculate_preselect_warmup(config: dict[str, Any], min_bars_buffer: int) -> int:
+    warmup = 120
+    buffer = int(min_bars_buffer)
+
+    config_b1 = config.get("b1", {})
+    if config_b1.get("enabled", True):
+        warmup = max(
+            warmup,
+            int(config_b1.get("zx_m4", 371)) + buffer,
+            int(config_b1.get("wma_long", 30)) * 5 + buffer,
+        )
+
+    config_b2 = config.get("b2", {})
+    if config_b2.get("enabled", False):
+        warmup = max(
+            warmup,
+            int(config_b1.get("zx_m4", 114)) + buffer + int(config_b2.get("b1_lookback", 2)),
+            int(config_b1.get("wma_long", 30)) * 5 + buffer + int(config_b2.get("b1_lookback", 2)),
+        )
+
+    config_brick = config.get("brick", {})
+    if config_brick.get("enabled", True):
+        warmup = max(
+            warmup,
+            int(config_brick.get("wma_long", 120)) * 5 + buffer,
+            int(config_brick.get("zxdkx_m4", 114)) + buffer,
+        )
+
+    return warmup
+
+
 def _load_legacy_select_stock() -> Any:
     if str(PIPELINE_DIR) not in sys.path:
         sys.path.insert(0, str(PIPELINE_DIR))
@@ -226,9 +262,23 @@ class LegacyMarketDataPort:
         return self._module_provider().load_raw_data(settings.data_dir, end_date=parameters.end_date)
 
 
-class LegacyMarketPreparationPort:
+class ProductWarmupBarsPort:
+    def calculate_warmup(self, config: dict[str, Any], min_bars_buffer: int) -> int:
+        return _calculate_preselect_warmup(config, min_bars_buffer)
+
+
+class LegacyWarmupBarsPort:
     def __init__(self, module_provider: Callable[[], Any]):
         self._module_provider = module_provider
+
+    def calculate_warmup(self, config: dict[str, Any], min_bars_buffer: int) -> int:
+        return self._module_provider()._calc_warmup(config, min_bars_buffer)
+
+
+class LegacyMarketPreparationPort:
+    def __init__(self, module_provider: Callable[[], Any], *, warmup: WarmupBarsPort | None = None):
+        self._module_provider = module_provider
+        self.warmup = warmup or ProductWarmupBarsPort()
 
     def prepare(
         self,
@@ -241,7 +291,7 @@ class LegacyMarketPreparationPort:
         module = self._module_provider()
         preparer = module.MarketDataPreparer(
             end_date=module.pd.to_datetime(parameters.end_date) if parameters.end_date else None,
-            warmup_bars=module._calc_warmup(config, settings.min_bars_buffer),
+            warmup_bars=self.warmup.calculate_warmup(config, settings.min_bars_buffer),
             n_turnover_days=settings.n_turnover_days,
             selector=None,
             n_jobs=settings.n_jobs,

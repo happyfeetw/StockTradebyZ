@@ -40,7 +40,7 @@ Out of scope:
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
 | `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Keep as chart oracle; product chart export is supported path | Product chart artifact proof and visual smoke |
-| `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Mark legacy UI; no new product work | React browser smoke covers replacement workflow |
+| `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Freeze after product workstation covers primary flows | Product browser smoke, cancellation/error-state proof, user workflow notes |
 | `start_workbench` | Legacy launch script | Keep until replacement launch/developer docs are complete | React/FastAPI local launch docs and smoke |
 | `data/candidates`, `data/review`, `data/history`, `data/kline`, `data/runs` | Legacy generated state and migration input | Do not delete in R7 planning; retire reads/writes by surface-specific PR | Backup, migration verify, product no-read proof |
@@ -90,6 +90,10 @@ Out of scope:
    - Each PR must include rollback notes, parity evidence, migration proof, and
      product replacement proof.
    - Do not combine paper-trading changes with product retirement work.
+   - Dashboard retirement uses
+     `docs/agent-harness/r7-dashboard-retirement.md` and
+     `scripts/harness/check.sh r7-dashboard-retirement` for the legacy
+     single-stock Streamlit dashboard retirement.
 
 ## Validation Requirements
 
@@ -111,6 +115,9 @@ prove the touched path:
   no-overflow notes, plus `scripts/harness/check.sh r7-browser-proof`;
 - legacy write freeze: product API no-read proof, compatibility import test,
   and `scripts/harness/check.sh r7-legacy-write-freeze`;
+- dashboard retirement: default stop guard, explicit rollback flag,
+  React/FastAPI replacement proof, and
+  `scripts/harness/check.sh r7-dashboard-retirement`;
 - retirement: rollback note, parity fixture, migration verify, and product
   replacement proof.
 

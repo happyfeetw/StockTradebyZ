@@ -15,6 +15,7 @@ requires it.
 | ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
 | storage-cutover-plan | `scripts/harness/check.sh storage-cutover-plan` | R6 source-of-truth and rollback planning |
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
+| r7-dashboard-retirement | `scripts/harness/check.sh r7-dashboard-retirement` | R7 default retirement guard for the legacy single-stock Streamlit dashboard |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
@@ -145,6 +146,27 @@ scripts/harness/check.sh r7-retirement-plan
 Run this before PRs that harden product runtime, collect resource evidence,
 freeze legacy writes, or retire compatibility entrypoints.
 
+## R7 Dashboard Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-dashboard-retirement.md` documents the decision,
+  rollback flag, product replacement proof, and non-goals;
+- `dashboard/app.py` stops by default before loading legacy chart components or
+  reading legacy generated files;
+- `STOCKTRADE_ALLOW_LEGACY_DASHBOARD=1` is the only explicit rollback flag;
+- the retirement does not change selection, review, archive, storage, or
+  simulated trading behavior.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-dashboard-retirement
+```
+
+Run this before PRs that disable or remove the legacy single-stock Streamlit
+dashboard surface.
+
 ## R7 Browser Proof Gate
 
 Checks:
@@ -244,6 +266,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
 | storage cutover plan | storage-cutover-plan + product-refactor-readiness | quick before PR |
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
+| R7 dashboard retirement | r7-dashboard-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
@@ -261,4 +284,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-dashboard-retirement for dashboard surface retirement, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

@@ -198,6 +198,7 @@ def create_review_run(
 def create_review_provider_run(
     request: ReviewProviderRunCreateRequest,
     runtime: JobRuntime = Depends(get_job_runtime),
+    run_repository: RunRepository = Depends(get_run_repository),
     review_repository: ReviewRepository = Depends(get_review_repository),
     analytics_writer: DuckDBAnalyticsWriter | None = Depends(get_analytics_writer),
     artifact_root: Path = Depends(get_artifact_root),
@@ -218,6 +219,8 @@ def create_review_provider_run(
         review_repository,
         executor=executor,
         analytics_writer=analytics_writer,
+        run_repository=run_repository,
+        artifact_root=artifact_root,
     )
     try:
         run, created = runtime.run_review_job(request, service=service)

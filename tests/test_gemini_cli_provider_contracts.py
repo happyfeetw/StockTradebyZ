@@ -141,6 +141,18 @@ class GeminiCliProviderContractTests(unittest.TestCase):
             self.assertEqual(results[0]["strategy"], "b2")
             self.assertEqual(results[0]["reviewer"], "gemini-cli")
             self.assertIn("provider_raw_log_dir", results[0])
+            evidence_roles = {entry["role"] for entry in results[0]["provider_evidence_files"]}
+            self.assertTrue(
+                {
+                    "raw_prompt",
+                    "raw_meta",
+                    "raw_stdout",
+                    "raw_stderr",
+                    "result_cache",
+                    "checkpoint",
+                    "usage",
+                }.issubset(evidence_roles)
+            )
             self.assertIn("--output-format", runner.calls[0]["cmd"])
             self.assertIn("@000001_day.jpg", runner.calls[0]["prompt_text"])
 

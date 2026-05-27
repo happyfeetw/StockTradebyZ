@@ -319,6 +319,43 @@ class StaticReviewProviderExecutor:
         return results
 
 
+class EvidenceReviewProviderExecutor:
+    def __init__(self, artifact_root: Path) -> None:
+        self.artifact_root = artifact_root
+        self.requests: list[object] = []
+
+    def run(self, request) -> list[dict]:
+        self.requests.append(request)
+        state_root = self.artifact_root / "review-provider" / request.candidate_batch_id / "gemini-cli"
+        raw_dir = state_root / "runs" / "call-1"
+        result_cache_dir = state_root / "results"
+        raw_dir.mkdir(parents=True)
+        result_cache_dir.mkdir(parents=True)
+        evidence_files = [
+            ("raw_prompt", raw_dir / "prompt.txt", "prompt body"),
+            ("raw_meta", raw_dir / "meta.json", '{"status":"finished"}'),
+            ("raw_stdout", raw_dir / "stdout.jsonl", '{"role":"assistant"}\n'),
+            ("raw_stderr", raw_dir / "stderr.log", ""),
+            ("checkpoint", state_root / "gemini_cli_review_checkpoint.json", '{"status":"finished"}'),
+            ("usage", state_root / ".gemini_cli_usage.json", '{"count":1}'),
+        ]
+        for _role, path, body in evidence_files:
+            path.write_text(body, encoding="utf-8")
+
+        results = []
+        for item in request.items:
+            cache_path = result_cache_dir / f"{item.review_key}.json"
+            cache_path.write_text('{"cached":true}', encoding="utf-8")
+            result = review_result(item.code, item.strategy)
+            result["provider_evidence_files"] = [
+                {"role": role, "path": str(path)}
+                for role, path, _body in evidence_files
+            ]
+            result["provider_evidence_files"].append({"role": "result_cache", "path": str(cache_path)})
+            results.append(result)
+        return results
+
+
 def review_repository(db_path: Path) -> tuple[ReviewRepository, object]:
     engine = create_sqlite_engine(db_path)
     return ReviewRepository(create_session_factory(engine)), engine
@@ -620,6 +657,85 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
                     ("000002_brick", "artifact-chart-history-000002"),
                 ],
             )
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_review_provider_run_indexes_provider_evidence_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            artifact_root = tmp / "artifacts"
+            migrate_sqlite(db_path)
+            apply_duckdb_migrations(duckdb_path)
+            seed_historical_candidate_batch(db_path, include_chart_artifacts=True)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, artifact_root=artifact_root)
+            app.state.review_provider_executor = EvidenceReviewProviderExecutor(artifact_root)
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/runs/review/provider",
+                    json={
+                        "candidate_batch_id": "batch-history",
+                        "provider": "gemini-cli",
+                        "min_score": 4.0,
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                run_id = payload["run"]["id"]
+
+                artifacts_response = await client.get(f"/api/runs/{run_id}/artifacts")
+                self.assertEqual(artifacts_response.status_code, 200)
+                artifacts = artifacts_response.json()["artifacts"]
+                self.assertEqual(len(artifacts), 8)
+                self.assertTrue(all(artifact["kind"] == "provider_evidence" for artifact in artifacts))
+                self.assertTrue(
+                    all(artifact["path"].startswith(f"{run_id}/provider-evidence/") for artifact in artifacts)
+                )
+                self.assertEqual(
+                    {role for artifact in artifacts for role in artifact["metadata"]["roles"]},
+                    {
+                        "raw_prompt",
+                        "raw_meta",
+                        "raw_stdout",
+                        "raw_stderr",
+                        "checkpoint",
+                        "usage",
+                        "result_cache",
+                    },
+                )
+
+                reviews_by_key = {item["review_key"]: item for item in payload["reviews"]}
+                provider_source = reviews_by_key["000001_b2"]["payload"]["provider_source"]
+                self.assertEqual(len(provider_source["provider_evidence_artifact_ids"]), 7)
+                self.assertEqual(len(provider_source["provider_evidence_paths"]), 7)
+                self.assertTrue(
+                    all(
+                        path.startswith(f"{run_id}/provider-evidence/")
+                        for path in provider_source["provider_evidence_paths"]
+                    )
+                )
+                self.assertNotIn("provider_evidence_files", reviews_by_key["000001_b2"]["payload"])
+
+                prompt_artifact = next(
+                    artifact for artifact in artifacts if artifact["metadata"]["roles"] == ["raw_prompt"]
+                )
+                served = await client.get(f"/api/artifacts/{prompt_artifact['id']}")
+                self.assertEqual(served.status_code, 200)
+                self.assertEqual(served.text, "prompt body")
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                evidence_count = connection.execute(
+                    """
+                    SELECT count(*)
+                    FROM review_facts
+                    WHERE json_extract(payload_json, '$.provider_source.provider_evidence_artifact_ids') IS NOT NULL
+                    """
+                ).fetchone()[0]
+            self.assertEqual(evidence_count, 2)
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

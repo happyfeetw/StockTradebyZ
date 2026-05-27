@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import shutil
 from typing import Any, Protocol
+from uuid import uuid4
 
 from stocktrade.domain.review import candidate_review_key, result_review_key
 
 from ..schemas.reviews import ReviewProviderRunCreateRequest, ReviewRunCreateRequest
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.review_repository import CreatedReviewRun, ReviewRepository
+from ..storage.run_repository import RunRepository
+from ..storage.sqlite import ROOT
 from ..storage.sqlite_models import Artifact, Candidate, CandidateBatch
 from .review_runs import ReviewRunService
 
@@ -54,9 +59,13 @@ class ReviewProviderRunService:
         *,
         executor: ReviewProviderExecutor,
         analytics_writer: DuckDBAnalyticsWriter | None = None,
+        run_repository: RunRepository | None = None,
+        artifact_root: str | Path | None = None,
     ) -> None:
         self.repository = repository
         self.executor = executor
+        self.run_repository = run_repository
+        self.artifact_root = _resolve_artifact_root(artifact_root) if artifact_root is not None else None
         self.review_service = ReviewRunService(repository, analytics_writer=analytics_writer)
 
     def run(self, *, run_id: str, request: ReviewProviderRunCreateRequest) -> CreatedReviewRun:
@@ -83,6 +92,18 @@ class ReviewProviderRunService:
         )
         raw_results = self.executor.run(provider_input)
         results = _results_with_lineage(raw_results, items=items, reviewer=reviewer)
+        if self.run_repository is not None and self.artifact_root is not None:
+            _attach_provider_evidence_artifacts(
+                results,
+                run_id=run_id,
+                provider=request.provider,
+                candidate_batch_id=sources.candidate_batch.id,
+                pick_date=sources.candidate_batch.pick_date,
+                run_repository=self.run_repository,
+                artifact_root=self.artifact_root,
+            )
+        for result in results:
+            result.pop("provider_evidence_files", None)
         source = {
             "mode": "review_provider",
             "provider": request.provider,
@@ -204,3 +225,139 @@ def _candidate_payload(candidate: Candidate) -> dict[str, Any]:
     if candidate.extra_json:
         payload.update(candidate.extra_json)
     return payload
+
+
+def _attach_provider_evidence_artifacts(
+    results: list[dict[str, Any]],
+    *,
+    run_id: str,
+    provider: str,
+    candidate_batch_id: str,
+    pick_date: str,
+    run_repository: RunRepository,
+    artifact_root: Path,
+) -> None:
+    records: dict[Path, dict[str, Any]] = {}
+    sources_by_review_key: dict[str, list[Path]] = {}
+    for result in results:
+        review_key = result_review_key(result)
+        if not review_key:
+            continue
+        for entry in _provider_evidence_entries(result.get("provider_evidence_files")):
+            source = _product_evidence_source_path(entry["path"], artifact_root)
+            if source is None:
+                continue
+            record = records.setdefault(source, {"roles": set(), "review_keys": set()})
+            record["roles"].add(entry["role"])
+            record["review_keys"].add(review_key)
+            sources_by_review_key.setdefault(review_key, [])
+            if source not in sources_by_review_key[review_key]:
+                sources_by_review_key[review_key].append(source)
+
+    if not records:
+        return
+
+    artifacts: list[dict[str, Any]] = []
+    source_to_artifact_path: dict[Path, str] = {}
+    for index, (source, record) in enumerate(sorted(records.items(), key=lambda item: item[0].as_posix()), 1):
+        role_label = _safe_artifact_part("-".join(sorted(record["roles"])))
+        target_name = f"{index:03d}-{role_label}-{_safe_artifact_part(source.name)}"
+        target_relative = f"{run_id}/provider-evidence/{target_name}"
+        target = artifact_root / target_relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        source_to_artifact_path[source] = target_relative
+        artifacts.append(
+            {
+                "id": f"artifact-{uuid4().hex}",
+                "run_id": run_id,
+                "kind": "provider_evidence",
+                "path": target_relative,
+                "content_type": _content_type_for_path(source),
+                "metadata_json": {
+                    "source": "product:review_provider_evidence",
+                    "provider": provider,
+                    "candidate_batch_id": candidate_batch_id,
+                    "pick_date": pick_date,
+                    "roles": sorted(record["roles"]),
+                    "review_keys": sorted(record["review_keys"]),
+                    "source_relative_path": source.relative_to(artifact_root).as_posix(),
+                },
+            }
+        )
+
+    created_by_path = {artifact.path: artifact.id for artifact in run_repository.create_artifacts(artifacts)}
+    for result in results:
+        review_key = result_review_key(result)
+        if not review_key:
+            continue
+        evidence_paths = [source_to_artifact_path[source] for source in sources_by_review_key.get(review_key, [])]
+        evidence_ids = [created_by_path[path] for path in evidence_paths if path in created_by_path]
+        if not evidence_ids:
+            continue
+        provider_source = result.setdefault("provider_source", {})
+        provider_source["provider_evidence_artifact_ids"] = evidence_ids
+        provider_source["provider_evidence_paths"] = evidence_paths
+
+
+def _provider_evidence_entries(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, str):
+            entries.append({"role": "provider_evidence", "path": item})
+        elif isinstance(item, dict) and item.get("path"):
+            entries.append(
+                {
+                    "role": str(item.get("role") or "provider_evidence"),
+                    "path": str(item["path"]),
+                }
+            )
+    return entries
+
+
+def _product_evidence_source_path(path_value: str, artifact_root: Path) -> Path | None:
+    raw_path = Path(path_value).expanduser()
+    if raw_path.is_absolute():
+        source = raw_path.resolve(strict=False)
+    elif len(raw_path.parts) >= 2 and raw_path.parts[:2] == ("var", "artifacts"):
+        source = (ROOT / raw_path).resolve(strict=False)
+    else:
+        source = (artifact_root / raw_path).resolve(strict=False)
+
+    if source.is_symlink() or not source.is_file():
+        return None
+    if not _is_relative_to(source, artifact_root):
+        return None
+    return source
+
+
+def _resolve_artifact_root(path: str | Path) -> Path:
+    root = Path(path).expanduser()
+    if not root.is_absolute():
+        root = ROOT / root
+    return root.resolve(strict=False)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_artifact_part(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
+    return safe[:80] or "evidence"
+
+
+def _content_type_for_path(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    return {
+        ".json": "application/json",
+        ".jsonl": "application/x-ndjson",
+        ".txt": "text/plain",
+        ".log": "text/plain",
+    }.get(suffix)

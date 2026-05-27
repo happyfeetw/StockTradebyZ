@@ -35,7 +35,7 @@ Out of scope:
 | Raw market CSV input | External/local input under `data/raw/*.csv` | None | `pipeline/fetch_kline.py` writes CSV | Keep as input source for now; do not migrate into SQLite/DuckDB in R6 |
 | Candidate preselect results | SQLite `candidate_batches` and `candidates` | DuckDB `candidate_facts` | `data/candidates/candidates_latest.json` and dated files | New product runs write SQLite/DuckDB only; legacy CLI remains oracle/compatibility |
 | Review results | SQLite `review_runs`, `reviews`, `recommendations` | DuckDB `review_facts` | `data/review/{pick_date}/*.json` and `suggestion.json` | Product review APIs write SQLite/DuckDB; legacy review files are migration source |
-| Provider raw evidence | `var/artifacts/review-provider/{batch}/gemini-cli/` plus review payload lineage | None | `data/review/{pick_date}/gemini_cli_runs/*` | Must be indexed as product artifacts before final cutover |
+| Provider raw evidence | SQLite `artifacts` rows for provider evidence snapshots plus `var/artifacts/review-provider/{batch}/gemini-cli/` raw state | None | `data/review/{pick_date}/gemini_cli_runs/*` | Product provider runs index raw prompt/response/cache/checkpoint/usage evidence as run artifacts |
 | Chart evidence | SQLite `artifacts` rows plus `var/artifacts/{run_id}/charts/...` | DuckDB archive facts reference artifact ids | `data/kline/{pick_date}/*_day.*` | New chart export writes product artifacts; legacy charts import or copy into product artifacts |
 | Archive/history | SQLite `archive_snapshots` and `archive_rows` | DuckDB `archive_facts` | `data/history/{pick_date}/summary.json`, `all.json`, strategy files, `index.json` | Product archive APIs write SQLite/DuckDB; legacy history becomes migration source |
 | Run/job state | SQLite `runs`, `job_steps`, `job_events`, `artifacts` | Optional analytics facts by workflow | `data/runs/{run_id}/run_state.json` and logs | Product runtime is SQLite-first; legacy run snapshots are not product source of truth |
@@ -53,7 +53,9 @@ Product-owned paths already exist:
   review facts.
 - `ReviewProviderRunService` reads candidate batches and chart artifacts from
   product storage, then writes normalized review results through
-  `ReviewRunService`.
+  `ReviewRunService`; provider evidence files surfaced by the executor are
+  copied into run-scoped product artifacts and linked from review payload
+  lineage.
 - `ChartExportRunService` writes chart files under `var/artifacts/` and creates
   SQLite `artifacts` rows.
 - `ArchiveRunService` writes archive snapshots/rows and DuckDB archive facts.
@@ -66,10 +68,10 @@ Product-owned paths already exist:
 
 Cutover gaps:
 
-- Gemini CLI product provider stores raw logs, checkpoints, usage, and cache
-  files under `var/artifacts/review-provider/...`. They are covered by artifact
-  backup/restore as files, but they are not yet indexed as SQLite `artifacts`
-  rows with explicit provider-evidence lineage.
+- Full product-write proof still needs an end-to-end fixture that exercises
+  candidate preselect, provider review, chart export, and archive without
+  depending on legacy `data/candidates`, `data/review`, or `data/history` as
+  product read paths.
 - The legacy CLI still writes candidate files through `pipeline/pipeline_io.py`.
   This is acceptable as a compatibility path, but product UI/API flows should
   not depend on `data/candidates/candidates_latest.json`.
@@ -91,12 +93,13 @@ Cutover gaps:
    - Verify SQLite artifact rows still resolve through the product artifact API
      after restore.
 
-2. Provider evidence indexing.
-   - Register Gemini CLI raw request/response directories, checkpoint, result
-     cache, and usage file as product artifacts or a structured provider
-     evidence manifest.
-   - Keep large raw payloads out of SQLite blobs.
-   - Preserve review row lineage to provider evidence.
+2. Provider evidence indexing. Implemented after artifact backup/restore.
+   - Gemini CLI results surface raw request/response, checkpoint, result cache,
+     and usage files as provider evidence entries.
+   - Product provider runs copy evidence files into run-scoped product artifacts
+     and register SQLite `artifacts` rows.
+   - Review payload lineage preserves provider evidence artifact ids and paths
+     while keeping large raw payloads out of SQLite blobs.
 
 3. Candidate product-write proof.
    - Run a fixture preselect through FastAPI using local CSV input.

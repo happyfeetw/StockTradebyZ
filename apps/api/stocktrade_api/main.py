@@ -17,7 +17,7 @@ from .jobs.runtime import JobRuntime
 from .storage.archive_repository import ArchiveRepository
 from .storage.backup_service import DEFAULT_BACKUP_ROOT, BackupService
 from .storage.candidate_repository import CandidateRepository
-from .storage.duckdb import DEFAULT_DUCKDB_PATH
+from .storage.duckdb import DEFAULT_DUCKDB_PATH, DuckDBAnalyticsWriter
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
@@ -46,7 +46,9 @@ def create_app(
     app.state.candidate_repository = CandidateRepository(session_factory)
     app.state.review_repository = ReviewRepository(session_factory)
     app.state.archive_repository = ArchiveRepository(session_factory)
-    app.state.migration_repository = MigrationRepository(session_factory)
+    analytics_writer = DuckDBAnalyticsWriter(duckdb_path) if duckdb_path is not None else None
+    app.state.analytics_writer = analytics_writer
+    app.state.migration_repository = MigrationRepository(session_factory, analytics_writer=analytics_writer)
     app.state.backup_service = BackupService(
         run_repository,
         sqlite_path=sqlite_path,

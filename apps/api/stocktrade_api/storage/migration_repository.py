@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -37,9 +37,44 @@ class MigrationRunNotFoundError(LookupError):
     pass
 
 
+class AnalyticsFactWriter(Protocol):
+    def record_candidate_import(
+        self,
+        *,
+        run_id: str,
+        batch: CandidateBatch,
+        candidates: list[Candidate],
+    ) -> None:
+        ...
+
+    def record_review_import(
+        self,
+        *,
+        run_id: str,
+        review_run: ReviewRun,
+        reviews: list[Review],
+    ) -> None:
+        ...
+
+    def record_archive_import(
+        self,
+        *,
+        run_id: str,
+        snapshot: ArchiveSnapshot,
+        rows: list[ArchiveRow],
+    ) -> None:
+        ...
+
+
 class MigrationRepository:
-    def __init__(self, session_factory: sessionmaker[Session]):
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        analytics_writer: AnalyticsFactWriter | None = None,
+    ):
         self.session_factory = session_factory
+        self.analytics_writer = analytics_writer
 
     def record_dry_run(self, report: LegacyImportDryRunReport, *, migration_id: str | None = None) -> MigrationRun:
         run_id = migration_id or uuid4().hex
@@ -136,29 +171,36 @@ class MigrationRepository:
                     report_json=report_payload,
                 )
             )
-            session.add(
-                CandidateBatch(
-                    id=candidate_batch_id,
-                    run_id=run_id,
-                    pick_date=plan.pick_date,
-                    source="legacy:candidates",
-                    strategy_counts_json=plan.strategy_counts,
-                )
+            candidate_batch = CandidateBatch(
+                id=candidate_batch_id,
+                run_id=run_id,
+                pick_date=plan.pick_date,
+                source="legacy:candidates",
+                strategy_counts_json=plan.strategy_counts,
             )
+            session.add(candidate_batch)
+            imported_candidates: list[Candidate] = []
             for candidate in plan.candidates:
-                session.add(
-                    Candidate(
-                        batch_id=candidate_batch_id,
-                        code=candidate.code,
-                        strategy=candidate.strategy,
-                        pick_date=candidate.date,
-                        close=candidate.close,
-                        turnover_n=candidate.turnover_n,
-                        brick_growth=candidate.brick_growth,
-                        extra_json=candidate.extra,
-                    )
+                imported_candidate = Candidate(
+                    batch_id=candidate_batch_id,
+                    code=candidate.code,
+                    strategy=candidate.strategy,
+                    pick_date=candidate.date,
+                    close=candidate.close,
+                    turnover_n=candidate.turnover_n,
+                    brick_growth=candidate.brick_growth,
+                    extra_json=candidate.extra,
                 )
+                session.add(imported_candidate)
+                imported_candidates.append(imported_candidate)
             self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.flush()
+            if self.analytics_writer is not None:
+                self.analytics_writer.record_candidate_import(
+                    run_id=run_id,
+                    batch=candidate_batch,
+                    candidates=imported_candidates,
+                )
             session.commit()
             migration_run = self._load_migration_run(session, run_id)
             if migration_run is None:
@@ -240,6 +282,7 @@ class MigrationRepository:
             session.flush()
 
             reviews_by_key: dict[str, Review] = {}
+            imported_reviews: list[Review] = []
             for item in plan.reviews:
                 review = Review(
                     review_run_id=imported_review_run_id,
@@ -253,6 +296,7 @@ class MigrationRepository:
                 )
                 session.add(review)
                 reviews_by_key[item.review_key] = review
+                imported_reviews.append(review)
             session.flush()
 
             for item in plan.recommendations:
@@ -270,6 +314,13 @@ class MigrationRepository:
                     )
                 )
             self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.flush()
+            if self.analytics_writer is not None:
+                self.analytics_writer.record_review_import(
+                    run_id=run_id,
+                    review_run=review_run,
+                    reviews=imported_reviews,
+                )
             session.commit()
             migration_run = self._load_migration_run(session, run_id)
             if migration_run is None:
@@ -342,43 +393,50 @@ class MigrationRepository:
                     report_json=report_payload,
                 )
             )
-            session.add(
-                ArchiveSnapshot(
-                    id=snapshot_id,
-                    run_id=run_id,
-                    pick_date=plan.pick_date,
-                    candidate_run_date=plan.candidate_run_date,
-                    candidate_count=plan.candidate_count,
-                    reviewed_count=plan.reviewed_count,
-                    recommended_count=plan.recommended_count,
-                    strategy_counts_json=plan.strategy_counts,
-                    executed_strategies_json=plan.executed_strategies,
-                    min_score_threshold=plan.min_score_threshold,
-                    source_json=source_json,
-                    summary_json=plan.summary,
-                    archived_at=plan.archived_at,
-                )
+            archive_snapshot = ArchiveSnapshot(
+                id=snapshot_id,
+                run_id=run_id,
+                pick_date=plan.pick_date,
+                candidate_run_date=plan.candidate_run_date,
+                candidate_count=plan.candidate_count,
+                reviewed_count=plan.reviewed_count,
+                recommended_count=plan.recommended_count,
+                strategy_counts_json=plan.strategy_counts,
+                executed_strategies_json=plan.executed_strategies,
+                min_score_threshold=plan.min_score_threshold,
+                source_json=source_json,
+                summary_json=plan.summary,
+                archived_at=plan.archived_at,
             )
+            session.add(archive_snapshot)
+            imported_rows: list[ArchiveRow] = []
             for row in plan.rows:
-                session.add(
-                    ArchiveRow(
-                        snapshot_id=snapshot_id,
-                        pick_date=plan.pick_date,
-                        run_id=run_id,
-                        code=row.code,
-                        strategy=row.strategy,
-                        review_key=row.review_key,
-                        status=row.status,
-                        rank=row.rank,
-                        close=row.close,
-                        turnover_n=row.turnover_n,
-                        brick_growth=row.brick_growth,
-                        extra_json=row.extra,
-                        review_payload_json=row.review_payload,
-                        chart_path=row.chart,
-                    )
+                archive_row = ArchiveRow(
+                    snapshot_id=snapshot_id,
+                    pick_date=plan.pick_date,
+                    run_id=run_id,
+                    code=row.code,
+                    strategy=row.strategy,
+                    review_key=row.review_key,
+                    status=row.status,
+                    rank=row.rank,
+                    close=row.close,
+                    turnover_n=row.turnover_n,
+                    brick_growth=row.brick_growth,
+                    extra_json=row.extra,
+                    review_payload_json=row.review_payload,
+                    chart_path=row.chart,
                 )
+                session.add(archive_row)
+                imported_rows.append(archive_row)
             self._add_quarantine_rows(session, run_id, report.quarantine)
+            session.flush()
+            if self.analytics_writer is not None:
+                self.analytics_writer.record_archive_import(
+                    run_id=run_id,
+                    snapshot=archive_snapshot,
+                    rows=imported_rows,
+                )
             session.commit()
             migration_run = self._load_migration_run(session, run_id)
             if migration_run is None:

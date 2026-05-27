@@ -28,6 +28,7 @@ from stocktrade_api.services.legacy_import import (  # noqa: E402
     load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
 )
+from stocktrade_api.storage.duckdb import connect_duckdb  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -414,8 +415,9 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             tmp = Path(tmpdir)
             data_root = build_legacy_fixture(tmp)
             db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -458,6 +460,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 missing = await client.get("/api/migrations/not-found")
                 self.assertEqual(missing.status_code, 404)
 
+            self.assertFalse(duckdb_path.exists())
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
@@ -466,8 +469,9 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             tmp = Path(tmpdir)
             data_root = build_valid_candidate_import_fixture(tmp)
             db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -505,6 +509,18 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(persisted.status_code, 200)
                 self.assertEqual(persisted.json()["report"]["import_summary"]["batch_id"], import_summary["batch_id"])
 
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                facts = connection.execute(
+                    """
+                    SELECT run_id, batch_id, code, strategy, close, turnover_n, brick_growth, extra_json
+                    FROM candidate_facts
+                    ORDER BY code
+                    """
+                ).fetchall()
+                self.assertEqual(len(facts), 2)
+                self.assertEqual(facts[0][:6], (migration_id, import_summary["batch_id"], "000010", "b2", 10.5, 105.0))
+                self.assertEqual(json.loads(facts[0][7]), {"signal": "breakout"})
+
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
@@ -541,8 +557,9 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             tmp = Path(tmpdir)
             data_root = build_valid_review_import_fixture(tmp)
             db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -589,6 +606,29 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(persisted.status_code, 200)
                 self.assertEqual(persisted.json()["report"]["import_summary"]["review_run_id"], import_summary["review_run_id"])
 
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                facts = connection.execute(
+                    """
+                    SELECT run_id, review_run_id, code, strategy, review_key, verdict, total_score, payload_json
+                    FROM review_facts
+                    ORDER BY review_key
+                    """
+                ).fetchall()
+                self.assertEqual(len(facts), 2)
+                self.assertEqual(
+                    facts[0][:7],
+                    (
+                        migration_id,
+                        import_summary["review_run_id"],
+                        "000010",
+                        "b2",
+                        "000010_b2",
+                        "PASS",
+                        4.7,
+                    ),
+                )
+                self.assertEqual(json.loads(facts[0][7])["comment"], "clean breakout")
+
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
@@ -625,8 +665,9 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             tmp = Path(tmpdir)
             data_root = build_valid_history_import_fixture(tmp)
             db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -684,6 +725,59 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                     persisted.json()["report"]["import_summary"]["archive_snapshot_id"],
                     import_summary["archive_snapshot_id"],
                 )
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                facts = connection.execute(
+                    """
+                    SELECT run_id, code, strategy, status, rank, chart_artifact_id, payload_json
+                    FROM archive_facts
+                    WHERE pick_date = DATE '2026-05-26'
+                    ORDER BY code
+                    """
+                ).fetchall()
+                self.assertEqual(len(facts), 3)
+                self.assertEqual(facts[0][:6], (migration_id, "000010", "b2", "recommended", 1, None))
+                self.assertEqual(json.loads(facts[0][6])["chart_path"], "data/kline/2026-05-26/000010_day.png")
+                metrics = connection.execute(
+                    """
+                    SELECT strategy, total, reviewed, recommended, unreviewed
+                    FROM strategy_run_metrics
+                    WHERE pick_date = DATE '2026-05-26' AND run_id = ?
+                    ORDER BY strategy
+                    """,
+                    [migration_id],
+                ).fetchall()
+                self.assertEqual(metrics, [("b2", 2, 0, 1, 1), ("brick", 1, 1, 0, 0)])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_rolls_back_sqlite_when_duckdb_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_candidate_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=tmp)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "candidates",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 500)
+                self.assertIn("failed to write DuckDB candidate import facts", imported.json()["detail"])
+
+                runs = await client.get("/api/runs")
+                self.assertEqual(runs.status_code, 200)
+                self.assertEqual(runs.json()["runs"], [])
+                self.assertTrue((data_root / "candidates" / "candidates_2026-05-26.json").is_file())
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

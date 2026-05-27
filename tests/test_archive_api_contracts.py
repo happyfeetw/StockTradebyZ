@@ -285,6 +285,7 @@ def seed_archive_sources(db_path: Path) -> None:
     with session_factory() as session:
         candidate_run = Run(id="run-preselect-history", kind="preselect", status="succeeded", pick_date="2026-05-25")
         review_workflow_run = Run(id="run-review-history", kind="review", status="succeeded", pick_date="2026-05-25")
+        chart_export_run = Run(id="run-chart-history", kind="chart_export", status="succeeded", pick_date="2026-05-25")
         other_candidate_run = Run(id="run-preselect-other", kind="preselect", status="succeeded", pick_date="2026-05-26")
         other_review_workflow_run = Run(id="run-review-other", kind="review", status="succeeded", pick_date="2026-05-26")
         batch = CandidateBatch(
@@ -320,7 +321,7 @@ def seed_archive_sources(db_path: Path) -> None:
         )
         Candidate(
             batch=batch,
-            code="000003",
+            code="000001",
             strategy="brick",
             pick_date="2026-05-25",
             close=8.8,
@@ -382,18 +383,65 @@ def seed_archive_sources(db_path: Path) -> None:
         )
         session.add_all([review_pass, review_watch, other_review])
         session.flush()
-        session.add(
-            Recommendation(
-                review_run=review_batch,
-                review=review_pass,
-                rank=1,
-                code="000001",
-                strategy="b2",
-                review_key="000001_b2",
-                verdict="PASS",
-                total_score=4.8,
-                payload_json={"reason": "score threshold"},
-            )
+        session.add_all(
+            [
+                Artifact(
+                    id="artifact-chart-history-000001",
+                    run=chart_export_run,
+                    kind="chart",
+                    path="run-chart-history/charts/batch-history/000001_day.jpg",
+                    content_type="image/jpeg",
+                    metadata_json={
+                        "source": "product:chart_export",
+                        "candidate_batch_id": "batch-history",
+                        "candidate_run_id": "run-preselect-history",
+                        "pick_date": "2026-05-25",
+                        "code": "000001",
+                        "strategies": ["b2", "brick"],
+                    },
+                ),
+                Artifact(
+                    id="artifact-chart-history-000002",
+                    run=chart_export_run,
+                    kind="chart",
+                    path="run-chart-history/charts/batch-history/000002_day.jpg",
+                    content_type="image/jpeg",
+                    metadata_json={
+                        "source": "product:chart_export",
+                        "candidate_batch_id": "batch-history",
+                        "candidate_run_id": "run-preselect-history",
+                        "pick_date": "2026-05-25",
+                        "code": "000002",
+                        "strategies": ["brick"],
+                    },
+                ),
+                Artifact(
+                    id="artifact-chart-other-000001",
+                    run=chart_export_run,
+                    kind="chart",
+                    path="run-chart-history/charts/batch-other/000001_day.jpg",
+                    content_type="image/jpeg",
+                    metadata_json={
+                        "source": "product:chart_export",
+                        "candidate_batch_id": "batch-other",
+                        "candidate_run_id": "run-preselect-other",
+                        "pick_date": "2026-05-26",
+                        "code": "000001",
+                        "strategies": ["b2"],
+                    },
+                ),
+                Recommendation(
+                    review_run=review_batch,
+                    review=review_pass,
+                    rank=1,
+                    code="000001",
+                    strategy="b2",
+                    review_key="000001_b2",
+                    verdict="PASS",
+                    total_score=4.8,
+                    payload_json={"reason": "score threshold"},
+                ),
+            ]
         )
         session.commit()
     engine.dispose()
@@ -579,12 +627,31 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["snapshot"]["reviewed_count"], 2)
                 self.assertEqual(payload["snapshot"]["recommended_count"], 1)
                 self.assertEqual(payload["snapshot"]["min_score_threshold"], 4.0)
+                self.assertEqual(payload["run"]["summary"]["chart_artifact_count"], 3)
                 self.assertEqual(
-                    [(row["review_key"], row["status"], row["rank"]) for row in payload["rows"]],
+                    [(row["review_key"], row["status"], row["rank"], row["chart_artifact_id"], row["chart"]) for row in payload["rows"]],
                     [
-                        ("000001_b2", "recommended", 1),
-                        ("000002_brick", "reviewed", None),
-                        ("000003_brick", "unreviewed", None),
+                        (
+                            "000001_b2",
+                            "recommended",
+                            1,
+                            "artifact-chart-history-000001",
+                            "run-chart-history/charts/batch-history/000001_day.jpg",
+                        ),
+                        (
+                            "000001_brick",
+                            "unreviewed",
+                            None,
+                            "artifact-chart-history-000001",
+                            "run-chart-history/charts/batch-history/000001_day.jpg",
+                        ),
+                        (
+                            "000002_brick",
+                            "reviewed",
+                            None,
+                            "artifact-chart-history-000002",
+                            "run-chart-history/charts/batch-history/000002_day.jpg",
+                        ),
                     ],
                 )
 
@@ -619,6 +686,13 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
                     ORDER BY status, code
                     """
                 ).fetchall()
+                chart_rows = connection.execute(
+                    """
+                    SELECT code, strategy, chart_artifact_id
+                    FROM archive_facts
+                    ORDER BY code, strategy
+                    """
+                ).fetchall()
                 metrics_rows = connection.execute(
                     """
                     SELECT strategy, total, reviewed, recommended, unreviewed
@@ -628,6 +702,14 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
                 ).fetchall()
             self.assertEqual(len(archive_rows), 3)
             self.assertEqual({str(row[0]) for row in archive_rows}, {"2026-05-25"})
+            self.assertEqual(
+                chart_rows,
+                [
+                    ("000001", "b2", "artifact-chart-history-000001"),
+                    ("000001", "brick", "artifact-chart-history-000001"),
+                    ("000002", "brick", "artifact-chart-history-000002"),
+                ],
+            )
             self.assertEqual(
                 metrics_rows,
                 [

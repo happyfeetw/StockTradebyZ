@@ -9,7 +9,7 @@ from uuid import uuid4
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .sqlite_models import ArchiveRow, ArchiveSnapshot, CandidateBatch, Review, ReviewRun
+from .sqlite_models import ArchiveRow, ArchiveSnapshot, Artifact, CandidateBatch, Review, ReviewRun
 
 ARCHIVE_QUERY_STATUSES = {"all", "recommended", "reviewed", "unreviewed"}
 
@@ -26,6 +26,7 @@ class ArchiveSourceNotFoundError(LookupError):
 class ArchiveSources:
     candidate_batch: CandidateBatch
     review_run: ReviewRun
+    chart_artifacts_by_code: dict[str, Artifact]
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,11 @@ class ArchiveRepository:
             ).scalar_one_or_none()
             if batch is None or review_run is None:
                 raise ArchiveSourceNotFoundError(candidate_batch_id, review_run_id)
-            return ArchiveSources(candidate_batch=batch, review_run=review_run)
+            return ArchiveSources(
+                candidate_batch=batch,
+                review_run=review_run,
+                chart_artifacts_by_code=self._chart_artifacts_by_code(session, candidate_batch_id),
+            )
 
     def create_archive_snapshot(
         self,
@@ -223,3 +228,21 @@ class ArchiveRepository:
             ).scalars()
         )
         return CreatedArchive(snapshot=snapshot, rows=rows)
+
+    def _chart_artifacts_by_code(self, session: Session, candidate_batch_id: str) -> dict[str, Artifact]:
+        artifacts = session.execute(
+            select(Artifact)
+            .where(Artifact.kind == "chart")
+            .order_by(Artifact.created_at.desc(), Artifact.id.desc())
+        ).scalars()
+        by_code: dict[str, Artifact] = {}
+        for artifact in artifacts:
+            metadata = artifact.metadata_json or {}
+            if metadata.get("source") != "product:chart_export":
+                continue
+            if metadata.get("candidate_batch_id") != candidate_batch_id:
+                continue
+            code = str(metadata.get("code") or "")
+            if code and code not in by_code:
+                by_code[code] = artifact
+        return by_code

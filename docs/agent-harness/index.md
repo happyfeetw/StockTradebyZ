@@ -60,6 +60,8 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   default retirement guard and rollback flag for the legacy Gemini API reviewer.
 - [r7-legacy-write-freeze.md](r7-legacy-write-freeze.md): compatibility-only
   notices and product no-read guard for legacy file-system writers.
+- [r7-archive-retirement.md](r7-archive-retirement.md): default retirement
+  guard and rollback flag for the legacy `data/history` archive writer.
 - [r7-preselect-cli-retirement.md](r7-preselect-cli-retirement.md): default
   retirement guard and rollback flag for the legacy preselect CLI writer.
 - [r7-chart-export-retirement.md](r7-chart-export-retirement.md): default
@@ -91,6 +93,7 @@ scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-gemini-api-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
+scripts/harness/check.sh r7-archive-retirement
 scripts/harness/check.sh r7-preselect-cli-retirement
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher

@@ -6,9 +6,14 @@
 
 本功能只做归档和回看，不做跨日追踪、多 run 对比、手动标记、导出或每日复盘备注。
 
+R7 状态：常规产品归档入口是 `POST /api/runs/archive`。下文的
+`data/history/` 文件结构保留为 legacy migration/rollback 契约；
+`python -m pipeline.archive_results` 默认已退休，只能在显式设置
+`STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1` 时用于迁移、parity 或事故恢复。
+
 ## 数据结构
 
-归档根目录为 `data/history/`：
+legacy rollback 归档根目录为 `data/history/`：
 
 ```text
 data/history/
@@ -58,7 +63,8 @@ data/history/
 
 ## 流程位置
 
-归档作为主流程最后的独立步骤执行：
+归档作为主流程最后的独立步骤执行。产品路径由 FastAPI 接口完成，旧
+workbench/脚本路径只作为 rollback 参考：
 
 ```text
 拉取 K 线数据
@@ -68,7 +74,8 @@ Gemini CLI 复评
 归档当日结果
 ```
 
-归档脚本只读取现有产物，不反向影响初选、图表导出或 Gemini CLI 复评：
+legacy rollback 脚本只读取现有产物，不反向影响初选、图表导出或
+Gemini CLI 复评：
 
 - `data/candidates/candidates_latest.json`
 - `data/review/{pick_date}/suggestion.json`
@@ -77,22 +84,34 @@ Gemini CLI 复评
 
 ## 使用方式
 
-自动归档：
+产品归档：
 
-- workbench 的 `完整流程`
-- workbench 的 `跳过抓取`
-- workbench 的 `只跑复评`
-
-手动补归档：
-
-```bash
-python -m pipeline.archive_results
+```text
+POST /api/runs/archive
 ```
 
-指定日期：
+请求体使用产品存储中的候选批次和复评运行：
+
+```json
+{
+  "candidate_batch_id": "batch-history",
+  "review_run_id": "review-batch-history"
+}
+```
+
+该路径写入 SQLite `archive_snapshots` / `archive_rows`，并在配置 analytics
+storage 时写入 DuckDB `archive_facts`。
+
+legacy 手动补归档只用于迁移、parity 或 rollback：
 
 ```bash
-python -m pipeline.archive_results --date 2026-05-06
+STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1 python -m pipeline.archive_results
+```
+
+legacy 指定日期：
+
+```bash
+STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1 python -m pipeline.archive_results --date 2026-05-06
 ```
 
 ## 同日多策略运行
@@ -112,11 +131,11 @@ python -m pipeline.cli preselect --merge-same-date
 - 保留当天其他策略已经产生的候选。
 - 如果一次运行启用 `B1 + 砖型图`，会同时替换这两个策略的旧结果。
 
-这样复评、结果中心和历史归档仍然读取同一个候选契约文件，但文件内容会保留当天已跑过的各策略最终结果。
+这样复评、结果中心和 legacy 历史归档仍然读取同一个候选契约文件，但文件内容会保留当天已跑过的各策略最终结果。
 
 ## UI
 
-workbench 新增 `历史结果` 页面。
+legacy workbench 新增 `历史结果` 页面。
 
 页面能力：
 
@@ -126,4 +145,5 @@ workbench 新增 `历史结果` 页面。
 - 查看结果表格。
 - 选择单票查看图表和 Gemini 复评 JSON。
 
-结果中心仍保留“最新结果”视角；历史结果页只读取 `data/history/`，用于回看已经归档的最终结果。
+产品历史结果视图读取 `/api/archive` 和 `/api/archive/{pick_date}`。legacy
+历史结果页只读取 `data/history/`，用于回看已经归档的旧文件结果。

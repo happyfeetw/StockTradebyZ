@@ -12,6 +12,11 @@ LEGACY_PRESELECT_CLI_RETIRED_NOTICE = (
     "R7 preselect CLI retirement: pipeline.cli preselect is retired by default. "
     f"Set {LEGACY_PRESELECT_CLI_ENV}=1 only for migration, parity, or rollback checks."
 )
+LEGACY_ARCHIVE_RESULTS_ENV = "STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS"
+LEGACY_ARCHIVE_RESULTS_RETIRED_NOTICE = (
+    "R7 archive writer retirement: pipeline.archive_results is retired by default. "
+    f"Set {LEGACY_ARCHIVE_RESULTS_ENV}=1 only for migration, parity, or rollback checks."
+)
 LEGACY_UI_FREEZE_NOTICE = (
     "R7 legacy write freeze: this Streamlit surface is compatibility-only. "
     "Use the React/FastAPI product for new workflows; keep this path only for "
@@ -30,6 +35,10 @@ def legacy_gemini_api_review_enabled() -> bool:
 
 def legacy_preselect_cli_enabled() -> bool:
     return os.environ.get(LEGACY_PRESELECT_CLI_ENV) == "1"
+
+
+def legacy_archive_results_enabled() -> bool:
+    return os.environ.get(LEGACY_ARCHIVE_RESULTS_ENV) == "1"
 
 
 LEGACY_DASHBOARD_ENV = "STOCKTRADE_ALLOW_LEGACY_DASHBOARD"

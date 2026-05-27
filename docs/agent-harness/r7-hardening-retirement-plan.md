@@ -38,7 +38,7 @@ Out of scope:
 | `pipeline/pipeline_io.py` | Candidate JSON writer/reader for `candidates_latest.json` | Keep import/read compatibility; block new product writes from depending on it | Legacy import verify, product UI/API no-read proof |
 | `agent/gemini_review.py` | Legacy Gemini API review writer under `data/review/` | Retire by default behind explicit rollback flag | Review parity fixtures and product provider evidence proof |
 | `agent/gemini_cli_review.py` | Legacy Gemini CLI review, retry, raw logs, checkpoints | Freeze semantics as behavior oracle; retire after product provider reaches equivalent operational proof | Retry/checkpoint parity, product provider evidence artifacts, rollback note |
-| `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Keep as migration source until final archive retirement PR | Product archive API proof, history import verify, rollback note |
+| `pipeline/archive_results.py` | Legacy archive writer under `data/history/` | Retire by default behind explicit rollback flag | Product archive API proof, history import verify, rollback note |
 | `dashboard/export_kline_charts.py` | Legacy chart export to `data/kline/` | Retired by default behind `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1`; product chart export is supported path | Product chart artifact proof, visual smoke, and `r7-chart-export-retirement` |
 | `dashboard/app.py` | Legacy Streamlit single-stock dashboard | Retire by default behind explicit rollback flag | React browser smoke covers replacement workflow |
 | `workbench/app.py` and `workbench/runner.py` | Streamlit local workbench and background orchestration | Retire by default behind explicit rollback flag | Product browser smoke, cancellation/error-state proof, user workflow notes |
@@ -102,6 +102,10 @@ Out of scope:
      `docs/agent-harness/r7-preselect-cli-retirement.md` and
      `scripts/harness/check.sh r7-preselect-cli-retirement` for the legacy
      `data/candidates` writer.
+   - Archive writer retirement uses
+     `docs/agent-harness/r7-archive-retirement.md` and
+     `scripts/harness/check.sh r7-archive-retirement` for the legacy
+     `data/history` writer.
    - Do not combine paper-trading changes with product retirement work.
    - Gemini API reviewer retirement uses
      `docs/agent-harness/r7-gemini-api-review-retirement.md` and
@@ -144,6 +148,9 @@ prove the touched path:
 - preselect CLI retirement: default stop guard, explicit rollback flag, product
   preselect replacement proof, and
   `scripts/harness/check.sh r7-preselect-cli-retirement`;
+- archive writer retirement: default stop guard, explicit rollback flag,
+  product archive replacement proof, and
+  `scripts/harness/check.sh r7-archive-retirement`;
 - Gemini API reviewer retirement: default stop guard, explicit rollback flag,
   product provider replacement proof, and
   `scripts/harness/check.sh r7-gemini-api-review-retirement`;

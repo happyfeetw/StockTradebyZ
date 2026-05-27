@@ -19,6 +19,7 @@ requires it.
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-gemini-api-review-retirement | `scripts/harness/check.sh r7-gemini-api-review-retirement` | R7 default retirement guard for the legacy Gemini API reviewer |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
+| r7-archive-retirement | `scripts/harness/check.sh r7-archive-retirement` | R7 default retirement guard for the legacy archive writer |
 | r7-preselect-cli-retirement | `scripts/harness/check.sh r7-preselect-cli-retirement` | R7 default retirement guard for the legacy preselect CLI writer |
 | r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
@@ -241,6 +242,28 @@ scripts/harness/check.sh r7-legacy-write-freeze
 Run this before PRs that freeze legacy writes, add new product storage paths,
 or start surface-specific retirement.
 
+## R7 Archive Writer Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-archive-retirement.md` documents the retirement
+  decision, product replacement proof, rollback override, and validation;
+- `pipeline/archive_results.py` exits before reading legacy candidates,
+  reviews, charts, or writing `data/history` unless
+  `STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1` is set;
+- the default exit explains `R7 archive writer retirement` and `POST
+  /api/runs/archive`;
+- helper functions remain importable for parity and migration tests;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-archive-retirement
+```
+
+Run this before PRs that disable or remove the legacy archive writer.
+
 ## R7 Preselect CLI Retirement Gate
 
 Checks:
@@ -404,7 +427,7 @@ Run these only when the task touches the relevant path:
 STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 python -m pipeline.cli preselect --config config/rules_preselect.yaml --merge-same-date
 STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 python dashboard/export_kline_charts.py
 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
-python -m pipeline.archive_results
+STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1 python -m pipeline.archive_results
 ./start_workbench
 ```
 
@@ -429,6 +452,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 Gemini API reviewer retirement | r7-gemini-api-review-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
+| R7 archive writer retirement | r7-archive-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 preselect CLI retirement | r7-preselect-cli-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
@@ -450,4 +474,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement and r7-preselect-cli-retirement for legacy file-writer retirement, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement, r7-archive-retirement, and r7-preselect-cli-retirement for legacy file-writer retirement, r7-workbench-retirement for Streamlit workbench retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

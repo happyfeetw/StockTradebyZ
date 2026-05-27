@@ -23,7 +23,8 @@ stack should own the final implementation.
 - Contract: `candidates_latest.json` and dated candidate files are current
   handoff artifacts.
 - Current writer: `pipeline/pipeline_io.py`.
-- Current readers: review, archive, workbench, and manual inspection.
+- Current readers: review, legacy archive rollback, workbench, migration
+  import, and manual inspection.
 - Migration rule: adapters must support reading legacy files until imported
   data is verified.
 - Evidence: import fixture that preserves candidate count, code, strategy,
@@ -41,7 +42,10 @@ stack should own the final implementation.
 
 - Contract: `review_key` matches review output to `(code, strategy)` and review
   status values include `recommended` and `unreviewed`.
-- Current owner: `pipeline/archive_results.py`.
+- Product owner: `apps/api/stocktrade_api/services/archive_runs.py` and
+  `apps/api/stocktrade_api/storage/archive_repository.py`.
+- Legacy compatibility owner: `pipeline/archive_results.py`, retired by default
+  behind `STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1`.
 - Migration rule: review records must be joinable to candidate records without
   ambiguity.
 - Evidence: archive fixture with matched, unmatched, recommended, and unreviewed
@@ -68,12 +72,19 @@ stack should own the final implementation.
 
 ## History Archive
 
-- Contract: archived results under `data/history` are durable product records.
-- Current owner: `pipeline/archive_results.py`.
-- Current readers: workbench, chart export, manual review, and future analytics.
-- Migration rule: new storage must import history before retiring old readers.
-- Evidence: history import/export fixture for summary, all rows, and strategy
-  partitions.
+- Contract: product archive records in SQLite/DuckDB are durable product
+  records; archived results under `data/history` are durable legacy
+  migration/rollback records.
+- Product owner: `ArchiveRunService` with `archive_snapshots`, `archive_rows`,
+  and DuckDB `archive_facts`.
+- Legacy compatibility owner: `pipeline/archive_results.py`, retired by default
+  behind `STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1`.
+- Current readers: product archive APIs, migration import/verify, legacy
+  workbench rollback, manual review, and future analytics.
+- Migration rule: product storage must import or intentionally supersede legacy
+  history before deleting old readers or files.
+- Evidence: product archive API fixture plus legacy history import/export
+  fixture for summary, all rows, and strategy partitions.
 
 ## Run State
 

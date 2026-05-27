@@ -72,8 +72,10 @@ Cutover gaps:
 - The legacy CLI still writes candidate files through `pipeline/pipeline_io.py`.
   This is acceptable as a compatibility path, but product UI/API flows should
   not depend on `data/candidates/candidates_latest.json`.
-- The legacy archive script still writes `data/history/`. This remains valid as
-  migration source, but product archive queries should use SQLite.
+- The legacy archive script is now rollback-only behind
+  `STOCKTRADE_ALLOW_LEGACY_ARCHIVE_RESULTS=1`. Existing `data/history/`
+  snapshots remain valid migration source, but product archive writes and
+  queries use SQLite/DuckDB.
 - Legacy dashboards/workbench can still read file contracts. They are outside
   the React/FastAPI product path and should not define new source-of-truth
   behavior.
@@ -120,7 +122,8 @@ Cutover gaps:
 
 5. Legacy write freeze.
    - Mark `pipeline.cli`, `agent/*review*.py`, `pipeline.archive_results`, and
-     Streamlit/workbench file readers as legacy compatibility surfaces.
+     Streamlit/workbench file readers as legacy compatibility or rollback
+     surfaces.
    - Do not delete them until R7.
    - Any new React/FastAPI workflow must use product storage directly.
 

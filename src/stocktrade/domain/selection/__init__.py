@@ -17,6 +17,7 @@ from .indicators import (
     compute_volume_ratio,
     compute_weekly_close,
     compute_weekly_ma_bull,
+    compute_zx_condition_mask,
     compute_zx_lines,
     compute_zxdq_ratio_mask,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "compute_volume_ratio",
     "compute_weekly_close",
     "compute_weekly_ma_bull",
+    "compute_zx_condition_mask",
     "compute_zx_lines",
     "compute_zxdq_ratio_mask",
     "LegacyLiquidityPoolPort",

@@ -225,6 +225,7 @@ def seed_historical_candidate_batch(db_path: Path, *, include_chart_artifacts: b
                         content_type="image/jpeg",
                         metadata_json={
                             "source": "product:chart_export",
+                            "artifact_scope": "code",
                             "candidate_batch_id": "batch-history",
                             "candidate_run_id": "run-preselect-history",
                             "pick_date": "2026-05-25",
@@ -240,11 +241,30 @@ def seed_historical_candidate_batch(db_path: Path, *, include_chart_artifacts: b
                         content_type="image/jpeg",
                         metadata_json={
                             "source": "product:chart_export",
+                            "artifact_scope": "code",
                             "candidate_batch_id": "batch-history",
                             "candidate_run_id": "run-preselect-history",
                             "pick_date": "2026-05-25",
                             "code": "000002",
                             "strategies": ["brick"],
+                        },
+                    ),
+                    Artifact(
+                        id="artifact-chart-history-000001-b2",
+                        run=chart_run,
+                        kind="chart",
+                        path="run-chart-history/charts/batch-history/000001_b2_day.jpg",
+                        content_type="image/jpeg",
+                        metadata_json={
+                            "source": "product:chart_export",
+                            "artifact_scope": "strategy",
+                            "candidate_batch_id": "batch-history",
+                            "candidate_run_id": "run-preselect-history",
+                            "pick_date": "2026-05-25",
+                            "code": "000001",
+                            "strategy": "b2",
+                            "strategies": ["b2"],
+                            "review_key": "000001_b2",
                         },
                     ),
                 ]
@@ -560,22 +580,26 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     [(item.review_key, item.chart_artifact_id) for item in executor.requests[0].items],
                     [
-                        ("000001_b2", "artifact-chart-history-000001"),
+                        ("000001_b2", "artifact-chart-history-000001-b2"),
                         ("000002_brick", "artifact-chart-history-000002"),
                     ],
                 )
 
                 reviews_by_key = {item["review_key"]: item for item in payload["reviews"]}
                 first_payload = reviews_by_key["000001_b2"]["payload"]
-                self.assertEqual(first_payload["chart_artifact_id"], "artifact-chart-history-000001")
-                self.assertEqual(first_payload["chart_path"], "run-chart-history/charts/batch-history/000001_day.jpg")
+                self.assertEqual(first_payload["chart_artifact_id"], "artifact-chart-history-000001-b2")
+                self.assertEqual(first_payload["chart_path"], "run-chart-history/charts/batch-history/000001_b2_day.jpg")
+                self.assertEqual(
+                    reviews_by_key["000002_brick"]["payload"]["chart_path"],
+                    "run-chart-history/charts/batch-history/000002_day.jpg",
+                )
                 self.assertEqual(
                     first_payload["provider_source"],
                     {
                         "candidate_batch_id": "batch-history",
                         "candidate_id": reviews_by_key["000001_b2"]["candidate_id"],
-                        "chart_artifact_id": "artifact-chart-history-000001",
-                        "chart_path": "run-chart-history/charts/batch-history/000001_day.jpg",
+                        "chart_artifact_id": "artifact-chart-history-000001-b2",
+                        "chart_path": "run-chart-history/charts/batch-history/000001_b2_day.jpg",
                     },
                 )
 
@@ -592,7 +616,7 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 rows,
                 [
-                    ("000001_b2", "artifact-chart-history-000001"),
+                    ("000001_b2", "artifact-chart-history-000001-b2"),
                     ("000002_brick", "artifact-chart-history-000002"),
                 ],
             )

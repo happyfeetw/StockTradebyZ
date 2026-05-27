@@ -26,6 +26,7 @@ class ArchiveSourceNotFoundError(LookupError):
 class ArchiveSources:
     candidate_batch: CandidateBatch
     review_run: ReviewRun
+    chart_artifacts_by_review_key: dict[str, Artifact]
     chart_artifacts_by_code: dict[str, Artifact]
 
 
@@ -145,10 +146,12 @@ class ArchiveRepository:
             ).scalar_one_or_none()
             if batch is None or review_run is None:
                 raise ArchiveSourceNotFoundError(candidate_batch_id, review_run_id)
+            chart_artifacts_by_review_key, chart_artifacts_by_code = self._chart_artifacts(session, candidate_batch_id)
             return ArchiveSources(
                 candidate_batch=batch,
                 review_run=review_run,
-                chart_artifacts_by_code=self._chart_artifacts_by_code(session, candidate_batch_id),
+                chart_artifacts_by_review_key=chart_artifacts_by_review_key,
+                chart_artifacts_by_code=chart_artifacts_by_code,
             )
 
     def create_archive_snapshot(
@@ -229,12 +232,17 @@ class ArchiveRepository:
         )
         return CreatedArchive(snapshot=snapshot, rows=rows)
 
-    def _chart_artifacts_by_code(self, session: Session, candidate_batch_id: str) -> dict[str, Artifact]:
+    def _chart_artifacts(
+        self,
+        session: Session,
+        candidate_batch_id: str,
+    ) -> tuple[dict[str, Artifact], dict[str, Artifact]]:
         artifacts = session.execute(
             select(Artifact)
             .where(Artifact.kind == "chart")
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         ).scalars()
+        by_review_key: dict[str, Artifact] = {}
         by_code: dict[str, Artifact] = {}
         for artifact in artifacts:
             metadata = artifact.metadata_json or {}
@@ -242,7 +250,12 @@ class ArchiveRepository:
                 continue
             if metadata.get("candidate_batch_id") != candidate_batch_id:
                 continue
+            review_key = str(metadata.get("review_key") or "")
+            if review_key and review_key not in by_review_key:
+                by_review_key[review_key] = artifact
+            if metadata.get("artifact_scope") == "strategy":
+                continue
             code = str(metadata.get("code") or "")
             if code and code not in by_code:
                 by_code[code] = artifact
-        return by_code
+        return by_review_key, by_code

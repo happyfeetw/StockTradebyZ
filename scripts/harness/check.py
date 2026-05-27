@@ -39,6 +39,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
     Path("docs/agent-harness/r7-legacy-write-freeze.md"),
+    Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
@@ -153,6 +154,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-retirement-plan",
             "scripts/harness/check.sh r7-browser-proof",
             "scripts/harness/check.sh r7-legacy-write-freeze",
+            "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
             "Maintenance Rule",
         ],
@@ -493,6 +495,7 @@ def check_r7_retirement_plan() -> None:
             "Legacy Surface Matrix",
             "R7 Sequence",
             "Runtime hardening",
+            "r7-runtime-terminal-integrity",
             "Resource envelope",
             "r7-resource-envelope",
             "Final browser proof",
@@ -625,6 +628,34 @@ def check_r7_resource_envelope() -> None:
     print("[r7-resource-envelope] ok")
 
 
+def check_r7_runtime_terminal_integrity() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-runtime-terminal-integrity.md",
+        [
+            "Managing issue: #152",
+            "R7 Runtime Terminal Integrity",
+            "`succeeded`, `failed`, or `cancelled`",
+            "TerminalRunTransitionError",
+            "TerminalStepTransitionError",
+            "late cancellation",
+            "scripts/harness/check.sh r7-runtime-terminal-integrity",
+            "Simulated trading remains out of scope",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/storage/run_repository.py",
+        [
+            "TerminalRunTransitionError",
+            "TerminalStepTransitionError",
+            "run.status in TERMINAL_STATUSES",
+            "step.status in TERMINAL_STATUSES",
+            "already terminal",
+        ],
+    )
+    run_command([sys.executable, "-m", "unittest", "tests.test_job_runtime_contracts"])
+    print("[r7-runtime-terminal-integrity] ok")
+
+
 def check_quick() -> None:
     check_docs()
     check_contracts()
@@ -647,6 +678,7 @@ def parse_args() -> argparse.Namespace:
             "r7-retirement-plan",
             "r7-browser-proof",
             "r7-legacy-write-freeze",
+            "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
             "quick",
         ],
@@ -678,6 +710,8 @@ def main() -> int:
             check_r7_browser_proof()
         elif args.gate == "r7-legacy-write-freeze":
             check_r7_legacy_write_freeze()
+        elif args.gate == "r7-runtime-terminal-integrity":
+            check_r7_runtime_terminal_integrity()
         elif args.gate == "r7-resource-envelope":
             check_r7_resource_envelope()
         elif args.gate == "quick":

@@ -28,6 +28,14 @@ class ArtifactNotFoundError(LookupError):
     pass
 
 
+class TerminalRunTransitionError(RuntimeError):
+    pass
+
+
+class TerminalStepTransitionError(RuntimeError):
+    pass
+
+
 class RunRepository:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -94,6 +102,10 @@ class RunRepository:
             run = session.get(Run, run_id)
             if run is None:
                 raise RunNotFoundError(run_id)
+            if run.status in TERMINAL_STATUSES:
+                if status != run.status or pick_date is not None or summary is not None:
+                    raise TerminalRunTransitionError(f"run {run_id} is already terminal: {run.status}")
+                return run
             run.status = status
             if status == "running" and run.started_at is None:
                 run.started_at = utc_now()
@@ -126,6 +138,10 @@ class RunRepository:
             step = session.get(JobStep, step_id)
             if step is None:
                 raise LookupError(step_id)
+            if step.status in TERMINAL_STATUSES:
+                if status != step.status or error is not None:
+                    raise TerminalStepTransitionError(f"step {step_id} is already terminal: {step.status}")
+                return step
             step.status = status
             if status == "running" and step.started_at is None:
                 step.started_at = utc_now()

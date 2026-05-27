@@ -35,6 +35,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/target-architecture-design.md"),
     Path("docs/agent-harness/validation-gates.md"),
     Path("docs/agent-harness/r5-ui-browser-smoke.md"),
+    Path("docs/agent-harness/r6-storage-cutover-plan.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -415,6 +416,35 @@ def check_ui_smoke_fixture() -> None:
     print("[ui-smoke-fixture] ok")
 
 
+def check_storage_cutover_plan() -> None:
+    assert_contains(
+        "docs/agent-harness/r6-storage-cutover-plan.md",
+        [
+            "Managing issue: #115",
+            "candidate preselect results",
+            "review results and recommendations",
+            "provider review evidence",
+            "chart artifacts",
+            "archive/history snapshots",
+            "backup and restore",
+            "migration from legacy `data/`",
+            "simulated or paper trading",
+            "SQLite `candidate_batches` and `candidates`",
+            "DuckDB `candidate_facts`",
+            "SQLite `review_runs`, `reviews`, `recommendations`",
+            "DuckDB `review_facts`",
+            "SQLite `archive_snapshots` and `archive_rows`",
+            "DuckDB `archive_facts`",
+            "BackupService",
+            "artifacts_manifest.json",
+            "Cutover Sequence",
+            "Rollback Rules",
+            "artifact backup/restore",
+        ],
+    )
+    print("[storage-cutover-plan] ok")
+
+
 def check_quick() -> None:
     check_docs()
     check_contracts()
@@ -433,6 +463,7 @@ def parse_args() -> argparse.Namespace:
             "product-refactor-readiness",
             "refactor-readiness",
             "ui-smoke-fixture",
+            "storage-cutover-plan",
             "quick",
         ],
         help="Validation gate to run",
@@ -455,6 +486,8 @@ def main() -> int:
             check_refactor_readiness()
         elif args.gate == "ui-smoke-fixture":
             check_ui_smoke_fixture()
+        elif args.gate == "storage-cutover-plan":
+            check_storage_cutover_plan()
         elif args.gate == "quick":
             check_quick()
         else:

@@ -13,6 +13,7 @@ requires it.
 | product-refactor-readiness | `scripts/harness/check.sh product-refactor-readiness` | Product rewrite plans, target-stack proposals, UI/UX/backend/storage redesign |
 | refactor-readiness | `scripts/harness/check.sh refactor-readiness` | Alias for product-refactor-readiness |
 | ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
+| storage-cutover-plan | `scripts/harness/check.sh storage-cutover-plan` | R6 source-of-truth and rollback planning |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -101,6 +102,25 @@ scripts/harness/check.sh ui-smoke-fixture
 This gate is credential-free and safe in a clean clone. It does not replace the
 manual/browser evidence in [r5-ui-browser-smoke.md](r5-ui-browser-smoke.md).
 
+## Storage Cutover Plan Gate
+
+Checks:
+
+- the R6 source-of-truth ownership matrix exists;
+- simulated/paper trading is explicitly excluded;
+- candidate, review, archive/history, chart artifact, provider evidence,
+  backup/restore, migration, and rollback decisions are documented;
+- the next implementation target is explicit before write behavior changes.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh storage-cutover-plan
+```
+
+Run this before any PR that changes product-owned storage, legacy import,
+backup/restore, or legacy write-path behavior.
+
 ## Runtime Gates
 
 Runtime gates are intentionally not part of `quick` because they can require
@@ -131,6 +151,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | workbench UI | python | local Streamlit browser smoke |
 | legacy paper trading rules | python | only when user explicitly reopens that scope |
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
+| storage cutover plan | storage-cutover-plan + product-refactor-readiness | quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |
 
@@ -144,5 +165,5 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R3 core domain rewrite | python | golden master parity tests |
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
-| R6 storage cutover | product-refactor-readiness + quick | migration fixture and rollback drill |
+| R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
 | R7 hardening/retirement | product-refactor-readiness + quick | performance/resource evidence and final parity |

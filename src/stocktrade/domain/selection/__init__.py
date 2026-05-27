@@ -55,6 +55,12 @@ from .preselect import (
     StrategySelectorPort,
     WarmupBarsPort,
 )
+from .selectors import (
+    ProductB1Selector,
+    ProductB2Selector,
+    ProductBrickChartSelector,
+    ProductStrategyFormulaFactoryPort,
+)
 
 __all__ = [
     "compute_b1_pick_mask",
@@ -97,6 +103,10 @@ __all__ = [
     "ProductLiquidityPoolPort",
     "ProductMarketPreparationPort",
     "ProductPickDatePort",
+    "ProductB1Selector",
+    "ProductB2Selector",
+    "ProductBrickChartSelector",
+    "ProductStrategyFormulaFactoryPort",
     "ProductStrategySelectorPort",
     "ProductWarmupBarsPort",
     "PreselectExecutionSettings",

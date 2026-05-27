@@ -268,6 +268,46 @@ def compute_brick_pattern_mask(
     return cond_ret & cond_red & cond_green_count & cond_growth
 
 
+def compute_brick_pick_mask(
+    frame: pd.DataFrame,
+    brick_values: np.ndarray | None = None,
+    *,
+    daily_return_threshold: float = 0.05,
+    brick_growth_ratio: float = 1.0,
+    min_prior_green_bars: int = 1,
+    zxdq_ratio: float | None = 1.0,
+    require_zxdq_gt_zxdkx: bool = True,
+    require_weekly_ma_bull: bool = True,
+) -> np.ndarray:
+    if brick_values is None:
+        brick_values = (
+            frame["brick"].to_numpy(dtype=float)
+            if "brick" in frame.columns
+            else compute_brick_values(frame)
+        )
+
+    mask = compute_brick_pattern_mask(
+        frame,
+        brick_values,
+        daily_return_threshold=daily_return_threshold,
+        brick_growth_ratio=brick_growth_ratio,
+        min_prior_green_bars=min_prior_green_bars,
+    )
+    if zxdq_ratio is not None:
+        mask &= compute_zxdq_ratio_mask(frame, frame["zxdq"], zxdq_ratio=zxdq_ratio)
+    if require_zxdq_gt_zxdkx:
+        mask &= compute_zx_condition_mask(
+            frame,
+            frame["zxdq"],
+            frame["zxdkx"],
+            require_close_gt_long=False,
+            require_short_gt_long=True,
+        )
+    if require_weekly_ma_bull:
+        mask &= frame["wma_bull"].to_numpy(dtype=bool)
+    return mask
+
+
 def compute_daily_return(frame: pd.DataFrame) -> np.ndarray:
     close = frame["close"].to_numpy(dtype=float)
     prev_close = np.empty_like(close)

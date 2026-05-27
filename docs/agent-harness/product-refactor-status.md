@@ -31,7 +31,7 @@ strategy behavior while moving core logic out of legacy-shaped modules.
 | R0 Product charter and decision freeze | Baseline complete | #24, `product-refactor-charter.md`, `refactor-preconditions.md`, readiness gate | Keep decisions current when scope changes |
 | R1 Business logic specification | Partial and active | #26, `tests/fixtures/golden_master/`, `tests/test_golden_master_contracts.py` | Add parity fixtures before each remaining domain rewrite |
 | R2 Target architecture and data model | Baseline complete, needs drift control | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep this file and architecture design in sync with implementation |
-| R3 Core domain rewrite | Partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, and brick pattern parity coverage | #112 still must replace remaining legacy selector formulas behind parity-tested ports |
+| R3 Core domain rewrite | Partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | #112 still must finish audit/closure once remaining legacy selector calls are confirmed as adapters |
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110 | #113 must add settings, strategy metadata, and analytics summary contracts |
 | R5 Frontend product UI/UX | Scaffold plus workflow views | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109 | #114 must productize IA, dense tables, chart evidence, and state coverage |
 | R6 Data migration and storage cutover | Migration/import tooling partial | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96 | #115 must define and execute source-of-truth cutover for in-scope workflows |
@@ -108,14 +108,17 @@ evidence:
 - Product-owned brick pattern helpers for green-run counts, growth ratios, and
   vector masks are covered by formula reference tests and used by legacy brick
   pattern compatibility wrappers when the product package is available.
+- Product-owned brick pick mask helper is covered by formula reference tests
+  and used by the legacy brick selector compatibility wrapper when the product
+  package is available.
 
 ## Current Architectural Gaps
 
 Do not treat these as optional polish. They are still required for the user's
 full objective:
 
-- Remaining strategy selector formulas still need deeper product-domain
-  isolation and parity coverage before legacy-shaped modules can be retired.
+- Legacy selector classes still act as compatibility adapters and must be
+  audited before legacy-shaped selection modules are retired.
 - Backend route coverage is incomplete for settings, strategy metadata, and
   analytics summary workflows named in the target architecture.
 - The frontend has a usable scaffold but not yet the final product-grade

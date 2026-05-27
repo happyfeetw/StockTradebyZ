@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
+from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .sqlite_models import Recommendation, Review, ReviewRun
+from .sqlite_models import CandidateBatch, Recommendation, Review, ReviewRun
 
 RECOMMENDATION_STATUSES = {"all", "recommended", "reviewed"}
 
 
 class ReviewNotFoundError(LookupError):
     pass
+
+
+class CandidateBatchNotFoundError(LookupError):
+    pass
+
+
+@dataclass(frozen=True)
+class CreatedReviewRun:
+    review_run: ReviewRun
+    reviews: list[Review]
+    recommendations: list[Recommendation]
 
 
 def review_key_for(code: str, strategy: str = "") -> str:
@@ -99,3 +113,121 @@ class ReviewRepository:
             if review is None:
                 raise ReviewNotFoundError(review_id)
             return review
+
+    def get_candidate_batch(self, batch_id: str) -> CandidateBatch:
+        with self.session_factory() as session:
+            batch = self._load_candidate_batch(session, batch_id)
+            if batch is None:
+                raise CandidateBatchNotFoundError(batch_id)
+            return batch
+
+    def create_review_run(
+        self,
+        *,
+        run_id: str,
+        candidate_batch_id: str,
+        provider: str,
+        reviewer: str,
+        summary: dict[str, Any],
+        results: list[dict[str, Any]],
+        recommendations: list[dict[str, Any]],
+    ) -> CreatedReviewRun:
+        review_run_id = uuid4().hex
+        with self.session_factory() as session:
+            batch = self._load_candidate_batch(session, candidate_batch_id)
+            if batch is None:
+                raise CandidateBatchNotFoundError(candidate_batch_id)
+
+            review_run = ReviewRun(
+                id=review_run_id,
+                run_id=run_id,
+                candidate_batch_id=batch.id,
+                pick_date=batch.pick_date,
+                provider=provider,
+                status="succeeded",
+                summary_json=summary,
+            )
+            session.add(review_run)
+            candidates_by_key = {
+                review_key_for(candidate.code, candidate.strategy): candidate
+                for candidate in batch.candidates
+            }
+            reviews_by_key: dict[str, Review] = {}
+            for result in results:
+                review_key = str(result["review_key"])
+                candidate = candidates_by_key.get(review_key)
+                review = Review(
+                    review_run_id=review_run_id,
+                    candidate_id=candidate.id if candidate else None,
+                    code=str(result["code"]),
+                    strategy=str(result.get("strategy") or ""),
+                    review_key=review_key,
+                    verdict=result.get("verdict"),
+                    total_score=_float_or_none(result.get("total_score")),
+                    reviewer=str(result.get("reviewer") or reviewer),
+                    payload_json=result,
+                )
+                session.add(review)
+                reviews_by_key[review_key] = review
+
+            session.flush()
+            for item in recommendations:
+                review_key = str(item["review_key"])
+                review = reviews_by_key.get(review_key)
+                session.add(
+                    Recommendation(
+                        review_run_id=review_run_id,
+                        review_id=review.id if review else None,
+                        rank=int(item["rank"]),
+                        code=str(item["code"]),
+                        strategy=str(item.get("strategy") or ""),
+                        review_key=review_key,
+                        verdict=item.get("verdict"),
+                        total_score=_float_or_none(item.get("total_score")),
+                        payload_json=item,
+                    )
+                )
+
+            session.commit()
+            return self._load_created_review_run(session, review_run_id)
+
+    def _load_candidate_batch(self, session: Session, batch_id: str) -> CandidateBatch | None:
+        statement = (
+            select(CandidateBatch)
+            .where(CandidateBatch.id == batch_id)
+            .options(selectinload(CandidateBatch.candidates))
+        )
+        return session.execute(statement).scalar_one_or_none()
+
+    def _load_created_review_run(self, session: Session, review_run_id: str) -> CreatedReviewRun:
+        review_run = session.execute(
+            select(ReviewRun)
+            .where(ReviewRun.id == review_run_id)
+            .options(selectinload(ReviewRun.recommendations))
+        ).scalar_one()
+        reviews = list(
+            session.execute(
+                select(Review)
+                .where(Review.review_run_id == review_run_id)
+                .options(
+                    selectinload(Review.review_run),
+                    selectinload(Review.recommendation),
+                )
+                .order_by(Review.id)
+            ).scalars()
+        )
+        recommendations = list(
+            session.execute(
+                select(Recommendation)
+                .where(Recommendation.review_run_id == review_run_id)
+                .order_by(Recommendation.rank, Recommendation.id)
+            ).scalars()
+        )
+        return CreatedReviewRun(review_run=review_run, reviews=reviews, recommendations=recommendations)
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

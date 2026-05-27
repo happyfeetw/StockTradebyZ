@@ -36,3 +36,22 @@ def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
 
     k, d, j = _kdj_core(rsv)
     return frame.assign(K=k, D=d, J=j)
+
+
+def compute_zx_lines(
+    frame: pd.DataFrame,
+    m1: int = 14,
+    m2: int = 28,
+    m3: int = 57,
+    m4: int = 114,
+    zxdq_span: int = 10,
+) -> tuple[pd.Series, pd.Series]:
+    close = frame["close"].astype(float)
+    zxdq = close.ewm(span=zxdq_span, adjust=False).mean().ewm(span=zxdq_span, adjust=False).mean()
+    zxdkx = (
+        close.rolling(m1, min_periods=m1).mean()
+        + close.rolling(m2, min_periods=m2).mean()
+        + close.rolling(m3, min_periods=m3).mean()
+        + close.rolling(m4, min_periods=m4).mean()
+    ) / 4.0
+    return zxdq, zxdkx

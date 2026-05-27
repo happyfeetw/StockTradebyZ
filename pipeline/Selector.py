@@ -38,9 +38,13 @@ except ImportError:
         return lambda func: func
 
 try:
-    from stocktrade.domain.selection.indicators import compute_kdj as _product_compute_kdj
+    from stocktrade.domain.selection.indicators import (
+        compute_kdj as _product_compute_kdj,
+        compute_zx_lines as _product_compute_zx_lines,
+    )
 except ImportError:
     _product_compute_kdj = None
+    _product_compute_zx_lines = None
 
 # =============================================================================
 # Numba 加速核心函数
@@ -174,6 +178,9 @@ def compute_zx_lines(
     zxdq_span: int = 10,
 ) -> tuple[pd.Series, pd.Series]:
     """返回 (zxdq, zxdkx)。zxdq=double-EWM；zxdkx=四均线平均。"""
+    if _product_compute_zx_lines is not None:
+        return _product_compute_zx_lines(df, m1=m1, m2=m2, m3=m3, m4=m4, zxdq_span=zxdq_span)
+
     close = df["close"].astype(float)
     zxdq  = close.ewm(span=zxdq_span, adjust=False).mean().ewm(span=zxdq_span, adjust=False).mean()
     zxdkx = (

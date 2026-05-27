@@ -22,7 +22,8 @@
 完整流程对应 [run_all.py](run_all.py)：
 
 1. 下载 K 线数据（pipeline.fetch_kline）
-2. 量化初选（pipeline.cli preselect）
+2. 量化初选（产品路径：Run Center / `POST /api/runs/preselect`；legacy
+   `pipeline.cli preselect` 已默认退休）
 3. 导出候选图表（dashboard/export_kline_charts.py）
 4. Gemini CLI 复评（agent/gemini_cli_review.py）
 5. 打印推荐结果（读取 suggestion.json）
@@ -77,7 +78,7 @@ cd apps/web && npm install
 
 ---
 
-## 4. 快速开始（一键跑通 legacy CLI）
+## 4. 快速开始（产品路径）
 
 ### 4.1 Clone 项目
 
@@ -104,21 +105,24 @@ Windows PowerShell（永久写入）：
 Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧的 Gemini API
 复评方式，再额外设置 `GEMINI_API_KEY`。
 
-### 4.4 运行一键脚本
+### 4.4 启动产品工作台
 
 在项目根目录执行：
 
 ~~~bash
-python run_all.py
+./start_product
 ~~~
 
-常用参数：
+然后在 Run Center 运行初选、图表导出、复评和归档。旧的 `run_all.py` 与
+legacy CLI 链路仅保留用于迁移、对照或回滚；其中 legacy 初选 CLI 需要显式
+设置 `STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1`。
+
+legacy 一键脚本示例：
 
 ~~~bash
+STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 \
+STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 \
 python run_all.py --skip-fetch
-python run_all.py --start-from 3
-python run_all.py --reviewer gemini-api
-python run_all.py --skip-review
 ~~~
 
 参数说明：
@@ -148,23 +152,29 @@ python -m pipeline.fetch_kline
 
 ### 步骤 2：量化初选
 
+默认产品路径是在 React/FastAPI Run Center 运行初选，或调用
+`POST /api/runs/preselect`。旧 CLI 仅用于迁移、对照或回滚：
+
 ~~~bash
-python -m pipeline.cli preselect
+STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 python -m pipeline.cli preselect
 ~~~
 
 可选参数示例：
 
 ~~~bash
-python -m pipeline.cli preselect --date 2026-03-13
-python -m pipeline.cli preselect --config config/rules_preselect.yaml --data data/raw
+STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 python -m pipeline.cli preselect --date 2026-03-13
+STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 python -m pipeline.cli preselect --config config/rules_preselect.yaml --data data/raw
 ~~~
 
 规则配置见 [config/rules_preselect.yaml](config/rules_preselect.yaml)。
 
 ### 步骤 3：导出候选图表
 
+默认产品路径是在 Run Center 运行图表导出，或调用
+`POST /api/runs/chart-export`。旧脚本仅用于迁移、对照或回滚：
+
 ~~~bash
-python dashboard/export_kline_charts.py
+STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 python dashboard/export_kline_charts.py
 ~~~
 
 输出到 data/kline/选股日期，图像命名为 代码_day.jpg。
@@ -227,6 +237,7 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 
 ### 候选文件
 
+Legacy rollback 输出：
 [data/candidates/candidates_latest.json](data/candidates/candidates_latest.json)
 
 - pick_date：选股日期

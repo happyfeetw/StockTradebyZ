@@ -13,7 +13,7 @@ no-read guard so later retirement PRs have a stable baseline.
 
 | Surface | Legacy Writes | Product Replacement | Freeze Action |
 | --- | --- | --- | --- |
-| `pipeline.cli preselect` | `data/candidates` | `POST /api/runs/preselect` | emits `R7 legacy write freeze` notice |
+| `pipeline.cli preselect` | `data/candidates` | `POST /api/runs/preselect` | retired by default behind `STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1` |
 | `agent.gemini_review` | `data/review` | `POST /api/runs/review/provider` | emits `R7 legacy write freeze` notice |
 | `agent.gemini_cli_review` | `data/review` and provider raw evidence | `POST /api/runs/review/provider` | emits `R7 legacy write freeze` notice |
 | `dashboard.export_kline_charts` | `data/kline` | `POST /api/runs/chart-export` | emits `R7 legacy write freeze` notice |
@@ -23,9 +23,10 @@ no-read guard so later retirement PRs have a stable baseline.
 | `workbench/app.py` | reads/writes legacy workbench state | React workstation | shows compatibility-only warning |
 | `start_workbench` | launches Streamlit workbench | React workstation | prints compatibility-only warning |
 
-The notices are informational. They do not block legacy behavior yet because
-R7 retirement still requires surface-specific parity, migration, product
-replacement, and rollback proof.
+The remaining notices are informational. They do not block legacy behavior yet
+because R7 retirement still requires surface-specific parity, migration,
+product replacement, and rollback proof. Surfaces already retired by default
+remain available only through their documented rollback flags.
 
 ## Product No-Read Guard
 

@@ -32,6 +32,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/r7-hardening-retirement-plan.md](docs/agent-harness/r7-hardening-retirement-plan.md)
 - R7 chart export retirement:
   [docs/agent-harness/r7-chart-export-retirement.md](docs/agent-harness/r7-chart-export-retirement.md)
+- R7 preselect CLI retirement:
+  [docs/agent-harness/r7-preselect-cli-retirement.md](docs/agent-harness/r7-preselect-cli-retirement.md)
 - R7 product launcher:
   [docs/agent-harness/r7-product-launcher.md](docs/agent-harness/r7-product-launcher.md)
 - R7 workbench retirement:
@@ -108,6 +110,7 @@ scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-gemini-api-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
+scripts/harness/check.sh r7-preselect-cli-retirement
 scripts/harness/check.sh r7-chart-export-retirement
 scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-workbench-retirement

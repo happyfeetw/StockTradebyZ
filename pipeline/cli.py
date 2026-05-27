@@ -8,7 +8,7 @@ pipeline/cli.py
   python -m pipeline.cli preselect --config config/rules_preselect.yaml --data data/raw
 
 子命令：
-  preselect   运行量化初选，写入 data/candidates/
+  preselect   legacy 量化初选，默认退休；回滚时写入 data/candidates/
 """
 from __future__ import annotations
 
@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(ROOT))
 
-from legacy_compat import print_legacy_write_freeze_notice
+from legacy_compat import (
+    LEGACY_PRESELECT_CLI_ENV,
+    LEGACY_PRESELECT_CLI_RETIRED_NOTICE,
+    legacy_preselect_cli_enabled,
+    print_legacy_write_freeze_notice,
+)
 from select_stock import load_config, run_preselect, resolve_preselect_output_dir
 from schemas import CandidateRun
 from pipeline_io import save_candidates
@@ -70,6 +75,15 @@ def _add_log_file(log_dir: str, pick_date: str) -> None:
 # =============================================================================
 
 def cmd_preselect(args: argparse.Namespace) -> None:
+    if not legacy_preselect_cli_enabled():
+        print(LEGACY_PRESELECT_CLI_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use POST /api/runs/preselect for product-owned preselect workflows. "
+            f"Temporary rollback: set {LEGACY_PRESELECT_CLI_ENV}=1.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     print_legacy_write_freeze_notice(
         surface="pipeline.cli preselect",
         replacement="POST /api/runs/preselect",

@@ -7,6 +7,11 @@ import sys
 LEGACY_WRITE_FREEZE_PREFIX = "R7 legacy write freeze"
 LEGACY_RETIREMENT_PREFIX = "R7 legacy retirement"
 LEGACY_CHART_EXPORT_ENV = "STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT"
+LEGACY_PRESELECT_CLI_ENV = "STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI"
+LEGACY_PRESELECT_CLI_RETIRED_NOTICE = (
+    "R7 preselect CLI retirement: pipeline.cli preselect is retired by default. "
+    f"Set {LEGACY_PRESELECT_CLI_ENV}=1 only for migration, parity, or rollback checks."
+)
 LEGACY_UI_FREEZE_NOTICE = (
     "R7 legacy write freeze: this Streamlit surface is compatibility-only. "
     "Use the React/FastAPI product for new workflows; keep this path only for "
@@ -21,6 +26,10 @@ LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE = (
 
 def legacy_gemini_api_review_enabled() -> bool:
     return os.environ.get(LEGACY_GEMINI_API_REVIEW_ENV) == "1"
+
+
+def legacy_preselect_cli_enabled() -> bool:
+    return os.environ.get(LEGACY_PRESELECT_CLI_ENV) == "1"
 
 
 LEGACY_DASHBOARD_ENV = "STOCKTRADE_ALLOW_LEGACY_DASHBOARD"

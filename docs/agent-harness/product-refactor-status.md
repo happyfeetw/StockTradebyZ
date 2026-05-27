@@ -18,8 +18,7 @@ R6. The remaining work is still substantial because the final goal requires a
 product-quality UI, product-owned storage cutover, core business logic rewritten
 behind parity tests, and legacy path retirement.
 
-Default next phase focus: R7 hardening and legacy retirement planning after
-#115 lands.
+Default next phase focus: R7 hardening and legacy retirement, tracked by #152.
 
 Rationale: #112 has moved strategy selection behavior behind product-owned
 domain helpers, ports, and parity tests. #113 added product settings read/write
@@ -28,6 +27,8 @@ now gives the React workstation deterministic fixture-backed browser evidence
 for the core R5 surfaces. #115 now defines R6 ownership, rollback, artifact
 backup/restore, provider evidence indexing, and a fixture-backed product API
 write proof across preselect, chart export, provider review, and archive.
+#152 now owns the R7 plan, validation gate, resource evidence, runtime
+hardening, final browser proof, and legacy retirement sequence.
 
 ## Phase Status
 
@@ -40,7 +41,7 @@ write proof across preselect, chart export, provider review, and archive.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
+| R7 Hardening and legacy retirement | Planning active | #152 and `r7-hardening-retirement-plan.md` define scope, legacy surface matrix, validation, rollback, and phase order | Runtime hardening, resource evidence, final browser proof, legacy write freeze, and surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -179,11 +180,11 @@ full objective:
 
 Use these issues unless a newer issue supersedes them:
 
-1. Create or pick the R7 hardening/legacy retirement issue after #115 lands.
+1. #152: R7 harden product runtime and retire legacy compatibility surfaces.
 
-The default next issue should be R7 because #115 supplies the R6 storage
-ownership plan, rollback rules, artifact protection, provider evidence indexing,
-and product-owned write proof.
+The default next issue is #152 because #115 supplies the R6 storage ownership
+plan, rollback rules, artifact protection, provider evidence indexing, and
+product-owned write proof.
 
 ## Completion Boundary
 

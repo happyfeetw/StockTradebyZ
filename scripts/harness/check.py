@@ -36,6 +36,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/validation-gates.md"),
     Path("docs/agent-harness/r5-ui-browser-smoke.md"),
     Path("docs/agent-harness/r6-storage-cutover-plan.md"),
+    Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -118,6 +119,7 @@ def check_docs() -> None:
             "docs/agent-harness/uiux-quality-bar.md",
             "docs/agent-harness/architecture-quality-bar.md",
             "docs/agent-harness/target-architecture-design.md",
+            "docs/agent-harness/r7-hardening-retirement-plan.md",
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "(code, strategy)",
@@ -132,6 +134,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh quick",
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
+            "scripts/harness/check.sh r7-retirement-plan",
             "Maintenance Rule",
         ],
     )
@@ -330,6 +333,7 @@ def check_product_refactor_readiness() -> None:
             "migration_quarantine",
         ],
     )
+    check_r7_retirement_plan()
     print("[product-refactor-readiness] ok")
 
 
@@ -445,6 +449,35 @@ def check_storage_cutover_plan() -> None:
     print("[storage-cutover-plan] ok")
 
 
+def check_r7_retirement_plan() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-hardening-retirement-plan.md",
+        [
+            "Managing issue: #152",
+            "R7 Hardening And Legacy Retirement Plan",
+            "simulated or paper trading",
+            "`data/trading`",
+            "`pipeline/cli.py`",
+            "`pipeline/pipeline_io.py`",
+            "`agent/gemini_cli_review.py`",
+            "`pipeline/archive_results.py`",
+            "`dashboard/app.py`",
+            "`workbench/app.py`",
+            "`start_workbench`",
+            "Legacy Surface Matrix",
+            "R7 Sequence",
+            "Runtime hardening",
+            "Resource envelope",
+            "Final browser proof",
+            "Legacy write freeze",
+            "Retirement PRs",
+            "Rollback Rules",
+            "scripts/harness/check.sh r7-retirement-plan",
+        ],
+    )
+    print("[r7-retirement-plan] ok")
+
+
 def check_quick() -> None:
     check_docs()
     check_contracts()
@@ -464,6 +497,7 @@ def parse_args() -> argparse.Namespace:
             "refactor-readiness",
             "ui-smoke-fixture",
             "storage-cutover-plan",
+            "r7-retirement-plan",
             "quick",
         ],
         help="Validation gate to run",
@@ -488,6 +522,8 @@ def main() -> int:
             check_ui_smoke_fixture()
         elif args.gate == "storage-cutover-plan":
             check_storage_cutover_plan()
+        elif args.gate == "r7-retirement-plan":
+            check_r7_retirement_plan()
         elif args.gate == "quick":
             check_quick()
         else:

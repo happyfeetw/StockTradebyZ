@@ -40,12 +40,14 @@ except ImportError:
 try:
     from stocktrade.domain.selection.indicators import (
         compute_kdj as _product_compute_kdj,
+        compute_max_volume_not_bearish as _product_compute_max_volume_not_bearish,
         compute_weekly_close as _product_compute_weekly_close,
         compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
         compute_zx_lines as _product_compute_zx_lines,
     )
 except ImportError:
     _product_compute_kdj = None
+    _product_compute_max_volume_not_bearish = None
     _product_compute_weekly_close = None
     _product_compute_weekly_ma_bull = None
     _product_compute_zx_lines = None
@@ -540,6 +542,9 @@ class MaxVolNotBearishFilter:
         return float(row["close"]) >= float(row["open"])
 
     def vec_mask(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_max_volume_not_bearish is not None:
+            return _product_compute_max_volume_not_bearish(df, lookback=self.n)
+
         return _max_vol_not_bearish(
             df["volume"].to_numpy(dtype=np.float64),
             df["open"].to_numpy(dtype=np.float64),

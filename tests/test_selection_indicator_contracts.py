@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     compute_kdj,
+    compute_max_volume_not_bearish,
     compute_weekly_close,
     compute_weekly_ma_bull,
     compute_zx_lines,
@@ -37,6 +38,23 @@ def reference_compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
         d[i] = 2.0 / 3.0 * d[i - 1] + 1.0 / 3.0 * k[i]
     j = 3.0 * k - 2.0 * d
     return frame.assign(K=k, D=d, J=j)
+
+
+def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
+    volume = frame["volume"].to_numpy(dtype=np.float64)
+    open_ = frame["open"].to_numpy(dtype=np.float64)
+    close = frame["close"].to_numpy(dtype=np.float64)
+    mask = np.zeros(len(frame), dtype=np.bool_)
+    for i in range(len(frame)):
+        start = max(0, i - lookback + 1)
+        max_volume = volume[start]
+        max_index = start
+        for j in range(start + 1, i + 1):
+            if volume[j] > max_volume:
+                max_volume = volume[j]
+                max_index = j
+        mask[i] = close[max_index] >= open_[max_index]
+    return mask
 
 
 def reference_compute_zx_lines(
@@ -132,6 +150,45 @@ class SelectionIndicatorContractTests(unittest.TestCase):
         self.assertEqual(actual["K"].tolist(), [7.0])
         self.assertEqual(actual["D"].tolist(), [2.0])
         self.assertEqual(actual["J"].tolist(), [3.0])
+
+    def test_product_max_volume_not_bearish_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "volume": [100.0, 200.0, 150.0, 250.0, 240.0, 260.0],
+                "open": [10.0, 12.0, 11.0, 15.0, 16.0, 14.0],
+                "close": [11.0, 11.5, 12.0, 14.0, 17.0, 14.5],
+            }
+        )
+
+        actual = compute_max_volume_not_bearish(frame, lookback=3)
+        expected = reference_compute_max_volume_not_bearish(frame, lookback=3)
+
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_legacy_max_volume_filter_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "volume": [100.0, 200.0, 150.0],
+                "open": [10.0, 11.0, 12.0],
+                "close": [10.5, 10.0, 12.5],
+            }
+        )
+
+        def fake_product_compute_max_volume_not_bearish(
+            input_frame: pd.DataFrame,
+            lookback: int = 20,
+        ) -> np.ndarray:
+            self.assertEqual(lookback, 2)
+            return np.array([True, False, True], dtype=np.bool_)
+
+        with patch.object(
+            selector_module,
+            "_product_compute_max_volume_not_bearish",
+            fake_product_compute_max_volume_not_bearish,
+        ):
+            actual = selector_module.MaxVolNotBearishFilter(n=2).vec_mask(frame)
+
+        np.testing.assert_array_equal(actual, np.array([True, False, True], dtype=np.bool_))
 
     def test_product_zx_lines_match_reference_formula(self) -> None:
         frame = pd.DataFrame(

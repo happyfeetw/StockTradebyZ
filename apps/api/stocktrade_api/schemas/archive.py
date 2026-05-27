@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from .runs import RunSummary
 
 
 class ArchiveSnapshotResponse(BaseModel):
@@ -64,3 +66,14 @@ class ArchiveDateResponse(BaseModel):
 
 class ArchiveRowDetailResponse(BaseModel):
     row: ArchiveRowResponse
+
+
+class ArchiveRunCreateRequest(BaseModel):
+    candidate_batch_id: str = Field(min_length=1, max_length=64)
+    review_run_id: str = Field(min_length=1, max_length=64)
+
+
+class ArchiveRunCreateResponse(BaseModel):
+    run: RunSummary
+    snapshot: ArchiveSnapshotResponse
+    rows: list[ArchiveRowResponse]

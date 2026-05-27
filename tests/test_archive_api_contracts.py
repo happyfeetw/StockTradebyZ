@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.archive import ArchiveDateResponse, ArchiveRowDetailResponse  # noqa: E402
+from stocktrade_api.storage.duckdb import apply_migrations as apply_duckdb_migrations  # noqa: E402
+from stocktrade_api.storage.duckdb import connect_duckdb  # noqa: E402
 from stocktrade_api.storage.archive_repository import ArchiveRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import (  # noqa: E402
@@ -277,6 +279,126 @@ def seed_archive(db_path: Path) -> None:
     engine.dispose()
 
 
+def seed_archive_sources(db_path: Path) -> None:
+    engine = create_sqlite_engine(db_path)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        candidate_run = Run(id="run-preselect-history", kind="preselect", status="succeeded", pick_date="2026-05-25")
+        review_workflow_run = Run(id="run-review-history", kind="review", status="succeeded", pick_date="2026-05-25")
+        other_candidate_run = Run(id="run-preselect-other", kind="preselect", status="succeeded", pick_date="2026-05-26")
+        other_review_workflow_run = Run(id="run-review-other", kind="review", status="succeeded", pick_date="2026-05-26")
+        batch = CandidateBatch(
+            id="batch-history",
+            run=candidate_run,
+            pick_date="2026-05-25",
+            source="fixture",
+            strategy_counts_json={"b2": 1, "brick": 2},
+        )
+        other_batch = CandidateBatch(
+            id="batch-other",
+            run=other_candidate_run,
+            pick_date="2026-05-26",
+            source="fixture",
+            strategy_counts_json={"b2": 1},
+        )
+        candidate_pass = Candidate(
+            batch=batch,
+            code="000001",
+            strategy="b2",
+            pick_date="2026-05-25",
+            close=10.1,
+            turnover_n=2.3,
+            extra_json={"reason": "breakout"},
+        )
+        candidate_reviewed = Candidate(
+            batch=batch,
+            code="000002",
+            strategy="brick",
+            pick_date="2026-05-25",
+            close=12.2,
+            brick_growth=0.07,
+        )
+        Candidate(
+            batch=batch,
+            code="000003",
+            strategy="brick",
+            pick_date="2026-05-25",
+            close=8.8,
+        )
+        other_candidate = Candidate(
+            batch=other_batch,
+            code="000004",
+            strategy="b2",
+            pick_date="2026-05-26",
+            close=9.1,
+        )
+        review_batch = ReviewRun(
+            id="review-batch-history",
+            run=review_workflow_run,
+            candidate_batch=batch,
+            pick_date="2026-05-25",
+            provider="fixture-reviewer",
+            status="succeeded",
+            summary_json={"total_reviewed": 2, "recommended": 1, "min_score_threshold": 4.0},
+        )
+        other_review_batch = ReviewRun(
+            id="review-batch-other",
+            run=other_review_workflow_run,
+            candidate_batch=other_batch,
+            pick_date="2026-05-26",
+            provider="fixture-reviewer",
+            status="succeeded",
+        )
+        review_pass = Review(
+            review_run=review_batch,
+            candidate=candidate_pass,
+            code="000001",
+            strategy="b2",
+            review_key="000001_b2",
+            verdict="PASS",
+            total_score=4.8,
+            reviewer="fixture-reviewer",
+            payload_json={"comment": "clean breakout"},
+        )
+        review_watch = Review(
+            review_run=review_batch,
+            candidate=candidate_reviewed,
+            code="000002",
+            strategy="brick",
+            review_key="000002_brick",
+            verdict="WATCH",
+            total_score=3.4,
+            reviewer="fixture-reviewer",
+            payload_json={"comment": "near miss"},
+        )
+        other_review = Review(
+            review_run=other_review_batch,
+            candidate=other_candidate,
+            code="000004",
+            strategy="b2",
+            review_key="000004_b2",
+            verdict="PASS",
+            total_score=4.6,
+        )
+        session.add_all([review_pass, review_watch, other_review])
+        session.flush()
+        session.add(
+            Recommendation(
+                review_run=review_batch,
+                review=review_pass,
+                rank=1,
+                code="000001",
+                strategy="b2",
+                review_key="000001_b2",
+                verdict="PASS",
+                total_score=4.8,
+                payload_json={"reason": "score threshold"},
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+
 def archive_repository(db_path: Path) -> tuple[ArchiveRepository, object]:
     engine = create_sqlite_engine(db_path)
     return ArchiveRepository(create_session_factory(engine)), engine
@@ -423,6 +545,96 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
 
                 missing_row = await client.get("/api/archive/rows/99999")
                 self.assertEqual(missing_row.status_code, 404)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_archive_run_api_uses_selected_candidate_and_review_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            apply_duckdb_migrations(duckdb_path)
+            seed_archive_sources(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = await client.post(
+                    "/api/runs/archive",
+                    json={
+                        "candidate_batch_id": "batch-history",
+                        "review_run_id": "review-batch-history",
+                    },
+                )
+                self.assertEqual(created.status_code, 200, created.text)
+                payload = created.json()
+                self.assertEqual(payload["run"]["kind"], "archive")
+                self.assertEqual(payload["run"]["status"], "succeeded")
+                self.assertEqual(payload["run"]["pick_date"], "2026-05-25")
+                self.assertEqual(payload["snapshot"]["candidate_batch_id"], "batch-history")
+                self.assertEqual(payload["snapshot"]["review_run_id"], "review-batch-history")
+                self.assertEqual(payload["snapshot"]["candidate_count"], 3)
+                self.assertEqual(payload["snapshot"]["reviewed_count"], 2)
+                self.assertEqual(payload["snapshot"]["recommended_count"], 1)
+                self.assertEqual(payload["snapshot"]["min_score_threshold"], 4.0)
+                self.assertEqual(
+                    [(row["review_key"], row["status"], row["rank"]) for row in payload["rows"]],
+                    [
+                        ("000001_b2", "recommended", 1),
+                        ("000002_brick", "reviewed", None),
+                        ("000003_brick", "unreviewed", None),
+                    ],
+                )
+
+                archived = await client.get("/api/archive/2026-05-25", params={"run_id": payload["run"]["id"]})
+                self.assertEqual(archived.status_code, 200)
+                self.assertEqual(archived.json()["total"], 3)
+                self.assertEqual(archived.json()["snapshots"][0]["run_id"], payload["run"]["id"])
+
+                mismatch = await client.post(
+                    "/api/runs/archive",
+                    json={
+                        "candidate_batch_id": "batch-history",
+                        "review_run_id": "review-batch-other",
+                    },
+                )
+                self.assertEqual(mismatch.status_code, 400)
+
+                missing = await client.post(
+                    "/api/runs/archive",
+                    json={
+                        "candidate_batch_id": "missing-batch",
+                        "review_run_id": "review-batch-history",
+                    },
+                )
+                self.assertEqual(missing.status_code, 404)
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                archive_rows = connection.execute(
+                    """
+                    SELECT pick_date, run_id, code, strategy, status, rank
+                    FROM archive_facts
+                    ORDER BY status, code
+                    """
+                ).fetchall()
+                metrics_rows = connection.execute(
+                    """
+                    SELECT strategy, total, reviewed, recommended, unreviewed
+                    FROM strategy_run_metrics
+                    ORDER BY strategy
+                    """
+                ).fetchall()
+            self.assertEqual(len(archive_rows), 3)
+            self.assertEqual({str(row[0]) for row in archive_rows}, {"2026-05-25"})
+            self.assertEqual(
+                metrics_rows,
+                [
+                    ("b2", 1, 0, 1, 0),
+                    ("brick", 2, 1, 0, 1),
+                ],
+            )
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

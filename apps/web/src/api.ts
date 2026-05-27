@@ -301,6 +301,17 @@ export interface ArchiveRowDetailResponse {
   row: ArchiveRow
 }
 
+export interface ArchiveRunCreateRequest {
+  candidate_batch_id: string
+  review_run_id: string
+}
+
+export interface ArchiveRunCreateResponse {
+  run: RunSummary
+  snapshot: ArchiveSnapshot
+  rows: ArchiveRow[]
+}
+
 export interface ArchiveSnapshotFilters {
   pick_date?: string
   run_id?: string
@@ -525,6 +536,13 @@ export function listArchiveRows(pickDate: string, filters: ArchiveRowFilters = {
 
 export function getArchiveRow(rowId: number): Promise<ArchiveRowDetailResponse> {
   return request<ArchiveRowDetailResponse>(`/api/archive/rows/${rowId}`)
+}
+
+export function createArchiveRun(payload: ArchiveRunCreateRequest): Promise<ArchiveRunCreateResponse> {
+  return request<ArchiveRunCreateResponse>('/api/runs/archive', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export function dryRunLegacyImport(dataRoot: string): Promise<LegacyImportDryRunReport> {

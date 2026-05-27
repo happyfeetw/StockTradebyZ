@@ -288,7 +288,9 @@ data/runs/
 - 抓取：`python -m pipeline.fetch_kline`
 - 初选：`python -m pipeline.cli preselect --config <run_rules_yaml>`
 - 导图：`python dashboard/export_kline_charts.py`
-- 复评：`python agent/gemini_cli_review.py --config <run_gemini_yaml>`
+- 复评：R7 产品路径使用 `POST /api/runs/review/provider`
+  (`provider=gemini-cli`)；legacy rollback 才使用
+  `STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py --config <run_gemini_yaml>`
 
 如果现有脚本暂时不支持某个配置覆盖，则后续编码阶段再做最小改造。原则是让核心脚本保持 CLI 可用，工作台只是更方便的本地操作层。
 

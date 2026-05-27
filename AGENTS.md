@@ -42,6 +42,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/r7-workbench-retirement.md](docs/agent-harness/r7-workbench-retirement.md)
 - R7 runtime terminal integrity:
   [docs/agent-harness/r7-runtime-terminal-integrity.md](docs/agent-harness/r7-runtime-terminal-integrity.md)
+- R7 Gemini CLI review retirement:
+  [docs/agent-harness/r7-gemini-cli-review-retirement.md](docs/agent-harness/r7-gemini-cli-review-retirement.md)
 - Validation gates: [docs/agent-harness/validation-gates.md](docs/agent-harness/validation-gates.md)
 - Core workflows: [docs/agent-harness/workflows.md](docs/agent-harness/workflows.md)
 
@@ -111,6 +113,7 @@ scripts/harness/check.sh r7-retirement-plan
 scripts/harness/check.sh r7-dashboard-retirement
 scripts/harness/check.sh r7-browser-proof
 scripts/harness/check.sh r7-gemini-api-review-retirement
+scripts/harness/check.sh r7-gemini-cli-review-retirement
 scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-archive-retirement
 scripts/harness/check.sh r7-preselect-cli-retirement

@@ -3,9 +3,13 @@ gemini_cli_review.py
 ~~~~~~~~~~~~~~~~~~~~
 使用本机 Gemini CLI 对候选股票进行图表分析评分。
 
-用法：
-    python agent/gemini_cli_review.py
-    python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
+R7 之后，旧脚本入口默认退休。支持的产品路径是
+POST /api/runs/review/provider，provider=gemini-cli。旧脚本仅在显式
+rollback flag 打开时继续作为迁移、parity 和事故恢复入口。
+
+用法（legacy rollback）：
+    STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py
+    STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
 
 前置条件：
     gemini CLI 已安装，并已在本机完成账号登录。
@@ -43,7 +47,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_cli_review.yaml"
 sys.path.insert(0, str(_ROOT))
 
-from legacy_compat import print_legacy_write_freeze_notice
+from legacy_compat import (
+    LEGACY_GEMINI_CLI_REVIEW_ENV,
+    LEGACY_GEMINI_CLI_REVIEW_RETIRED_NOTICE,
+    legacy_gemini_cli_review_enabled,
+    print_legacy_write_freeze_notice,
+)
 
 GEMINI_CLI_IMAGE_LIMIT = 3000
 GEMINI_CLI_BATCH_TARGET_RATIO = 0.90
@@ -1318,6 +1327,16 @@ def main():
         help="配置文件路径（默认 config/gemini_cli_review.yaml）",
     )
     args = parser.parse_args()
+
+    if not legacy_gemini_cli_review_enabled():
+        print(LEGACY_GEMINI_CLI_REVIEW_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use POST /api/runs/review/provider with provider=gemini-cli for "
+            "product-owned review workflows. "
+            f"Temporary rollback: set {LEGACY_GEMINI_CLI_REVIEW_ENV}=1.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     config = load_config(Path(args.config))
     print_legacy_write_freeze_notice(

@@ -4,6 +4,11 @@
 当前实现已把 `run_all.py` 的默认复评方式切换为 Gemini CLI，并保留 Gemini API
 作为显式兼容模式。
 
+R7 状态：常规产品复评入口是 `POST /api/runs/review/provider`，
+`provider=gemini-cli`。旧 `python agent/gemini_cli_review.py` 脚本默认已退休，
+只能在显式设置 `STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1` 时用于迁移、
+parity 或事故恢复。
+
 ## 背景
 
 当前项目主流程为：
@@ -49,13 +54,13 @@ gemini
 完成登录后，项目侧运行：
 
 ```bash
-python agent/gemini_cli_review.py
+POST /api/runs/review/provider
 ```
 
-可选配置：
+legacy rollback 运行：
 
 ```bash
-python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
+STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
 ```
 
 ## 技术方案
@@ -223,9 +228,11 @@ python run_all.py --skip-review
 
 兼容策略：
 
-- 默认行为使用 Gemini CLI，适配本机 Google 账号登录。
+- 产品默认行为使用 `POST /api/runs/review/provider` 的 Gemini CLI provider，
+  适配本机 Google 账号登录。
 - 旧 API Key 流程通过 `--reviewer gemini-api` 显式调用。
-- `--reviewer gemini-cli` 调用 `agent/gemini_cli_review.py`。
+- legacy `--reviewer gemini-cli` 脚本路径只在 rollback flag 打开时调用
+  `agent/gemini_cli_review.py`。
 - `--skip-review` 只跑到图表导出，方便人工或 Codex 复评。
 
 当前实现阶段先不接入 Digital Oracle。最终推荐仍以 Gemini CLI 图表复评生成的
@@ -243,7 +250,8 @@ python run_all.py --skip-review
 ### 功能验收
 
 - 给定已有 `data/candidates/candidates_latest.json` 和 `data/kline/{pick_date}/*_day.jpg`。
-- 运行 `python agent/gemini_cli_review.py`。
+- 产品路径运行 `POST /api/runs/review/provider`，legacy rollback 路径运行
+  `STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1 python agent/gemini_cli_review.py`。
 - 每只成功复评股票生成 `data/review/{pick_date}/{code}.json`。
 - 最终生成 `data/review/{pick_date}/suggestion.json`。
 - `run_all.py` 能读取 `suggestion.json` 打印推荐结果。

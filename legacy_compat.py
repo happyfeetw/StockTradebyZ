@@ -27,10 +27,19 @@ LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE = (
     "R7 Gemini API reviewer retirement: agent/gemini_review.py is retired by default. "
     f"Set {LEGACY_GEMINI_API_REVIEW_ENV}=1 only for migration, parity, or rollback checks."
 )
+LEGACY_GEMINI_CLI_REVIEW_ENV = "STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW"
+LEGACY_GEMINI_CLI_REVIEW_RETIRED_NOTICE = (
+    "R7 Gemini CLI reviewer retirement: agent/gemini_cli_review.py is retired by default. "
+    f"Set {LEGACY_GEMINI_CLI_REVIEW_ENV}=1 only for migration, parity, or rollback checks."
+)
 
 
 def legacy_gemini_api_review_enabled() -> bool:
     return os.environ.get(LEGACY_GEMINI_API_REVIEW_ENV) == "1"
+
+
+def legacy_gemini_cli_review_enabled() -> bool:
+    return os.environ.get(LEGACY_GEMINI_CLI_REVIEW_ENV) == "1"
 
 
 def legacy_preselect_cli_enabled() -> bool:

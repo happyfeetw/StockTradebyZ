@@ -55,7 +55,10 @@ stack should own the final implementation.
 
 - Contract: Gemini review produces normalized review artifacts, including
   `suggestion.json` style content and raw evidence when configured.
-- Current owner: `agent/gemini_cli_review.py`.
+- Product owner: `apps/api/stocktrade_api/services/review_provider_runs.py`
+  with `apps/api/stocktrade_api/services/gemini_cli_provider.py`.
+- Legacy compatibility owner: `agent/gemini_cli_review.py`, retired by default
+  behind `STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1`.
 - Migration rule: any new service boundary must keep Python-owned final writes,
   parser validation, and reproducible raw input/output logs.
 - Evidence: parser test with no network call and one optional tiny model smoke
@@ -66,7 +69,9 @@ stack should own the final implementation.
 - Contract: `gemini_cli_review_checkpoint.json`, retry backoff, batch order
   validation, `skip_existing`, and raw CLI log retention protect quota and
   debuggability.
-- Current owner: `agent/gemini_cli_review.py`.
+- Product owner: `GeminiCliReviewProviderExecutor`.
+- Legacy compatibility owner: `agent/gemini_cli_review.py`, retired by default
+  behind `STOCKTRADE_ALLOW_LEGACY_GEMINI_CLI_REVIEW=1`.
 - Migration rule: queue or backend retries must not remove checkpoint semantics.
 - Evidence: retry/checkpoint fixture and resume behavior test.
 

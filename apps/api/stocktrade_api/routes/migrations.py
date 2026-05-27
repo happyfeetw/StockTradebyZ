@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..dependencies import get_migration_repository
 from ..schemas.migrations import (
     LegacyImportDryRunReport,
     LegacyImportDryRunRequest,
+    LegacyImportVerifyReport,
+    LegacyImportVerifyRequest,
     LegacyMigrationRunResponse,
     MigrationQuarantineRecord,
 )
@@ -19,6 +21,7 @@ from ..services.legacy_import import (
     load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
 )
+from ..services.legacy_verify import verify_legacy_import
 from ..storage.duckdb import DuckDBFactWriteError
 from ..storage.migration_repository import MigrationRepository, MigrationRunNotFoundError
 from ..storage.sqlite_models import MigrationQuarantine, MigrationRun
@@ -66,6 +69,21 @@ def import_legacy(
     except DuckDBFactWriteError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return LegacyImportDryRunReport.model_validate(migration_run.report_json or {})
+
+
+@router.post("/migrations/verify-legacy", response_model=LegacyImportVerifyReport)
+def verify_legacy(
+    request: LegacyImportVerifyRequest,
+    http_request: Request,
+) -> LegacyImportVerifyReport:
+    try:
+        return verify_legacy_import(
+            request,
+            session_factory=http_request.app.state.session_factory,
+            duckdb_path=http_request.app.state.duckdb_path,
+        )
+    except LegacyCandidateImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 def quarantine_record(row: MigrationQuarantine, repository: MigrationRepository) -> MigrationQuarantineRecord:

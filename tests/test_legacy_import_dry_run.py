@@ -782,6 +782,120 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
 
+    async def test_verify_legacy_api_passes_after_candidate_review_and_history_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_candidate_import_fixture(tmp)
+            build_valid_review_import_fixture(tmp)
+            build_valid_history_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported_run_ids: dict[str, str] = {}
+                expected_counts = {"candidates": 2, "reviews": 2, "history": 3}
+                for scope in ("candidates", "reviews", "history"):
+                    imported = await client.post(
+                        "/api/migrations/import-legacy",
+                        json={
+                            "dry_run": False,
+                            "data_root": str(data_root),
+                            "scope": scope,
+                            "pick_date": "2026-05-26",
+                        },
+                    )
+                    self.assertEqual(imported.status_code, 200)
+                    imported_run_ids[scope] = imported.json()["migration_id"]
+
+                runs_before = await client.get("/api/runs")
+                self.assertEqual(runs_before.status_code, 200)
+                run_count_before = len(runs_before.json()["runs"])
+
+                for scope, run_id in imported_run_ids.items():
+                    verified = await client.post(
+                        "/api/migrations/verify-legacy",
+                        json={
+                            "data_root": str(data_root),
+                            "scope": scope,
+                            "pick_date": "2026-05-26",
+                            "run_id": run_id,
+                        },
+                    )
+                    self.assertEqual(verified.status_code, 200)
+                    payload = verified.json()
+                    self.assertTrue(payload["passed"])
+                    self.assertTrue(payload["duckdb_checked"])
+                    self.assertEqual(payload["counts"], {"legacy": expected_counts[scope], "sqlite": expected_counts[scope], "duckdb": expected_counts[scope]})
+                    self.assertEqual(payload["mismatches"]["missing_in_sqlite"], [])
+                    self.assertEqual(payload["mismatches"]["extra_in_sqlite"], [])
+                    self.assertEqual(payload["mismatches"]["missing_in_duckdb"], [])
+                    self.assertEqual(payload["mismatches"]["extra_in_duckdb"], [])
+
+                runs_after = await client.get("/api/runs")
+                self.assertEqual(runs_after.status_code, 200)
+                self.assertEqual(len(runs_after.json()["runs"]), run_count_before)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_verify_legacy_api_reports_stale_duckdb_facts_without_mutating_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_candidate_import_fixture(tmp)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "candidates",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                migration_id = imported.json()["migration_id"]
+
+                with connect_duckdb(duckdb_path) as connection:
+                    connection.execute("DELETE FROM candidate_facts WHERE code = '000011'")
+
+                runs_before = await client.get("/api/runs")
+                self.assertEqual(runs_before.status_code, 200)
+                run_count_before = len(runs_before.json()["runs"])
+
+                verified = await client.post(
+                    "/api/migrations/verify-legacy",
+                    json={
+                        "data_root": str(data_root),
+                        "scope": "candidates",
+                        "pick_date": "2026-05-26",
+                        "run_id": migration_id,
+                    },
+                )
+                self.assertEqual(verified.status_code, 200)
+                payload = verified.json()
+                self.assertFalse(payload["passed"])
+                self.assertEqual(payload["counts"], {"legacy": 2, "sqlite": 2, "duckdb": 1})
+                self.assertEqual(payload["mismatches"]["missing_in_sqlite"], [])
+                self.assertEqual(payload["mismatches"]["extra_in_sqlite"], [])
+                self.assertEqual(payload["mismatches"]["missing_in_duckdb"], ["000011:brick"])
+                self.assertEqual(payload["mismatches"]["extra_in_duckdb"], [])
+
+                runs_after = await client.get("/api/runs")
+                self.assertEqual(runs_after.status_code, 200)
+                self.assertEqual(len(runs_after.json()["runs"]), run_count_before)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
     async def test_import_legacy_api_rejects_invalid_history_import_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

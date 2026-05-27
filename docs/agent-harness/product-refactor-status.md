@@ -30,7 +30,8 @@ write proof across preselect, chart export, provider review, and archive.
 #152 now owns the R7 plan, validation gate, resource evidence, product launcher,
 runtime hardening, runtime recovery, final browser proof, Gemini API reviewer
 retirement, run_all retirement, selector adapter retirement, and legacy
-retirement sequence.
+retirement sequence. It also owns the final retirement proof audit gate that
+must be updated before any #152 closure claim.
 
 ## Phase Status
 
@@ -43,7 +44,7 @@ retirement sequence.
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
 | R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-run-all-retirement.md`, `r7-selector-adapter-retirement.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-run-all-retirement`, `scripts/harness/check.sh r7-selector-adapter-retirement`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/run-all/selector-adapter/workbench/recovery guardrails, validation, rollback, and phase order | Surface-by-surface retirement |
+| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-final-retirement-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-run-all-retirement.md`, `r7-selector-adapter-retirement.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-final-retirement-proof`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-run-all-retirement`, `scripts/harness/check.sh r7-selector-adapter-retirement`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/run-all/selector-adapter/workbench/recovery guardrails, validation, rollback, phase order, and final audit requirements | Surface-by-surface retirement |
 
 ## Implemented Product Stack Slices
 
@@ -154,6 +155,10 @@ evidence:
   `workbench/runner.py` by default before token lookup, Streamlit launch,
   legacy chart imports, `paper_trading.core` imports, or `data/runs` reads;
   rollback requires `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1`.
+- R7 final retirement proof now exists as an audit gate. It records that the
+  current verdict is not complete, names the evidence packet needed before #152
+  closure, and keeps permanent deletion of compatibility surfaces separate from
+  default retirement guards.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -225,18 +230,17 @@ full objective:
   the current core workflow surfaces. Residual migration/provider error-state
   polish should be driven by R6/R7 hardening rather than blocking storage
   cutover.
-- File-system state is still a compatibility and migration source. The legacy
-  Gemini API reviewer, Gemini CLI reviewer, chart exporter, legacy preselect
-  CLI, legacy archive writer, run_all wrapper, and Streamlit workbench are
-  retired by default, but final legacy
-  retirement is not complete.
-- R7 still needs explicit hardening and retirement work before legacy
-  file-system, Streamlit/workbench, and compatibility entrypoints can be
-  disabled or removed.
+- The legacy file-system state remains a compatibility and migration source.
+  The legacy Gemini API reviewer, Gemini CLI reviewer, chart exporter, legacy
+  preselect CLI, legacy archive writer, run_all wrapper, and Streamlit
+  workbench are retired by default, but permanent deletion is not approved by
+  the current audit.
+- Final-cutover closure still requires a #152 issue comment with the exact main
+  commit, row-by-row `r7-final-retirement-proof.md` verdict, validation output,
+  and rollback notes for every remaining compatibility flag.
 - Runtime cancellation and startup recovery have R7 coverage for the supported
   single-process local product deployment; multi-process writes to the same
   SQLite/DuckDB/artifact roots remain unsupported.
-- Final retirement proof is not yet R7-ready.
 
 ## Next Issue Queue
 
@@ -260,5 +264,7 @@ The full objective is not complete until all of these are proven:
   documented as legacy-only with rollback notes.
 - Product UI/UX passes the documented quality bar with browser/screenshot
   evidence.
+- `scripts/harness/check.sh r7-final-retirement-proof` passes with a completion
+  verdict and final-cutover validation packet.
 - `scripts/harness/check.sh product-refactor-readiness` and
   `scripts/harness/check.sh quick` pass at the final cutover point.

@@ -28,6 +28,7 @@ import {
   artifactFileUrl,
   cancelRun,
   createArchiveRun,
+  createChartExportRun,
   createDiagnosticRun,
   createPreselectRun,
   dryRunLegacyImport,
@@ -187,22 +188,38 @@ function CandidatesView() {
       queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
     },
   })
+  const chartExportMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) =>
+      createChartExportRun({
+        candidate_batch_id: batch.id,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+    },
+  })
 
   const hasFilters = Object.values(filters).some((value) => value.trim())
 
   function updateFilter(key: keyof CandidateFilters, value: string) {
     const nextFilters = { ...filters, [key]: value }
+    archiveBatchMutation.reset()
+    chartExportMutation.reset()
     setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
   }
 
   function resetFilters() {
     const nextFilters = emptyCandidateFilters()
+    archiveBatchMutation.reset()
+    chartExportMutation.reset()
     setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
   }
 
   function selectBatch(batch: CandidateBatchSummary) {
+    archiveBatchMutation.reset()
+    chartExportMutation.reset()
     const nextFilters = {
       ...filters,
       batch_id: batch.id,
@@ -246,15 +263,26 @@ function CandidatesView() {
           </div>
           <div className="button-row">
             {activeBatch ? (
-              <button
-                type="button"
-                className="action-button"
-                onClick={() => archiveBatchMutation.mutate(activeBatch)}
-                disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
-              >
-                {archiveBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Archive size={17} aria-hidden="true" />}
-                <span>Archive selected</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="action-button"
+                  onClick={() => chartExportMutation.mutate(activeBatch)}
+                  disabled={activeBatch.candidate_count === 0 || chartExportMutation.isPending}
+                >
+                  {chartExportMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <ImageIcon size={17} aria-hidden="true" />}
+                  <span>Export charts</span>
+                </button>
+                <button
+                  type="button"
+                  className="action-button secondary"
+                  onClick={() => archiveBatchMutation.mutate(activeBatch)}
+                  disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
+                >
+                  {archiveBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Archive size={17} aria-hidden="true" />}
+                  <span>Archive selected</span>
+                </button>
+              </>
             ) : null}
             {activeBatchId ? (
               <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
@@ -277,10 +305,36 @@ function CandidatesView() {
             <span>{errorText(archiveBatchMutation.error)}</span>
           </div>
         ) : null}
+        {chartExportMutation.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(chartExportMutation.error)}</span>
+          </div>
+        ) : null}
         {archiveBatchMutation.isSuccess ? (
           <div className="alert success-alert compact-alert" role="status">
             <CheckCircle2 size={18} aria-hidden="true" />
             <span>Archive run {archiveBatchMutation.data.run.id} created from {archiveBatchMutation.data.snapshot.review_run_id}.</span>
+          </div>
+        ) : null}
+        {chartExportMutation.isSuccess ? (
+          <div className="alert success-alert compact-alert chart-export-alert" role="status">
+            <CheckCircle2 size={18} aria-hidden="true" />
+            <span>
+              Chart run {chartExportMutation.data.run.id} exported {chartExportMutation.data.artifacts.length} artifacts.
+            </span>
+            {chartExportMutation.data.artifacts[0] ? (
+              <a
+                className="artifact-open-link"
+                href={artifactFileUrl(chartExportMutation.data.artifacts[0].id)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open first chart artifact"
+              >
+                <ExternalLink size={15} aria-hidden="true" />
+                <span>Open first chart</span>
+              </a>
+            ) : null}
           </div>
         ) : null}
 

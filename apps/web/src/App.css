@@ -569,6 +569,11 @@ button {
   margin-top: 14px;
 }
 
+.chart-export-alert {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .migration-result-panel {
   margin-top: 14px;
   border-top: 1px solid var(--line);

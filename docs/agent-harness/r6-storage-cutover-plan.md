@@ -48,7 +48,8 @@ Out of scope:
 Product-owned paths already exist:
 
 - `JobRuntime.run_preselect_job()` writes candidate batches into SQLite through
-  `RunRepository.create_candidate_batch()`.
+  `RunRepository.create_candidate_batch()` and mirrors product preselect
+  candidates into DuckDB `candidate_facts` when analytics storage is configured.
 - `ReviewRunService` writes review runs, reviews, recommendations, and DuckDB
   review facts.
 - `ReviewProviderRunService` reads candidate batches and chart artifacts from
@@ -68,10 +69,6 @@ Product-owned paths already exist:
 
 Cutover gaps:
 
-- Full product-write proof still needs an end-to-end fixture that exercises
-  candidate preselect, provider review, chart export, and archive without
-  depending on legacy `data/candidates`, `data/review`, or `data/history` as
-  product read paths.
 - The legacy CLI still writes candidate files through `pipeline/pipeline_io.py`.
   This is acceptable as a compatibility path, but product UI/API flows should
   not depend on `data/candidates/candidates_latest.json`.
@@ -101,25 +98,27 @@ Cutover gaps:
    - Review payload lineage preserves provider evidence artifact ids and paths
      while keeping large raw payloads out of SQLite blobs.
 
-3. Candidate product-write proof.
-   - Run a fixture preselect through FastAPI using local CSV input.
-   - Assert SQLite contains the candidate batch and candidates.
-   - Assert DuckDB contains matching candidate facts.
-   - Assert no product UI/API read path requires `data/candidates`.
+3. Candidate/review/archive product-write proof. Implemented as a fixture-backed
+   API chain that avoids live Tushare and Gemini calls.
+   - Run fixture preselect through FastAPI and assert SQLite contains the
+     candidate batch/candidates.
+   - Mirror preselect results into DuckDB `candidate_facts`.
+   - Run chart export through FastAPI using explicit fixture raw CSV input and
+     serve generated chart artifacts through `/api/artifacts/{artifact_id}`.
+   - Run provider review through FastAPI, index provider evidence artifacts,
+     write SQLite review rows/recommendations, and write DuckDB review facts.
+   - Run archive through FastAPI, preserve chart artifact lineage, write SQLite
+     archive snapshots/rows, and write DuckDB archive facts.
+   - Assert product APIs use SQLite/DuckDB/artifact state without requiring
+     `data/candidates`, `data/review`, or `data/history` as product read paths.
 
-4. Review and archive product-write proof.
-   - Run fixture review results through FastAPI.
-   - Run chart export and archive through FastAPI.
-   - Assert SQLite, DuckDB, and product artifact API produce the full evidence
-     chain without `data/review` or `data/history`.
-
-5. Legacy import bridge.
+4. Legacy import bridge.
    - Keep `POST /api/migrations/import-legacy` as the only write path from
      legacy `data/` into product storage.
    - Require pre-import backup when import writes to SQLite/DuckDB.
    - Preserve quarantine rows for malformed or incompatible records.
 
-6. Legacy write freeze.
+5. Legacy write freeze.
    - Mark `pipeline.cli`, `agent/*review*.py`, `pipeline.archive_results`, and
      Streamlit/workbench file readers as legacy compatibility surfaces.
    - Do not delete them until R7.
@@ -139,7 +138,10 @@ Implementation PRs that change writes must also prove the touched runtime path:
 
 - artifact backup/restore: backup, mutate/delete product artifacts, restore,
   serve artifact through `/api/artifacts/{artifact_id}`;
-- candidate cutover: FastAPI preselect fixture writes SQLite and DuckDB facts;
+- product workflow proof: FastAPI preselect fixture writes SQLite and DuckDB
+  facts, chart export writes product artifacts, provider review writes SQLite
+  and DuckDB facts plus evidence artifacts, and archive writes SQLite and DuckDB
+  facts;
 - review cutover: FastAPI review fixture writes SQLite and DuckDB facts;
 - archive cutover: FastAPI chart-export plus archive fixture writes product
   artifacts, SQLite archive rows, and DuckDB facts;
@@ -162,3 +164,12 @@ of trading logic, protects every later product-owned workflow, and is covered by
 an API contract test that backs up a product artifact, mutates local artifact
 state, restores the backup, and serves the restored file through
 `/api/artifacts/{artifact_id}`.
+
+## Product-Write Proof
+
+`tests/test_product_workflow_storage_contracts.py` is the R6 fixture-backed
+product-write proof. It runs the product API chain from preselect to chart
+export, provider review, and archive using only local fixture data and a fake
+provider executor. The test asserts SQLite product state, DuckDB candidate /
+review / archive facts, chart artifact serving, provider evidence artifact
+lineage, and archive chart lineage.

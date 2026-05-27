@@ -18,15 +18,16 @@ R6. The remaining work is still substantial because the final goal requires a
 product-quality UI, product-owned storage cutover, core business logic rewritten
 behind parity tests, and legacy path retirement.
 
-Default next phase focus: R6 product storage cutover for in-scope workflows,
-tracked by #115.
+Default next phase focus: R7 hardening and legacy retirement planning after
+#115 lands.
 
 Rationale: #112 has moved strategy selection behavior behind product-owned
 domain helpers, ports, and parity tests. #113 added product settings read/write
 contracts, strategy metadata, and DuckDB-backed strategy summary contracts. #114
 now gives the React workstation deterministic fixture-backed browser evidence
-for the core R5 surfaces. The next blocking surface is making SQLite/DuckDB the
-product-owned source of truth for in-scope workflows.
+for the core R5 surfaces. #115 now defines R6 ownership, rollback, artifact
+backup/restore, provider evidence indexing, and a fixture-backed product API
+write proof across preselect, chart export, provider review, and archive.
 
 ## Phase Status
 
@@ -38,7 +39,7 @@ product-owned source of truth for in-scope workflows.
 | R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage | Retire legacy selector compatibility adapters during R7 only after product API/storage/UI cutover evidence exists |
 | R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
 | R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
-| R6 Data migration and storage cutover | Cutover plan active; artifact backup/restore and provider evidence indexing slices implemented | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md` source-of-truth matrix, cutover sequence, validation, rollback rules, artifact backup/restore API contract, and provider evidence artifact indexing contracts | End-to-end product-write proofs |
+| R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
 | R7 Hardening and legacy retirement | Not started | No retirement PR has landed | Requires parity, migration, UI smoke, rollback, and resource evidence first |
 
 ## Implemented Product Stack Slices
@@ -95,6 +96,9 @@ evidence:
 - Product provider review runs index Gemini/provider evidence files as
   run-scoped SQLite `artifacts` rows, serve copied evidence through the artifact
   API, and preserve provider evidence artifact ids in review payload lineage.
+- Fixture-backed product API chain proof covers preselect, chart export,
+  provider review, and archive writes through SQLite, DuckDB, and product
+  artifact storage without live Tushare/Gemini calls.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -161,12 +165,11 @@ full objective:
   the current core workflow surfaces. Residual migration/provider error-state
   polish should be driven by R6/R7 hardening rather than blocking storage
   cutover.
-- File-system state is still a live compatibility and migration source. The
-  product-owned storage cutover is not complete.
-- R6 still needs end-to-end product-write proofs showing candidate preselect,
-  provider review, chart export, and archive can run through product APIs and
-  read product-owned SQLite/DuckDB/artifact state without relying on legacy
-  `data/candidates`, `data/review`, or `data/history` as product read paths.
+- File-system state is still a live compatibility and migration source. Final
+  legacy retirement is not complete.
+- R7 still needs explicit hardening and retirement work before legacy
+  file-system, Streamlit/workbench, and compatibility entrypoints can be
+  disabled or removed.
 - Runtime cancellation and concurrency are simple and local-first; this is
   acceptable for now but must be hardened before final retirement.
 - Resource envelope, browser smoke, screenshot evidence, and legacy retirement
@@ -176,12 +179,11 @@ full objective:
 
 Use these issues unless a newer issue supersedes them:
 
-1. #115: R6 define and execute product storage cutover plan for in-scope
-   workflows.
+1. Create or pick the R7 hardening/legacy retirement issue after #115 lands.
 
-The default next issue is #115 because #114 has supplied fixture-backed R5
-browser evidence for the workstation surfaces that consume the current FastAPI,
-SQLite, and DuckDB contracts.
+The default next issue should be R7 because #115 supplies the R6 storage
+ownership plan, rollback rules, artifact protection, provider evidence indexing,
+and product-owned write proof.
 
 ## Completion Boundary
 

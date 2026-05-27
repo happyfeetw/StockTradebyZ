@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..services.chart_runs import ChartExportRunService, CreatedChartExport
     from ..services.review_runs import ReviewRunService
     from ..storage.archive_repository import CreatedArchive
+    from ..storage.duckdb import DuckDBAnalyticsWriter
     from ..storage.review_repository import CreatedReviewRun
 
 __all__ = ["JobRuntime"]
@@ -69,6 +70,7 @@ class JobRuntime:
         parameters: "PreselectParameters",
         *,
         service: "PreselectService",
+        analytics_writer: "DuckDBAnalyticsWriter | None" = None,
     ) -> tuple[Run, CandidateBatch, "PreselectResult"]:
         run = self.repository.create_run(
             kind="preselect",
@@ -84,6 +86,12 @@ class JobRuntime:
         try:
             result = service.run(parameters)
             batch = self.repository.create_candidate_batch(run_id=run.id, result=result)
+            if analytics_writer is not None:
+                analytics_writer.record_candidate_import(
+                    run_id=run.id,
+                    batch=batch,
+                    candidates=batch.candidates,
+                )
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,

@@ -8,8 +8,11 @@ from ..storage.sqlite_models import CandidateBatch, Run
 if TYPE_CHECKING:
     from stocktrade.domain.selection import PreselectParameters, PreselectResult, PreselectService
 
+    from ..schemas.archive import ArchiveRunCreateRequest
     from ..schemas.reviews import ReviewRunCreateRequest
+    from ..services.archive_runs import ArchiveRunService
     from ..services.review_runs import ReviewRunService
+    from ..storage.archive_repository import CreatedArchive
     from ..storage.review_repository import CreatedReviewRun
 
 __all__ = ["JobRuntime"]
@@ -132,6 +135,49 @@ class JobRuntime:
                 status="succeeded",
                 pick_date=created.review_run.pick_date,
                 summary=created.review_run.summary_json,
+            )
+            return final_run, created
+        except Exception as exc:
+            error = {"type": type(exc).__name__, "message": str(exc)}
+            self.repository.transition_step(step.id, status="failed", error=error)
+            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
+            self.repository.transition_run(run.id, status="failed", summary=error)
+            raise
+
+    def run_archive_job(
+        self,
+        request: "ArchiveRunCreateRequest",
+        *,
+        service: "ArchiveRunService",
+    ) -> tuple[Run, "CreatedArchive"]:
+        run = self.repository.create_run(
+            kind="archive",
+            summary={
+                "mode": "archive",
+                "candidate_batch_id": request.candidate_batch_id,
+                "review_run_id": request.review_run_id,
+                "message": "queued",
+            },
+        )
+        step = self.repository.add_step(run.id, name="archive")
+        self.repository.append_event(run.id, message="Archive job queued")
+        self.repository.transition_run(run.id, status="running")
+        self.repository.transition_step(step.id, status="running")
+        self.repository.append_event(run.id, step_id=step.id, message="Archive job started")
+
+        try:
+            created = service.run(run_id=run.id, request=request)
+            self.repository.transition_step(step.id, status="succeeded")
+            self.repository.append_event(
+                run.id,
+                step_id=step.id,
+                message=f"Archive job recorded {len(created.rows)} rows",
+            )
+            final_run = self.repository.transition_run(
+                run.id,
+                status="succeeded",
+                pick_date=created.snapshot.pick_date,
+                summary=created.snapshot.summary_json,
             )
             return final_run, created
         except Exception as exc:

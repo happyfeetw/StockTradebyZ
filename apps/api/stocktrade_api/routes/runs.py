@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..dependencies import (
+    get_archive_repository,
     get_analytics_writer,
     get_job_runtime,
     get_preselect_service,
@@ -12,7 +13,9 @@ from ..dependencies import (
     get_run_repository,
 )
 from ..jobs.runtime import JobRuntime
+from ..routes.archive import archive_row_response, archive_snapshot_response
 from ..routes.reviews import recommendation_response, review_response, review_run_response
+from ..schemas.archive import ArchiveRunCreateRequest, ArchiveRunCreateResponse
 from ..schemas.preselect import (
     CandidateBatchResponse,
     CandidateResponse,
@@ -31,6 +34,7 @@ from ..schemas.runs import (
     RunListResponse,
     RunSummary,
 )
+from ..storage.archive_repository import ArchiveRepository, ArchiveSourceNotFoundError
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.review_repository import CandidateBatchNotFoundError, ReviewRepository
 from ..storage.run_repository import RunNotFoundError, RunRepository
@@ -180,6 +184,29 @@ def create_review_run(
             recommendation_response(recommendation)
             for recommendation in created.recommendations
         ],
+    )
+
+
+@router.post("/runs/archive", response_model=ArchiveRunCreateResponse)
+def create_archive_run(
+    request: ArchiveRunCreateRequest,
+    runtime: JobRuntime = Depends(get_job_runtime),
+    archive_repository: ArchiveRepository = Depends(get_archive_repository),
+    analytics_writer: DuckDBAnalyticsWriter | None = Depends(get_analytics_writer),
+) -> ArchiveRunCreateResponse:
+    from ..services.archive_runs import ArchiveRunService, ArchiveRunValidationError
+
+    service = ArchiveRunService(archive_repository, analytics_writer=analytics_writer)
+    try:
+        run, created = runtime.run_archive_job(request, service=service)
+    except ArchiveSourceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="archive source not found") from exc
+    except ArchiveRunValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ArchiveRunCreateResponse(
+        run=run_summary(run),
+        snapshot=archive_snapshot_response(created.snapshot),
+        rows=[archive_row_response(row) for row in created.rows],
     )
 
 

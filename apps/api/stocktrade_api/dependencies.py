@@ -8,7 +8,7 @@ from .jobs.runtime import JobRuntime
 from .storage.archive_repository import ArchiveRepository
 from .storage.backup_service import BackupService
 from .storage.candidate_repository import CandidateRepository
-from .storage.duckdb import DuckDBAnalyticsWriter
+from .storage.duckdb import DuckDBAnalyticsReader, DuckDBAnalyticsWriter
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
@@ -32,6 +32,10 @@ def get_review_repository(request: Request) -> ReviewRepository:
 
 def get_analytics_writer(request: Request) -> DuckDBAnalyticsWriter | None:
     return request.app.state.analytics_writer
+
+
+def get_analytics_reader(request: Request) -> DuckDBAnalyticsReader | None:
+    return request.app.state.analytics_reader
 
 
 def get_archive_repository(request: Request) -> ArchiveRepository:

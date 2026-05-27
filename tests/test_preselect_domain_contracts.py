@@ -31,6 +31,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     PreselectExecutionSettings,
     PreselectParameters,
     PreselectService,
+    ProductCsvMarketDataPort,
     ProductLiquidityPoolPort,
     ProductPickDatePort,
     ProductStrategySelectorPort,
@@ -424,9 +425,74 @@ print("pipeline.select_stock" in sys.modules)
 
         self.assertIsInstance(port.warmup, ProductWarmupBarsPort)
 
+    def test_product_csv_market_data_port_matches_legacy_raw_data_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = Path(tmpdir)
+            pd.DataFrame(
+                [
+                    {"Date": "2026-05-22", "Open": 12.0, "Close": 12.3, "Volume": 5000},
+                    {"Date": "2026-05-20", "Open": 10.0, "Close": 10.3, "Volume": 1000},
+                    {"Date": "2026-05-24", "Open": 14.0, "Close": 14.3, "Volume": 9000},
+                ]
+            ).to_csv(raw_dir / "000001.CSV", index=False)
+            pd.DataFrame(
+                [
+                    {"date": "2026-05-21", "open": 8.0, "close": 8.2, "volume": 2000},
+                    {"date": "2026-05-22", "open": 9.0, "close": 9.2, "volume": 3000},
+                ]
+            ).to_csv(raw_dir / "000002.csv", index=False)
+            pd.DataFrame([{"open": 1.0, "close": 1.1}]).to_csv(raw_dir / "ignored_no_date.csv", index=False)
+            (raw_dir / "ignored.txt").write_text("not csv", encoding="utf-8")
+
+            settings = PreselectExecutionSettings(
+                data_dir=str(raw_dir),
+                top_m=20,
+                n_turnover_days=3,
+                min_bars_buffer=4,
+                n_jobs=None,
+                prepare_executor="thread",
+            )
+            parameters = PreselectParameters(end_date="2026-05-22")
+
+            product_data = ProductCsvMarketDataPort().load_raw_data(settings, parameters)
+            legacy_data = select_stock.load_raw_data(str(raw_dir), end_date=parameters.end_date)
+
+        self.assertEqual(product_data.keys(), legacy_data.keys())
+        self.assertNotIn("ignored_no_date", product_data)
+        self.assertEqual(product_data["000001"]["date"].dt.strftime("%Y-%m-%d").tolist(), ["2026-05-20", "2026-05-22"])
+        for code in product_data:
+            pd.testing.assert_frame_equal(product_data[code], legacy_data[code])
+
+    def test_product_csv_market_data_port_matches_legacy_loader_errors(self) -> None:
+        settings = PreselectExecutionSettings(
+            data_dir="/missing/product/raw",
+            top_m=20,
+            n_turnover_days=3,
+            min_bars_buffer=4,
+            n_jobs=None,
+            prepare_executor="thread",
+        )
+        with self.assertRaisesRegex(FileNotFoundError, "data_dir 不存在"):
+            ProductCsvMarketDataPort().load_raw_data(settings, PreselectParameters())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_dir = Path(tmpdir)
+            pd.DataFrame([{"open": 1.0, "close": 1.1}]).to_csv(raw_dir / "ignored.csv", index=False)
+            settings = PreselectExecutionSettings(
+                data_dir=str(raw_dir),
+                top_m=20,
+                n_turnover_days=3,
+                min_bars_buffer=4,
+                n_jobs=None,
+                prepare_executor="thread",
+            )
+            with self.assertRaisesRegex(ValueError, "未找到任何 CSV 数据"):
+                ProductCsvMarketDataPort().load_raw_data(settings, PreselectParameters())
+
     def test_legacy_preselect_default_uses_product_owned_date_and_pool_ports(self) -> None:
         port = LegacyPreselectExecutionPort(module_loader=lambda: SimpleNamespace())
 
+        self.assertIsInstance(port.market_data, ProductCsvMarketDataPort)
         self.assertIsInstance(port.pick_dates, ProductPickDatePort)
         self.assertIsInstance(port.liquidity_pool, ProductLiquidityPoolPort)
         self.assertIsInstance(port.strategy_selectors, ProductStrategySelectorPort)

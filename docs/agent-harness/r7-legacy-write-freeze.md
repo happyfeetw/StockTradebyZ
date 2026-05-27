@@ -22,6 +22,7 @@ no-read guard so later retirement PRs have a stable baseline.
 | `dashboard/app.py` | reads legacy candidates/raw data | React workstation | shows compatibility-only warning |
 | `workbench/app.py` | reads/writes legacy workbench state | React workstation | shows compatibility-only warning |
 | `start_workbench` | launches Streamlit workbench | React workstation | prints compatibility-only warning |
+| `run_all.py` | orchestrates legacy writers and reads candidate/review files | `./start_product` and React/FastAPI Run Center | retired by default behind `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1` |
 
 The remaining notices are informational. They do not block legacy behavior yet
 because R7 retirement still requires surface-specific parity, migration,

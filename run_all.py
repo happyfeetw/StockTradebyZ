@@ -1,7 +1,7 @@
 """
 run_all.py
 ~~~~~~~~~~
-一键运行完整交易选股流程：
+Legacy 一键运行完整交易选股流程：
 
   步骤 1  pipeline/fetch_kline.py   — 拉取最新 K 线数据
   步骤 2  pipeline/cli.py preselect — 量化初选，生成候选列表
@@ -10,11 +10,11 @@ run_all.py
   步骤 5  打印推荐购买的股票
 
 用法：
-    python run_all.py
-    python run_all.py --skip-fetch     # 跳过行情下载（已有最新数据时）
-    python run_all.py --start-from 3   # 从第 3 步开始（跳过前两步）
-    python run_all.py --reviewer gemini-api
-    python run_all.py --skip-review
+    STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 python run_all.py
+    STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 python run_all.py --skip-fetch
+    STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 python run_all.py --start-from 3
+    STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 python run_all.py --reviewer gemini-api
+    STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1 python run_all.py --skip-review
 """
 from __future__ import annotations
 
@@ -23,6 +23,12 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+
+from legacy_compat import (
+    LEGACY_RUN_ALL_ENV,
+    LEGACY_RUN_ALL_RETIRED_NOTICE,
+    legacy_run_all_enabled,
+)
 
 ROOT = Path(__file__).resolve().parent
 PYTHON = sys.executable  # 与当前进程同一个 Python 解释器
@@ -120,6 +126,18 @@ def main() -> None:
         help="跳过步骤 4（Gemini 复评），直接打印已有 suggestion.json",
     )
     args = parser.parse_args()
+
+    if not legacy_run_all_enabled():
+        print(LEGACY_RUN_ALL_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use ./start_product or Run Center product APIs "
+            "(POST /api/runs/preselect, POST /api/runs/chart-export, "
+            "POST /api/runs/review/provider, POST /api/runs/archive) "
+            "for supported workflows. Temporary rollback requires "
+            f"{LEGACY_RUN_ALL_ENV}=1 plus the required child legacy flags.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     start = args.start_from
     

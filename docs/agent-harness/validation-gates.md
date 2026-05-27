@@ -20,6 +20,7 @@ requires it.
 | r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
 | r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
+| r7-runtime-recovery | `scripts/harness/check.sh r7-runtime-recovery` | R7 FastAPI startup recovery and local product job concurrency semantics |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -256,6 +257,31 @@ Run this before PRs that claim resource envelope evidence, materially change
 product workflow storage writes, or prepare final R7 browser/legacy retirement
 proof.
 
+## R7 Runtime Recovery Gate
+
+Checks:
+
+- `docs/agent-harness/r7-runtime-recovery.md` documents FastAPI startup
+  recovery, local concurrency rules, unsupported multi-process writes, and
+  rollback;
+- `JobRuntime` exposes recovery and serializes product workflow jobs with an
+  in-process workflow lock;
+- `RunRepository` can recover interrupted `queued`, `running`, and `cancelling`
+  runs into terminal states with `RuntimeRecovery` diagnostics;
+- targeted job runtime tests cover startup recovery, serialized workflow calls,
+  and late-cancellation terminal protection;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-runtime-recovery
+```
+
+Run this before PRs that change FastAPI job lifecycle behavior, startup
+recovery, local concurrency semantics, cancellation behavior, or final runtime
+hardening evidence.
+
 ## Runtime Gates
 
 Runtime gates are intentionally not part of `quick` because they can require
@@ -293,6 +319,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
 | R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
+| R7 runtime recovery | r7-runtime-recovery + r7-retirement-plan | targeted job lifecycle tests + quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |
 
@@ -307,4 +334,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-product-launcher for local launch changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

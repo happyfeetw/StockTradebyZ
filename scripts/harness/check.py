@@ -42,6 +42,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r7-product-launcher.md"),
     Path("docs/agent-harness/r7-runtime-terminal-integrity.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
+    Path("docs/agent-harness/r7-runtime-recovery.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -158,6 +159,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh r7-product-launcher",
             "scripts/harness/check.sh r7-runtime-terminal-integrity",
             "scripts/harness/check.sh r7-resource-envelope",
+            "scripts/harness/check.sh r7-runtime-recovery",
             "Maintenance Rule",
         ],
     )
@@ -497,6 +499,7 @@ def check_r7_retirement_plan() -> None:
             "Legacy Surface Matrix",
             "R7 Sequence",
             "Runtime hardening",
+            "runtime recovery",
             "r7-runtime-terminal-integrity",
             "Resource envelope",
             "r7-resource-envelope",
@@ -512,6 +515,54 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_runtime_recovery() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-runtime-recovery.md",
+        [
+            "Managing issue: #152",
+            "R7 Runtime Recovery And Concurrency",
+            "FastAPI startup recovery",
+            "JobRuntime.recover_interrupted_runs",
+            "RunRepository.recover_interrupted_active_runs",
+            "`queued` and `running` runs recover to `failed`",
+            "`cancelling` runs recover to `cancelled`",
+            "RuntimeRecovery",
+            "in-process workflow lock",
+            "Multiple API processes",
+            "simulated trading remains out of scope",
+            "scripts/harness/check.sh r7-runtime-recovery",
+            "Rollback",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/jobs/runtime.py",
+        [
+            "RLock",
+            "_workflow_lock",
+            "recover_interrupted_runs",
+            "with self._workflow_lock",
+        ],
+    )
+    assert_contains(
+        "apps/api/stocktrade_api/storage/run_repository.py",
+        [
+            "recover_interrupted_active_runs",
+            "RuntimeRecovery",
+            "previous_status",
+            "OperationalError",
+        ],
+    )
+    assert_contains(
+        "tests/test_job_runtime_contracts.py",
+        [
+            "test_app_startup_recovers_interrupted_active_runs",
+            "test_product_workflow_jobs_are_serialized_in_process",
+            "test_runtime_does_not_cancel_terminal_run_after_late_cancellation",
+        ],
+    )
+    print("[r7-runtime-recovery] ok")
 
 
 def check_r7_product_launcher() -> None:
@@ -728,6 +779,7 @@ def parse_args() -> argparse.Namespace:
             "r7-product-launcher",
             "r7-runtime-terminal-integrity",
             "r7-resource-envelope",
+            "r7-runtime-recovery",
             "quick",
         ],
         help="Validation gate to run",
@@ -764,6 +816,8 @@ def main() -> int:
             check_r7_runtime_terminal_integrity()
         elif args.gate == "r7-resource-envelope":
             check_r7_resource_envelope()
+        elif args.gate == "r7-runtime-recovery":
+            check_r7_runtime_recovery()
         elif args.gate == "quick":
             check_quick()
         else:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -24,6 +26,7 @@ from stocktrade_api.storage.run_repository import (  # noqa: E402
 )
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import Artifact, Run  # noqa: E402
+from stocktrade.domain.selection import PreselectParameters, PreselectResult  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -42,6 +45,15 @@ def migrate_sqlite(db_path: Path) -> None:
 def repository_for(db_path: Path) -> tuple[RunRepository, object]:
     engine = create_sqlite_engine(db_path)
     return RunRepository(create_session_factory(engine)), engine
+
+
+def empty_preselect_result() -> PreselectResult:
+    return PreselectResult(
+        run_date="2026-05-27",
+        pick_date="2026-05-27",
+        candidates=[],
+        meta={"strategy_candidate_counts": {}},
+    )
 
 
 class JobRuntimeContractTests(unittest.TestCase):
@@ -119,6 +131,90 @@ class JobRuntimeContractTests(unittest.TestCase):
             self.assertEqual(late_cancelled.status, "succeeded")
             self.assertEqual(detail.status, "succeeded")
             self.assertNotIn("Diagnostic job cancelled", [event.message for event in detail.events])
+            engine.dispose()
+
+    def test_app_startup_recovers_interrupted_active_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+
+            running = repository.create_run(kind="diagnostic", status="running", run_id="stale-running")
+            repository.add_step(running.id, name="diagnostic", status="running")
+            cancelling = repository.create_run(kind="preselect", status="cancelling", run_id="stale-cancelling")
+            repository.add_step(cancelling.id, name="preselect", status="running")
+            engine.dispose()
+
+            app = create_app(sqlite_path=db_path, duckdb_path=None, recover_on_create=True)
+            recovered_ids = {run.id for run in app.state.recovered_runs}
+            self.assertEqual(recovered_ids, {"stale-running", "stale-cancelling"})
+
+            recovered_running = app.state.run_repository.get_run_detail("stale-running")
+            recovered_cancelling = app.state.run_repository.get_run_detail("stale-cancelling")
+
+            self.assertEqual(recovered_running.status, "failed")
+            self.assertEqual(recovered_running.steps[0].status, "failed")
+            self.assertEqual(recovered_running.summary_json["type"], "RuntimeRecovery")
+            self.assertIn("recovered interrupted diagnostic run", recovered_running.events[-1].message)
+
+            self.assertEqual(recovered_cancelling.status, "cancelled")
+            self.assertEqual(recovered_cancelling.steps[0].status, "cancelled")
+            self.assertEqual(recovered_cancelling.summary_json["previous_status"], "cancelling")
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    def test_product_workflow_jobs_are_serialized_in_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+            runtime = JobRuntime(repository)
+            parameters = PreselectParameters(pick_date="2026-05-27")
+            release_first = threading.Event()
+            first_entered = threading.Event()
+            second_entered = threading.Event()
+            call_order: list[str] = []
+            errors: list[BaseException] = []
+
+            class BlockingPreselectService:
+                def run(self, _parameters: PreselectParameters) -> PreselectResult:
+                    call_order.append("first")
+                    first_entered.set()
+                    if not release_first.wait(timeout=5):
+                        raise TimeoutError("first preselect service was not released")
+                    return empty_preselect_result()
+
+            class RecordingPreselectService:
+                def run(self, _parameters: PreselectParameters) -> PreselectResult:
+                    call_order.append("second")
+                    second_entered.set()
+                    return empty_preselect_result()
+
+            def run_preselect(service: object) -> None:
+                try:
+                    runtime.run_preselect_job(parameters, service=service)  # type: ignore[arg-type]
+                except BaseException as exc:  # pragma: no cover - reported below
+                    errors.append(exc)
+
+            first = threading.Thread(target=run_preselect, args=(BlockingPreselectService(),))
+            second = threading.Thread(target=run_preselect, args=(RecordingPreselectService(),))
+
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=2))
+            second.start()
+            time.sleep(0.1)
+            self.assertFalse(second_entered.is_set())
+
+            release_first.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(call_order, ["first", "second"])
+            self.assertEqual([run.status for run in repository.list_runs(limit=10)], ["succeeded", "succeeded"])
             engine.dispose()
 
     def test_runtime_terminal_run_state_cannot_be_overwritten(self) -> None:

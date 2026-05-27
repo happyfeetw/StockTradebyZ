@@ -105,6 +105,7 @@ scripts/harness/check.sh r7-legacy-write-freeze
 scripts/harness/check.sh r7-product-launcher
 scripts/harness/check.sh r7-runtime-terminal-integrity
 scripts/harness/check.sh r7-resource-envelope
+scripts/harness/check.sh r7-runtime-recovery
 scripts/harness/check.sh quick
 ```
 

@@ -8,9 +8,11 @@ import {
   CheckCircle2,
   Clock3,
   Database,
+  ExternalLink,
   FileSearch,
   Gauge,
   GitBranch,
+  Image as ImageIcon,
   Loader2,
   Play,
   RefreshCw,
@@ -23,6 +25,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 import {
+  artifactFileUrl,
   cancelRun,
   createDiagnosticRun,
   dryRunLegacyImport,
@@ -1198,6 +1201,20 @@ function RunDetailPanel({
             <Database size={16} aria-hidden="true" />
             <span>{artifact.kind}</span>
             <code>{artifact.path}</code>
+            {isProductOwnedArtifactPath(artifact.path) ? (
+              <a
+                className="artifact-open-link"
+                href={artifactFileUrl(artifact.id)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open ${artifact.kind} artifact`}
+              >
+                <ExternalLink size={15} aria-hidden="true" />
+                <span>Open</span>
+              </a>
+            ) : (
+              <span className="artifact-source-chip">Legacy path</span>
+            )}
           </div>
         ))}
       </section>
@@ -1344,6 +1361,8 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         </div>
       </section>
 
+      <ArchiveChartArtifact row={row} />
+
       <section className="subsection">
         <h3>Snapshot summary</h3>
         <div className="lineage-grid">
@@ -1370,6 +1389,53 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         <pre className="json-block">{jsonPreview(row.snapshot.strategy_counts)}</pre>
       </section>
     </div>
+  )
+}
+
+function ArchiveChartArtifact({ row }: { row: ArchiveRow }) {
+  const artifactId = row.chart_artifact_id
+  const isProductOwned = artifactId !== null && (!row.chart || isProductOwnedArtifactPath(row.chart))
+
+  if (!isProductOwned) {
+    if (!row.chart) return null
+    return (
+      <section className="subsection">
+        <h3>Chart artifact</h3>
+        <div className="artifact-preview-panel">
+          <div className="artifact-preview-head">
+            <ImageIcon size={17} aria-hidden="true" />
+            <div>
+              <strong>Legacy chart reference</strong>
+              <code>{row.chart}</code>
+            </div>
+          </div>
+          <p className="muted artifact-preview-note">This chart path is legacy source material and is not served by the product artifact API.</p>
+        </div>
+      </section>
+    )
+  }
+
+  const artifactUrl = artifactFileUrl(artifactId)
+
+  return (
+    <section className="subsection">
+      <h3>Chart artifact</h3>
+      <div className="artifact-preview-panel">
+        <div className="artifact-preview-head">
+          <ImageIcon size={17} aria-hidden="true" />
+          <div>
+            <strong>Product chart artifact</strong>
+            <code>{row.chart_artifact_id}</code>
+          </div>
+          <a className="artifact-open-link" href={artifactUrl} target="_blank" rel="noreferrer" aria-label="Open chart artifact">
+            <ExternalLink size={15} aria-hidden="true" />
+            <span>Open</span>
+          </a>
+        </div>
+        <img className="artifact-preview-image" src={artifactUrl} alt={`${row.code} ${row.strategy} chart`} loading="lazy" />
+        {row.chart ? <p className="muted artifact-preview-note">{row.chart}</p> : null}
+      </div>
+    </section>
   )
 }
 
@@ -1730,6 +1796,12 @@ function sectionLabel(section: string) {
   if (section === 'reviews') return 'Reviews'
   if (section === 'history') return 'History'
   return section
+}
+
+function isProductOwnedArtifactPath(path: string | null) {
+  if (!path?.trim()) return false
+  const normalized = path.replaceAll('\\', '/')
+  return normalized !== 'data' && !normalized.startsWith('data/')
 }
 
 function jsonPreview(value: Record<string, unknown> | null) {

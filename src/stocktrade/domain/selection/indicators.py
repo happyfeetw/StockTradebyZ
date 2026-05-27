@@ -393,6 +393,21 @@ def compute_zx_lines(
     return zxdq, zxdkx
 
 
+def compute_zxdq_ratio_mask(
+    frame: pd.DataFrame,
+    zxdq_values: np.ndarray | pd.Series,
+    *,
+    zxdq_ratio: float = 1.0,
+) -> np.ndarray:
+    zxdq = np.asarray(zxdq_values, dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    return (
+        np.isfinite(zxdq)
+        & (zxdq > 0)
+        & (close < zxdq * zxdq_ratio)
+    )
+
+
 def compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
     close = (
         frame["close"].astype(float)

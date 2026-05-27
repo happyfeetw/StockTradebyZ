@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
+import os
 import sys
 from bisect import bisect_right
 from collections import defaultdict
@@ -246,12 +247,50 @@ def _calculate_preselect_warmup(config: dict[str, Any], min_bars_buffer: int) ->
     return warmup
 
 
+def _load_csv_market_data(data_dir: str, end_date: str | None = None) -> dict[str, Any]:
+    import pandas as pd
+
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(f"data_dir 不存在: {data_dir}")
+
+    end_ts = pd.to_datetime(end_date) if end_date else None
+    data: dict[str, Any] = {}
+    for filename in os.listdir(data_dir):
+        if not filename.lower().endswith(".csv"):
+            continue
+        code = filename.rsplit(".", 1)[0]
+        file_path = os.path.join(data_dir, filename)
+
+        frame = pd.read_csv(file_path)
+        frame.columns = [column.lower() for column in frame.columns]
+        if "date" not in frame.columns:
+            logger.warning("跳过 %s：没有 date 列", filename)
+            continue
+
+        frame["date"] = pd.to_datetime(frame["date"])
+        frame = frame.sort_values("date").reset_index(drop=True)
+        if end_ts is not None:
+            frame = frame[frame["date"] <= end_ts].reset_index(drop=True)
+        if not frame.empty:
+            data[code] = frame
+
+    if not data:
+        raise ValueError(f"未找到任何 CSV 数据: {data_dir}")
+    logger.info("读取股票数量: %d", len(data))
+    return data
+
+
 def _load_legacy_select_stock() -> Any:
     if str(PIPELINE_DIR) not in sys.path:
         sys.path.insert(0, str(PIPELINE_DIR))
     import select_stock
 
     return select_stock
+
+
+class ProductCsvMarketDataPort:
+    def load_raw_data(self, settings: PreselectExecutionSettings, parameters: PreselectParameters) -> dict[str, Any]:
+        return _load_csv_market_data(settings.data_dir, end_date=parameters.end_date)
 
 
 class LegacyMarketDataPort:
@@ -614,7 +653,7 @@ class LegacyPreselectExecutionPort:
     ):
         self._module_loader = module_loader
         self._module: Any | None = None
-        self.market_data = market_data or LegacyMarketDataPort(lambda: self.module)
+        self.market_data = market_data or ProductCsvMarketDataPort()
         self.market_preparation = market_preparation or LegacyMarketPreparationPort(lambda: self.module)
         self.pick_dates = pick_dates or ProductPickDatePort()
         self.liquidity_pool = liquidity_pool or ProductLiquidityPoolPort()

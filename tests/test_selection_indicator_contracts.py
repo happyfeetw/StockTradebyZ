@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import Selector as selector_module  # noqa: E402
 from stocktrade.domain.selection import (  # noqa: E402
     compute_body_pct,
+    compute_brick_chart,
+    compute_brick_values,
     compute_daily_return,
     compute_kdj,
     compute_max_volume_not_bearish,
@@ -45,6 +47,74 @@ def reference_compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
         d[i] = 2.0 / 3.0 * d[i - 1] + 1.0 / 3.0 * k[i]
     j = 3.0 * k - 2.0 * d
     return frame.assign(K=k, D=d, J=j)
+
+
+def reference_compute_brick_values(
+    frame: pd.DataFrame,
+    *,
+    n: int = 4,
+    m1: int = 4,
+    m2: int = 6,
+    m3: int = 6,
+    t: float = 4.0,
+    shift1: float = 90.0,
+    shift2: float = 100.0,
+    sma_w1: int = 1,
+    sma_w2: int = 1,
+    sma_w3: int = 1,
+) -> np.ndarray:
+    high = frame["high"].to_numpy(dtype=np.float64)
+    low = frame["low"].to_numpy(dtype=np.float64)
+    close = frame["close"].to_numpy(dtype=np.float64)
+
+    hhv = np.empty(len(frame), dtype=np.float64)
+    llv = np.empty(len(frame), dtype=np.float64)
+    for i in range(len(frame)):
+        start = max(0, i - n + 1)
+        hhv[i] = high[start : i + 1].max()
+        llv[i] = low[start : i + 1].min()
+
+    a1 = sma_w1 / m1
+    b1 = 1.0 - a1
+    var2a = np.empty(len(frame), dtype=np.float64)
+    for i in range(len(frame)):
+        rng = hhv[i] - llv[i]
+        if rng == 0.0:
+            rng = 0.01
+        v1 = (hhv[i] - close[i]) / rng * 100.0 - shift1
+        if i == 0:
+            var2a[i] = v1 + shift2
+        else:
+            var2a[i] = a1 * v1 + b1 * (var2a[i - 1] - shift2) + shift2
+
+    a2 = sma_w2 / m2
+    b2 = 1.0 - a2
+    a3 = sma_w3 / m3
+    b3 = 1.0 - a3
+    var4a = np.empty(len(frame), dtype=np.float64)
+    var5a = np.empty(len(frame), dtype=np.float64)
+    for i in range(len(frame)):
+        rng = hhv[i] - llv[i]
+        if rng == 0.0:
+            rng = 0.01
+        v3 = (close[i] - llv[i]) / rng * 100.0
+        if i == 0:
+            var4a[i] = v3
+            var5a[i] = v3 + shift2
+        else:
+            var4a[i] = a2 * v3 + b2 * var4a[i - 1]
+            var5a[i] = a3 * var4a[i] + b3 * (var5a[i - 1] - shift2) + shift2
+
+    raw = np.empty(len(frame), dtype=np.float64)
+    for i in range(len(frame)):
+        diff = var5a[i] - var2a[i]
+        raw[i] = diff - t if diff > t else 0.0
+
+    brick = np.empty(len(frame), dtype=np.float64)
+    brick[0] = 0.0
+    for i in range(1, len(frame)):
+        brick[i] = raw[i] - raw[i - 1]
+    return brick
 
 
 def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
@@ -246,6 +316,67 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         self.assertEqual(actual.columns.tolist(), ["high", "low", "close", "K", "D", "J"])
         self.assertTrue(actual.empty)
+
+    def test_product_brick_values_match_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.0, 12.0, 11.0, 14.0, 13.5, 15.0, 14.5],
+                "low": [9.0, 10.0, 9.5, 11.0, 10.5, 12.0, 11.5],
+                "close": [9.5, 11.5, 10.0, 13.0, 11.0, 14.0, 12.5],
+            },
+            index=pd.to_datetime(
+                ["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09", "2026-01-12", "2026-01-13"]
+            ),
+        )
+
+        actual = compute_brick_values(frame, n=3, m1=4, m2=5, m3=6, t=3.0)
+        expected = reference_compute_brick_values(frame, n=3, m1=4, m2=5, m3=6, t=3.0)
+
+        np.testing.assert_allclose(actual, expected)
+
+    def test_product_brick_chart_returns_named_series_with_original_index(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.0, 12.0, 11.0, 14.0],
+                "low": [9.0, 10.0, 9.5, 11.0],
+                "close": [9.5, 11.5, 10.0, 13.0],
+            },
+            index=pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08"]),
+        )
+
+        actual = compute_brick_chart(frame, n=2, m1=4, m2=5, m3=6, t=3.0)
+        expected = pd.Series(
+            reference_compute_brick_values(frame, n=2, m1=4, m2=5, m3=6, t=3.0),
+            index=frame.index,
+            name="brick",
+        )
+
+        pd.testing.assert_series_equal(actual, expected)
+
+    def test_legacy_selector_brick_helpers_delegate_to_product_helpers_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.0, 12.0, 11.0],
+                "low": [9.0, 10.0, 9.5],
+                "close": [9.5, 11.5, 10.0],
+            }
+        )
+
+        def fake_product_compute_brick_chart(input_frame: pd.DataFrame, **kwargs: float) -> pd.Series:
+            return pd.Series([float(kwargs["n"]), float(kwargs["m1"]), float(kwargs["t"])], index=input_frame.index)
+
+        def fake_product_compute_brick_values(input_frame: pd.DataFrame, **kwargs: float) -> np.ndarray:
+            return np.array([float(kwargs["m2"]), float(kwargs["m3"]), float(kwargs["sma_w1"])])
+
+        with (
+            patch.object(selector_module, "_product_compute_brick_chart", fake_product_compute_brick_chart),
+            patch.object(selector_module, "_product_compute_brick_values", fake_product_compute_brick_values),
+        ):
+            series = selector_module.compute_brick_chart(frame, n=2, m1=3, m2=4, m3=5, t=6.0)
+            values = selector_module.BrickComputeParams(n=2, m1=3, m2=4, m3=5).compute_arr(frame)
+
+        self.assertEqual(series.tolist(), [2.0, 3.0, 6.0])
+        np.testing.assert_allclose(values, np.array([4.0, 5.0, 1.0]))
 
     def test_legacy_selector_compute_kdj_delegates_to_product_helper_when_available(self) -> None:
         frame = pd.DataFrame({"high": [1.0], "low": [1.0], "close": [1.0]})

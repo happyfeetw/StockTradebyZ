@@ -2,6 +2,8 @@
 
 from .indicators import (
     compute_body_pct,
+    compute_brick_chart,
+    compute_brick_values,
     compute_daily_return,
     compute_kdj,
     compute_max_volume_not_bearish,
@@ -46,6 +48,8 @@ from .preselect import (
 
 __all__ = [
     "compute_body_pct",
+    "compute_brick_chart",
+    "compute_brick_values",
     "compute_daily_return",
     "compute_kdj",
     "compute_max_volume_not_bearish",

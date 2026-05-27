@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Request
 
 from .jobs.runtime import JobRuntime
@@ -37,6 +39,10 @@ def get_backup_service(request: Request) -> BackupService:
 
 def get_migration_repository(request: Request) -> MigrationRepository:
     return request.app.state.migration_repository
+
+
+def get_artifact_root(request: Request) -> Path:
+    return request.app.state.artifact_root
 
 
 def get_preselect_service():

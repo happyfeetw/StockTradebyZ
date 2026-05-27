@@ -24,6 +24,10 @@ class RunNotFoundError(LookupError):
     pass
 
 
+class ArtifactNotFoundError(LookupError):
+    pass
+
+
 class RunRepository:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -157,6 +161,13 @@ class RunRepository:
         with self.session_factory() as session:
             statement = select(Artifact).where(Artifact.run_id == run_id).order_by(Artifact.created_at, Artifact.id)
             return list(session.execute(statement).scalars())
+
+    def get_artifact(self, artifact_id: str) -> Artifact:
+        with self.session_factory() as session:
+            artifact = session.get(Artifact, artifact_id)
+            if artifact is None:
+                raise ArtifactNotFoundError(artifact_id)
+            return artifact
 
     def request_cancellation(self, run_id: str) -> Run:
         with self.session_factory() as session:

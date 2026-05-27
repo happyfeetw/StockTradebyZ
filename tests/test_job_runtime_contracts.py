@@ -19,6 +19,7 @@ from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.runs import RunDetail, RunEventsResponse, RunListResponse, RunSummary  # noqa: E402
 from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
+from stocktrade_api.storage.sqlite_models import Artifact, Run  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -157,6 +158,80 @@ class JobRuntimeApiTests(unittest.IsolatedAsyncioTestCase):
 
                 missing = await client.get("/api/runs/not-found")
                 self.assertEqual(missing.status_code, 404)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_artifact_file_api_serves_only_product_owned_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            artifact_root = tmp / "artifacts"
+            product_file = artifact_root / "run-artifact" / "report.txt"
+            product_file.parent.mkdir(parents=True)
+            product_file.write_text("artifact body", encoding="utf-8")
+            (tmp / "secret.txt").write_text("secret", encoding="utf-8")
+            migrate_sqlite(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=None, artifact_root=artifact_root)
+
+            with app.state.session_factory() as session:
+                session.add(Run(id="run-artifact", kind="diagnostic", status="succeeded"))
+                session.add_all(
+                    [
+                        Artifact(
+                            id="artifact-ok",
+                            run_id="run-artifact",
+                            kind="log",
+                            path="run-artifact/report.txt",
+                            content_type="text/plain",
+                            metadata_json={"label": "report"},
+                        ),
+                        Artifact(
+                            id="artifact-legacy",
+                            run_id="run-artifact",
+                            kind="chart",
+                            path="data/kline/2026-05-27/000001_day.png",
+                            content_type="image/png",
+                        ),
+                        Artifact(
+                            id="artifact-escape",
+                            run_id="run-artifact",
+                            kind="log",
+                            path="../secret.txt",
+                            content_type="text/plain",
+                        ),
+                        Artifact(
+                            id="artifact-missing-file",
+                            run_id="run-artifact",
+                            kind="log",
+                            path="run-artifact/missing.txt",
+                        ),
+                    ]
+                )
+                session.commit()
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                served = await client.get("/api/artifacts/artifact-ok")
+                self.assertEqual(served.status_code, 200)
+                self.assertTrue(served.headers["content-type"].startswith("text/plain"))
+                self.assertEqual(served.text, "artifact body")
+
+                artifacts = await client.get("/api/runs/run-artifact/artifacts")
+                self.assertEqual(artifacts.status_code, 200)
+                self.assertEqual(len(artifacts.json()["artifacts"]), 4)
+
+                legacy = await client.get("/api/artifacts/artifact-legacy")
+                self.assertEqual(legacy.status_code, 409)
+
+                escaped = await client.get("/api/artifacts/artifact-escape")
+                self.assertEqual(escaped.status_code, 403)
+
+                missing_file = await client.get("/api/artifacts/artifact-missing-file")
+                self.assertEqual(missing_file.status_code, 404)
+
+                missing_artifact = await client.get("/api/artifacts/not-found")
+                self.assertEqual(missing_artifact.status_code, 404)
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

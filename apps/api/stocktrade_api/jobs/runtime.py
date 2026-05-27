@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..storage.run_repository import RunRepository
+from ..storage.run_repository import TERMINAL_STATUSES, RunRepository
 from ..storage.sqlite_models import CandidateBatch, Run
 
 if TYPE_CHECKING:
@@ -58,6 +58,9 @@ class JobRuntime:
         return self.repository.request_cancellation(run_id)
 
     def mark_cancelled(self, run_id: str) -> Run:
+        run = self.repository.get_run(run_id)
+        if run.status in TERMINAL_STATUSES:
+            return run
         self.repository.append_event(run_id, level="warning", message="Diagnostic job cancelled")
         return self.repository.transition_run(
             run_id,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -28,6 +30,8 @@ from .sqlite_models import (
     ReviewRun,
     Run,
 )
+from .artifact_service import DEFAULT_ARTIFACT_ROOT
+from .sqlite import ROOT
 
 
 def utc_now() -> datetime:
@@ -73,9 +77,11 @@ class MigrationRepository:
         session_factory: sessionmaker[Session],
         *,
         analytics_writer: AnalyticsFactWriter | None = None,
+        artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
     ):
         self.session_factory = session_factory
         self.analytics_writer = analytics_writer
+        self.artifact_root = _resolve_artifact_root(artifact_root)
 
     def record_dry_run(self, report: LegacyImportDryRunReport, *, migration_id: str | None = None) -> MigrationRun:
         run_id = migration_id or uuid4().hex
@@ -469,25 +475,41 @@ class MigrationRepository:
         if not chart_paths:
             return {}
 
-        artifacts = {
-            artifact.path: artifact
-            for artifact in session.execute(select(Artifact).where(Artifact.path.in_(chart_paths))).scalars()
-        }
+        artifacts: dict[str, Artifact] = {}
         for chart_path in chart_paths:
-            if chart_path in artifacts:
-                continue
             rows_for_path = [row for row in plan.rows if row.chart == chart_path]
+            artifact_path = self._artifact_path_for_legacy_chart(run_id=run_id, plan=plan, chart_path=chart_path)
+            artifact = session.execute(select(Artifact).where(Artifact.path == artifact_path)).scalar_one_or_none()
+            if artifact is not None:
+                artifacts[chart_path] = artifact
+                continue
             artifact = Artifact(
                 id=uuid4().hex,
                 run_id=run_id,
                 kind="chart",
-                path=chart_path,
+                path=artifact_path,
                 content_type=_legacy_chart_content_type(chart_path),
-                metadata_json=_legacy_chart_metadata(plan, chart_path, rows_for_path),
+                metadata_json=_legacy_chart_metadata(
+                    plan,
+                    chart_path,
+                    rows_for_path,
+                    product_artifact_path=artifact_path if artifact_path != chart_path else None,
+                ),
             )
             session.add(artifact)
             artifacts[chart_path] = artifact
         return artifacts
+
+    def _artifact_path_for_legacy_chart(self, *, run_id: str, plan: LegacyArchiveImportPlan, chart_path: str) -> str:
+        source_path = _resolve_legacy_chart_source(plan.data_root, chart_path)
+        if source_path is None:
+            return chart_path
+
+        target_relative = Path(run_id) / "charts" / _safe_artifact_subpath(chart_path)
+        target_path = self.artifact_root / target_relative
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        return target_relative.as_posix()
 
     def get_migration_run(self, migration_id: str) -> MigrationRun:
         with self.session_factory() as session:
@@ -548,6 +570,8 @@ def _legacy_chart_metadata(
     plan: LegacyArchiveImportPlan,
     chart_path: str,
     rows: list[Any],
+    *,
+    product_artifact_path: str | None = None,
 ) -> dict[str, Any]:
     review_keys = [row.review_key for row in rows]
     codes = sorted({row.code for row in rows})
@@ -561,6 +585,8 @@ def _legacy_chart_metadata(
         "codes": codes,
         "strategies": strategies,
     }
+    if product_artifact_path is not None:
+        metadata["product_artifact_path"] = product_artifact_path
     if len(review_keys) == 1:
         metadata["review_key"] = review_keys[0]
     if len(codes) == 1:
@@ -568,3 +594,36 @@ def _legacy_chart_metadata(
     if len(strategies) == 1:
         metadata["strategy"] = strategies[0]
     return metadata
+
+
+def _resolve_legacy_chart_source(data_root: str, chart_path: str) -> Path | None:
+    raw_path = Path(chart_path).expanduser()
+    data_root_path = Path(data_root).expanduser()
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.append(data_root_path / raw_path)
+        if raw_path.parts and raw_path.parts[0] == data_root_path.name:
+            candidates.append(data_root_path.parent / raw_path)
+        candidates.append(ROOT / raw_path)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _safe_artifact_subpath(path: str) -> Path:
+    raw_parts = Path(path).parts
+    safe_parts = [part for part in raw_parts if part not in {"", ".", ".."} and part != Path(path).anchor]
+    if not safe_parts:
+        safe_parts = ["chart"]
+    return Path(*safe_parts)
+
+
+def _resolve_artifact_root(path: str | Path) -> Path:
+    root = Path(path).expanduser()
+    if not root.is_absolute():
+        root = ROOT / root
+    return root.resolve(strict=False)

@@ -51,7 +51,11 @@ def create_app(
     app.state.archive_repository = ArchiveRepository(session_factory)
     analytics_writer = DuckDBAnalyticsWriter(duckdb_path) if duckdb_path is not None else None
     app.state.analytics_writer = analytics_writer
-    app.state.migration_repository = MigrationRepository(session_factory, analytics_writer=analytics_writer)
+    app.state.migration_repository = MigrationRepository(
+        session_factory,
+        analytics_writer=analytics_writer,
+        artifact_root=artifact_root,
+    )
 
     def dispose_sqlite() -> None:
         if sqlite_engine is not None:

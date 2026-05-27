@@ -43,7 +43,11 @@ try:
         compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
         compute_max_volume_not_bearish as _product_compute_max_volume_not_bearish,
+        compute_recent_b1_prior_j as _product_compute_recent_b1_prior_j,
+        compute_recent_b1_prior_lag as _product_compute_recent_b1_prior_lag,
+        compute_strict_yang_bao_yin as _product_compute_strict_yang_bao_yin,
         compute_upper_shadow_ratio as _product_compute_upper_shadow_ratio,
+        compute_volume_ratio as _product_compute_volume_ratio,
         compute_weekly_close as _product_compute_weekly_close,
         compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
         compute_zx_lines as _product_compute_zx_lines,
@@ -53,7 +57,11 @@ except ImportError:
     _product_compute_daily_return = None
     _product_compute_kdj = None
     _product_compute_max_volume_not_bearish = None
+    _product_compute_recent_b1_prior_j = None
+    _product_compute_recent_b1_prior_lag = None
+    _product_compute_strict_yang_bao_yin = None
     _product_compute_upper_shadow_ratio = None
+    _product_compute_volume_ratio = None
     _product_compute_weekly_close = None
     _product_compute_weekly_ma_bull = None
     _product_compute_zx_lines = None
@@ -908,6 +916,9 @@ class VolumeConfirmFilter:
     min_yang_bao_yin_body_pct: float = 0.003
 
     def volume_ratio_arr(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_volume_ratio is not None:
+            return _product_compute_volume_ratio(df)
+
         volume = df["volume"].to_numpy(dtype=float)
         prev_volume = np.empty_like(volume)
         prev_volume[0] = np.nan
@@ -917,6 +928,13 @@ class VolumeConfirmFilter:
         return out
 
     def strict_yang_bao_yin_arr(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_strict_yang_bao_yin is not None:
+            return _product_compute_strict_yang_bao_yin(
+                df,
+                min_today_body_pct=self.min_today_body_pct,
+                min_yang_bao_yin_body_pct=self.min_yang_bao_yin_body_pct,
+            )
+
         open_ = df["open"].to_numpy(dtype=float)
         close = df["close"].to_numpy(dtype=float)
 
@@ -967,6 +985,9 @@ class RecentB1PickFilter:
     lookback: int = 2
 
     def prior_lag_arr(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_recent_b1_prior_lag is not None:
+            return _product_compute_recent_b1_prior_lag(df, lookback=self.lookback)
+
         if "_b1_pick" not in df.columns:
             raise KeyError("RecentB1PickFilter requires precomputed '_b1_pick'.")
         b1_pick = df["_b1_pick"].to_numpy(dtype=bool)
@@ -979,6 +1000,9 @@ class RecentB1PickFilter:
         return out
 
     def prior_j_arr(self, df: pd.DataFrame, prior_lag: np.ndarray) -> np.ndarray:
+        if _product_compute_recent_b1_prior_j is not None:
+            return _product_compute_recent_b1_prior_j(df, prior_lag, lookback=self.lookback)
+
         if "J" not in df.columns:
             raise KeyError("RecentB1PickFilter requires precomputed 'J'.")
         j_vals = df["J"].to_numpy(dtype=float)

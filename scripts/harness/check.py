@@ -37,6 +37,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r5-ui-browser-smoke.md"),
     Path("docs/agent-harness/r6-storage-cutover-plan.md"),
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
+    Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
 ]
@@ -135,6 +136,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh product-refactor-readiness",
             "scripts/harness/check.sh refactor-readiness",
             "scripts/harness/check.sh r7-retirement-plan",
+            "scripts/harness/check.sh r7-resource-envelope",
             "Maintenance Rule",
         ],
     )
@@ -344,7 +346,13 @@ def check_refactor_readiness() -> None:
 
 def python_files() -> list[str]:
     roots = ["agent", "apps", "dashboard", "paper_trading", "pipeline", "src", "tests"]
-    files: list[str] = ["run_all.py", "scripts/harness/check.py"]
+    files: list[str] = [
+        "run_all.py",
+        "scripts/harness/check.py",
+        "scripts/harness/resource_envelope.py",
+        "scripts/harness/seed_ui_smoke.py",
+        "scripts/harness/ui_smoke_app.py",
+    ]
     for root in roots:
         root_path = ROOT / root
         if root_path.exists():
@@ -358,7 +366,7 @@ def python_files() -> list[str]:
 
 def run_command(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
     printable = " ".join(cmd)
-    print(f"[run] {printable}")
+    print(f"[run] {printable}", flush=True)
     result = subprocess.run(cmd, cwd=ROOT, env=env)
     if result.returncode != 0:
         raise HarnessError(f"command failed ({result.returncode}): {printable}")
@@ -468,6 +476,7 @@ def check_r7_retirement_plan() -> None:
             "R7 Sequence",
             "Runtime hardening",
             "Resource envelope",
+            "r7-resource-envelope",
             "Final browser proof",
             "Legacy write freeze",
             "Retirement PRs",
@@ -476,6 +485,27 @@ def check_r7_retirement_plan() -> None:
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def check_r7_resource_envelope() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-resource-envelope.md",
+        [
+            "Managing issue: #152",
+            "R7 Resource Envelope Evidence",
+            "python3 scripts/harness/resource_envelope.py",
+            "scripts/harness/check.sh r7-resource-envelope",
+            "credential-free",
+            "preselect -> chart export -> provider review -> archive",
+            "SQLite growth",
+            "DuckDB growth",
+            "Artifact growth",
+            "Simulated trading remains out of scope",
+            "Conservative Guardrails",
+        ],
+    )
+    run_command([sys.executable, "scripts/harness/resource_envelope.py"])
+    print("[r7-resource-envelope] ok")
 
 
 def check_quick() -> None:
@@ -498,6 +528,7 @@ def parse_args() -> argparse.Namespace:
             "ui-smoke-fixture",
             "storage-cutover-plan",
             "r7-retirement-plan",
+            "r7-resource-envelope",
             "quick",
         ],
         help="Validation gate to run",
@@ -524,6 +555,8 @@ def main() -> int:
             check_storage_cutover_plan()
         elif args.gate == "r7-retirement-plan":
             check_r7_retirement_plan()
+        elif args.gate == "r7-resource-envelope":
+            check_r7_resource_envelope()
         elif args.gate == "quick":
             check_quick()
         else:

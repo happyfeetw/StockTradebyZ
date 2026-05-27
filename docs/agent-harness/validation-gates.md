@@ -15,6 +15,7 @@ requires it.
 | ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
 | storage-cutover-plan | `scripts/harness/check.sh storage-cutover-plan` | R6 source-of-truth and rollback planning |
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
+| r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -142,6 +143,28 @@ scripts/harness/check.sh r7-retirement-plan
 Run this before PRs that harden product runtime, collect resource evidence,
 freeze legacy writes, or retire compatibility entrypoints.
 
+## R7 Resource Envelope Gate
+
+Checks:
+
+- `docs/agent-harness/r7-resource-envelope.md` documents the reproducible
+  command, conservative guardrails, and latest credential-free evidence;
+- `scripts/harness/resource_envelope.py` runs the product-owned API workflow
+  from temporary fixture state;
+- the workflow covers preselect, chart export, provider review, archive,
+  SQLite growth, DuckDB growth, artifact growth, and memory evidence;
+- simulated trading and live Tushare/Gemini calls remain out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-resource-envelope
+```
+
+Run this before PRs that claim resource envelope evidence, materially change
+product workflow storage writes, or prepare final R7 browser/legacy retirement
+proof.
+
 ## Runtime Gates
 
 Runtime gates are intentionally not part of `quick` because they can require
@@ -174,6 +197,7 @@ that existing `skip_existing` output cannot satisfy the validation.
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
 | storage cutover plan | storage-cutover-plan + product-refactor-readiness | quick before PR |
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
+| R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |
 
@@ -188,4 +212,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | performance/resource evidence, final browser proof, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-resource-envelope when runtime/storage changes, final browser proof, rollback, and final parity |

@@ -408,6 +408,25 @@ def compute_zxdq_ratio_mask(
     )
 
 
+def compute_zx_condition_mask(
+    frame: pd.DataFrame,
+    zxdq_values: np.ndarray | pd.Series,
+    zxdkx_values: np.ndarray | pd.Series,
+    *,
+    require_close_gt_long: bool = True,
+    require_short_gt_long: bool = True,
+) -> np.ndarray:
+    zxdq = np.asarray(zxdq_values, dtype=float)
+    zxdkx = np.asarray(zxdkx_values, dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    mask = np.isfinite(zxdq) & np.isfinite(zxdkx)
+    if require_close_gt_long:
+        mask &= close > zxdkx
+    if require_short_gt_long:
+        mask &= zxdq > zxdkx
+    return mask
+
+
 def compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
     close = (
         frame["close"].astype(float)

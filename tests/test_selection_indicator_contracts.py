@@ -30,6 +30,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     compute_volume_ratio,
     compute_weekly_close,
     compute_weekly_ma_bull,
+    compute_zx_condition_mask,
     compute_zx_lines,
     compute_zxdq_ratio_mask,
 )
@@ -320,6 +321,25 @@ def reference_compute_zxdq_ratio_mask(
         & (zxdq > 0)
         & (close < zxdq * zxdq_ratio)
     )
+
+
+def reference_compute_zx_condition_mask(
+    frame: pd.DataFrame,
+    zxdq_values: np.ndarray | pd.Series,
+    zxdkx_values: np.ndarray | pd.Series,
+    *,
+    require_close_gt_long: bool = True,
+    require_short_gt_long: bool = True,
+) -> np.ndarray:
+    zxdq = np.asarray(zxdq_values, dtype=float)
+    zxdkx = np.asarray(zxdkx_values, dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+    mask = np.isfinite(zxdq) & np.isfinite(zxdkx)
+    if require_close_gt_long:
+        mask &= close > zxdkx
+    if require_short_gt_long:
+        mask &= zxdq > zxdkx
+    return mask
 
 
 def reference_compute_weekly_close(frame: pd.DataFrame) -> pd.Series:
@@ -794,6 +814,70 @@ class SelectionIndicatorContractTests(unittest.TestCase):
             actual = selector_module.ZXDQRatioFilter(zxdq_ratio=0.95).vec_mask(frame)
 
         np.testing.assert_array_equal(actual, np.array([False, True, False]))
+
+    def test_product_zx_condition_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame({"close": [11.0, 9.0, 12.0, 13.0, 14.0]})
+        zxdq = np.array([12.0, 12.0, 9.0, np.nan, 15.0])
+        zxdkx = np.array([10.0, 10.0, 10.0, 10.0, np.nan])
+
+        actual = compute_zx_condition_mask(frame, zxdq, zxdkx)
+        expected = reference_compute_zx_condition_mask(frame, zxdq, zxdkx)
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([True, False, False, False, False]))
+
+        close_only = compute_zx_condition_mask(
+            frame,
+            zxdq,
+            zxdkx,
+            require_close_gt_long=True,
+            require_short_gt_long=False,
+        )
+        expected_close_only = reference_compute_zx_condition_mask(
+            frame,
+            zxdq,
+            zxdkx,
+            require_close_gt_long=True,
+            require_short_gt_long=False,
+        )
+        np.testing.assert_array_equal(close_only, expected_close_only)
+        np.testing.assert_array_equal(close_only, np.array([True, False, True, False, False]))
+
+    def test_legacy_selector_zx_condition_filter_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "close": [11.0, 9.0, 12.0],
+                "zxdq": [12.0, 8.0, 13.0],
+                "zxdkx": [10.0, 10.0, 10.0],
+            }
+        )
+
+        def fake_product_compute_zx_condition_mask(
+            input_frame: pd.DataFrame,
+            zxdq_values: np.ndarray,
+            zxdkx_values: np.ndarray,
+            *,
+            require_close_gt_long: bool = True,
+            require_short_gt_long: bool = True,
+        ) -> np.ndarray:
+            self.assertIs(input_frame, frame)
+            np.testing.assert_allclose(zxdq_values, np.array([12.0, 8.0, 13.0]))
+            np.testing.assert_allclose(zxdkx_values, np.array([10.0, 10.0, 10.0]))
+            self.assertFalse(require_close_gt_long)
+            self.assertTrue(require_short_gt_long)
+            return np.array([True, False, True])
+
+        with patch.object(
+            selector_module,
+            "_product_compute_zx_condition_mask",
+            fake_product_compute_zx_condition_mask,
+        ):
+            actual = selector_module.ZXConditionFilter(
+                require_close_gt_long=False,
+                require_short_gt_long=True,
+            ).vec_mask(frame)
+
+        np.testing.assert_array_equal(actual, np.array([True, False, True]))
 
     def test_product_weekly_close_matches_reference_formula_for_datetime_index(self) -> None:
         frame = pd.DataFrame(

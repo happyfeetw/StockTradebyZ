@@ -54,6 +54,7 @@ try:
         compute_volume_ratio as _product_compute_volume_ratio,
         compute_weekly_close as _product_compute_weekly_close,
         compute_weekly_ma_bull as _product_compute_weekly_ma_bull,
+        compute_zx_condition_mask as _product_compute_zx_condition_mask,
         compute_zx_lines as _product_compute_zx_lines,
         compute_zxdq_ratio_mask as _product_compute_zxdq_ratio_mask,
     )
@@ -73,6 +74,7 @@ except ImportError:
     _product_compute_volume_ratio = None
     _product_compute_weekly_close = None
     _product_compute_weekly_ma_bull = None
+    _product_compute_zx_condition_mask = None
     _product_compute_zx_lines = None
     _product_compute_zxdq_ratio_mask = None
 
@@ -514,6 +516,15 @@ class ZXConditionFilter:
             )
             zxdq_v  = zs.to_numpy(dtype=float)
             zxdkx_v = zk.to_numpy(dtype=float)
+        if _product_compute_zx_condition_mask is not None:
+            return _product_compute_zx_condition_mask(
+                df,
+                zxdq_v,
+                zxdkx_v,
+                require_close_gt_long=self.require_close_gt_long,
+                require_short_gt_long=self.require_short_gt_long,
+            )
+
         close_v = df["close"].to_numpy(dtype=float)
         mask    = np.isfinite(zxdq_v) & np.isfinite(zxdkx_v)
         if self.require_close_gt_long:

@@ -1691,6 +1691,75 @@ code {
   font-size: 12px;
 }
 
+.evidence-asset-section {
+  margin-top: 18px;
+}
+
+.evidence-asset-panel {
+  margin-top: 10px;
+  display: grid;
+  gap: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 12px;
+}
+
+.evidence-asset-panel.product {
+  border-color: var(--primary-line);
+}
+
+.evidence-asset-panel.legacy {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.evidence-asset-panel.missing {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+}
+
+.evidence-asset-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.evidence-asset-head h3 {
+  margin: 0;
+}
+
+.evidence-asset-head p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.evidence-asset-actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.evidence-asset-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evidence-asset-path {
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 10px;
+  overflow-wrap: anywhere;
+}
+
 .artifact-source-chip {
   min-height: 30px;
   display: inline-flex;
@@ -2036,8 +2105,14 @@ code {
   }
 
   .artifact-row,
-  .artifact-preview-head {
+  .artifact-preview-head,
+  .evidence-asset-head,
+  .evidence-asset-meta {
     grid-template-columns: 1fr;
+  }
+
+  .evidence-asset-actions {
+    grid-column: 1;
   }
 
   .artifact-source-chip {

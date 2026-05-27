@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .sqlite_models import Artifact, Candidate, CandidateBatch, JobEvent, JobStep, Run
@@ -106,6 +107,55 @@ class RunRepository:
             session.commit()
             session.refresh(run)
             return run
+
+    def recover_interrupted_active_runs(self, *, reason: str = "FastAPI startup recovery") -> list[Run]:
+        """Mark runs left active by a prior process as terminal and diagnosable."""
+        try:
+            with self.session_factory() as session:
+                statement = (
+                    select(Run)
+                    .where(Run.status.in_(ACTIVE_STATUSES))
+                    .options(selectinload(Run.steps))
+                    .order_by(Run.created_at, Run.id)
+                )
+                runs = list(session.execute(statement).scalars())
+                now = utc_now()
+                recovered_ids: list[str] = []
+                for run in runs:
+                    previous_status = run.status
+                    target_status = "cancelled" if previous_status == "cancelling" else "failed"
+                    message = f"{reason}: recovered interrupted {run.kind} run from {previous_status}"
+                    recovery = {
+                        "type": "RuntimeRecovery",
+                        "message": message,
+                        "previous_status": previous_status,
+                    }
+                    run.status = target_status
+                    run.finished_at = now
+                    run.summary_json = recovery
+                    for step in run.steps:
+                        if step.status in ACTIVE_STATUSES:
+                            step.status = target_status
+                            step.finished_at = now
+                            step.error_json = recovery
+                    session.add(JobEvent(run_id=run.id, level="warning", message=message))
+                    recovered_ids.append(run.id)
+                session.commit()
+                if not recovered_ids:
+                    return []
+                reloaded = (
+                    select(Run)
+                    .where(Run.id.in_(recovered_ids))
+                    .options(
+                        selectinload(Run.steps),
+                        selectinload(Run.events),
+                        selectinload(Run.artifacts),
+                    )
+                    .order_by(Run.created_at, Run.id)
+                )
+                return list(session.execute(reloaded).scalars())
+        except OperationalError:
+            return []
 
     def add_step(self, run_id: str, *, name: str, status: str = "queued") -> JobStep:
         with self.session_factory() as session:

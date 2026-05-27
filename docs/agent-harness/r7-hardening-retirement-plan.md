@@ -14,7 +14,7 @@ files remain migration inputs and rollback evidence until a PR proves otherwise.
 In scope:
 
 - product runtime hardening for FastAPI job execution, cancellation,
-  concurrency, error recovery, and backup/restore drills;
+  concurrency, runtime recovery, error recovery, and backup/restore drills;
 - final React workstation browser proof across primary research workflows;
 - resource and storage-growth evidence for local runs;
 - legacy write freeze and retirement sequencing for `pipeline/`, `agent/`,
@@ -58,6 +58,9 @@ Out of scope:
    - Add cancellation and recovery tests for long-running or staged jobs.
    - Ensure failed jobs leave enough SQLite events and summaries for UI
      diagnosis.
+   - Use `docs/agent-harness/r7-runtime-recovery.md` and
+     `scripts/harness/check.sh r7-runtime-recovery` as the reproducible
+     recovery/concurrency proof path.
 
 3. Resource envelope.
    - Capture credential-free fixture evidence for API startup, product workflow
@@ -105,6 +108,8 @@ Implementation PRs that harden runtime or retire legacy surfaces must also
 prove the touched path:
 
 - runtime hardening: targeted job lifecycle/cancellation tests plus `quick`;
+- runtime recovery: `scripts/harness/check.sh r7-runtime-recovery`, targeted
+  job lifecycle tests, and `quick`;
 - resource evidence: fixture command output or checked-in report with
   reproducible command, plus `scripts/harness/check.sh r7-resource-envelope`;
 - browser proof: deterministic fixture setup, desktop/mobile screenshots, and

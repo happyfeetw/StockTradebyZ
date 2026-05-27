@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -10,9 +11,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 from stocktrade_api.storage.duckdb import (  # noqa: E402
+    DuckDBAnalyticsWriter,
     DuckDBMigrationError,
     apply_migrations,
     connect_duckdb,
+)
+from stocktrade_api.storage.sqlite_models import (  # noqa: E402
+    ArchiveRow,
+    ArchiveSnapshot,
+    Candidate,
+    CandidateBatch,
+    Review,
+    ReviewRun,
 )
 
 
@@ -109,6 +119,167 @@ print("agent.gemini_cli_review" in sys.modules)
             with connect_duckdb(db_path, read_only=True) as connection:
                 count = connection.execute("SELECT count(*) FROM duckdb_schema_versions").fetchone()[0]
                 self.assertEqual(count, 0)
+
+    def test_analytics_writer_materializes_and_replaces_import_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "analytics.duckdb"
+            writer = DuckDBAnalyticsWriter(db_path)
+            batch = CandidateBatch(id="batch-1", run_id="run-1", pick_date="2026-05-26", source="legacy:candidates")
+            writer.record_candidate_import(
+                run_id="run-1",
+                batch=batch,
+                candidates=[
+                    Candidate(
+                        id=1,
+                        batch_id="batch-1",
+                        code="000010",
+                        strategy="b2",
+                        pick_date="2026-05-26",
+                        close=10.5,
+                        turnover_n=105.0,
+                        extra_json={"signal": "breakout"},
+                    )
+                ],
+            )
+            writer.record_candidate_import(
+                run_id="run-1",
+                batch=batch,
+                candidates=[
+                    Candidate(
+                        id=1,
+                        batch_id="batch-1",
+                        code="000010",
+                        strategy="b2",
+                        pick_date="2026-05-26",
+                        close=10.8,
+                        turnover_n=108.0,
+                        extra_json={"signal": "updated"},
+                    )
+                ],
+            )
+            review_run = ReviewRun(id="review-run-1", run_id="run-2", pick_date="2026-05-26", provider="gemini-cli")
+            writer.record_review_import(
+                run_id="run-2",
+                review_run=review_run,
+                reviews=[
+                    Review(
+                        id=2,
+                        review_run_id="review-run-1",
+                        code="000010",
+                        strategy="b2",
+                        review_key="000010_b2",
+                        verdict="PASS",
+                        total_score=4.7,
+                        payload_json={"comment": "clean breakout"},
+                    )
+                ],
+            )
+            writer.record_review_import(
+                run_id="run-2",
+                review_run=review_run,
+                reviews=[
+                    Review(
+                        id=2,
+                        review_run_id="review-run-1",
+                        code="000010",
+                        strategy="b2",
+                        review_key="000010_b2",
+                        verdict="PASS",
+                        total_score=4.9,
+                        payload_json={"comment": "updated review"},
+                    )
+                ],
+            )
+            snapshot = ArchiveSnapshot(id="snapshot-1", run_id="run-3", pick_date="2026-05-26")
+            writer.record_archive_import(
+                run_id="run-3",
+                snapshot=snapshot,
+                rows=[
+                    ArchiveRow(
+                        id=3,
+                        snapshot_id="snapshot-1",
+                        pick_date="2026-05-26",
+                        run_id="run-3",
+                        code="000010",
+                        strategy="b2",
+                        review_key="000010_b2",
+                        status="recommended",
+                        rank=1,
+                        close=10.5,
+                        extra_json={"signal": "breakout"},
+                        review_payload_json={"comment": "clean breakout"},
+                        chart_path="data/kline/2026-05-26/000010_day.png",
+                    ),
+                    ArchiveRow(
+                        id=4,
+                        snapshot_id="snapshot-1",
+                        pick_date="2026-05-26",
+                        run_id="run-3",
+                        code="000011",
+                        strategy="brick",
+                        review_key="000011_brick",
+                        status="reviewed",
+                    ),
+                ],
+            )
+            writer.record_archive_import(
+                run_id="run-3",
+                snapshot=snapshot,
+                rows=[
+                    ArchiveRow(
+                        id=3,
+                        snapshot_id="snapshot-1",
+                        pick_date="2026-05-26",
+                        run_id="run-3",
+                        code="000010",
+                        strategy="b2",
+                        review_key="000010_b2",
+                        status="recommended",
+                        rank=1,
+                        close=10.8,
+                        extra_json={"signal": "updated"},
+                        review_payload_json={"comment": "updated review"},
+                        chart_path="data/kline/2026-05-26/000010_day.png",
+                    ),
+                ],
+            )
+
+            with connect_duckdb(db_path, read_only=True) as connection:
+                candidate = connection.execute(
+                    "SELECT close, extra_json FROM candidate_facts WHERE batch_id = 'batch-1'"
+                ).fetchall()
+                self.assertEqual(len(candidate), 1)
+                self.assertEqual(candidate[0][0], 10.8)
+                self.assertEqual(json.loads(candidate[0][1]), {"signal": "updated"})
+
+                review = connection.execute(
+                    "SELECT review_id, total_score, payload_json FROM review_facts WHERE review_run_id = 'review-run-1'"
+                ).fetchone()
+                self.assertEqual(review[:2], (2, 4.9))
+                self.assertEqual(json.loads(review[2])["comment"], "updated review")
+
+                archive_count = connection.execute(
+                    "SELECT count(*) FROM archive_facts WHERE pick_date = DATE '2026-05-26' AND run_id = 'run-3'"
+                ).fetchone()[0]
+                self.assertEqual(archive_count, 1)
+                payload = connection.execute(
+                    """
+                    SELECT payload_json
+                    FROM archive_facts
+                    WHERE pick_date = DATE '2026-05-26' AND run_id = 'run-3' AND code = '000010'
+                    """
+                ).fetchone()[0]
+                self.assertEqual(json.loads(payload)["archive_row_id"], 3)
+
+                metrics = connection.execute(
+                    """
+                    SELECT strategy, total, reviewed, recommended, unreviewed
+                    FROM strategy_run_metrics
+                    WHERE pick_date = DATE '2026-05-26' AND run_id = 'run-3'
+                    ORDER BY strategy
+                    """
+                ).fetchall()
+                self.assertEqual(metrics, [("b2", 1, 0, 1, 0)])
 
 
 if __name__ == "__main__":

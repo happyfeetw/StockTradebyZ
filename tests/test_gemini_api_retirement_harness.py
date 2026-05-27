@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -20,6 +22,31 @@ class GeminiApiRetirementHarnessTests(unittest.TestCase):
         self.assertIn("LEGACY_GEMINI_API_REVIEW_RETIRED_NOTICE", text)
         self.assertIn("POST /api/runs/review/provider", text)
         self.assertIn("return 2", text)
+
+    def test_gemini_api_script_exits_without_sdk_or_config_by_default(self) -> None:
+        env = os.environ.copy()
+        env.pop("STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW", None)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "agent/gemini_review.py",
+                "--config",
+                "does-not-exist.yaml",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        combined_output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("R7 Gemini API reviewer retirement", combined_output)
+        self.assertIn("POST /api/runs/review/provider", combined_output)
+        self.assertIn("STOCKTRADE_ALLOW_LEGACY_GEMINI_API_REVIEW=1", combined_output)
+        self.assertNotIn("ImportError", combined_output)
+        self.assertNotIn("找不到配置文件", combined_output)
 
     def test_gemini_api_rollback_flag_is_explicit_and_suppressed_by_default(self) -> None:
         from legacy_compat import LEGACY_GEMINI_API_REVIEW_ENV, legacy_gemini_api_review_enabled

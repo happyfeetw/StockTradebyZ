@@ -18,6 +18,7 @@ gemini_review.py
     ./data/review/{pick_date}/{code}_{strategy}.json   每个候选的评分 JSON
     ./data/review/{pick_date}/suggestion.json  汇总推荐建议
 """
+from __future__ import annotations
 
 import argparse
 import os
@@ -25,8 +26,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from google import genai
-from google.genai import types
 import yaml
 
 from base_reviewer import BaseReviewer
@@ -59,6 +58,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "classic_pattern_enabled": True,
 }
 
+genai: Any = None
+types: Any = None
+
+
+def _load_gemini_sdk() -> None:
+    """Load the Gemini SDK only when the rollback-only legacy reviewer runs."""
+    global genai, types
+    if genai is not None and types is not None:
+        return
+
+    from google import genai as _genai
+    from google.genai import types as _types
+
+    genai = _genai
+    types = _types
+
 
 def _resolve_cfg_path(path_like: str | Path, base_dir: Path = _ROOT) -> Path:
     p = Path(path_like)
@@ -87,6 +102,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
 class GeminiReviewer(BaseReviewer):
     def __init__(self, config):
         super().__init__(config)
+        _load_gemini_sdk()
         
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:

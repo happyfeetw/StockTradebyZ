@@ -15,10 +15,15 @@ requires it.
 | ui-smoke-fixture | `scripts/harness/check.sh ui-smoke-fixture` | R5 React workstation browser-review fixture |
 | storage-cutover-plan | `scripts/harness/check.sh storage-cutover-plan` | R6 source-of-truth and rollback planning |
 | r7-retirement-plan | `scripts/harness/check.sh r7-retirement-plan` | R7 hardening, resource, and legacy retirement planning |
+| r7-dashboard-retirement | `scripts/harness/check.sh r7-dashboard-retirement` | R7 default retirement guard for the legacy single-stock Streamlit dashboard |
 | r7-browser-proof | `scripts/harness/check.sh r7-browser-proof` | R7 desktop/mobile React workstation proof and chart artifact inspection |
 | r7-gemini-api-review-retirement | `scripts/harness/check.sh r7-gemini-api-review-retirement` | R7 default retirement guard for the legacy Gemini API reviewer |
 | r7-legacy-write-freeze | `scripts/harness/check.sh r7-legacy-write-freeze` | R7 compatibility-only notices and product no-read guard for legacy generated files |
+| r7-chart-export-retirement | `scripts/harness/check.sh r7-chart-export-retirement` | R7 legacy chart exporter default retirement and rollback override |
+| r7-product-launcher | `scripts/harness/check.sh r7-product-launcher` | R7 default React/FastAPI local launcher and start_workbench replacement |
+| r7-runtime-terminal-integrity | `scripts/harness/check.sh r7-runtime-terminal-integrity` | R7 run/step terminal-state immutability for product job diagnostics |
 | r7-resource-envelope | `scripts/harness/check.sh r7-resource-envelope` | R7 credential-free runtime, memory, storage-growth, and artifact-growth evidence |
+| r7-runtime-recovery | `scripts/harness/check.sh r7-runtime-recovery` | R7 FastAPI startup recovery and local product job concurrency semantics |
 | quick | `scripts/harness/check.sh quick` | Default before final response |
 
 ## Docs Gate
@@ -146,6 +151,27 @@ scripts/harness/check.sh r7-retirement-plan
 Run this before PRs that harden product runtime, collect resource evidence,
 freeze legacy writes, or retire compatibility entrypoints.
 
+## R7 Dashboard Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-dashboard-retirement.md` documents the decision,
+  rollback flag, product replacement proof, and non-goals;
+- `dashboard/app.py` stops by default before loading legacy chart components or
+  reading legacy generated files;
+- `STOCKTRADE_ALLOW_LEGACY_DASHBOARD=1` is the only explicit rollback flag;
+- the retirement does not change selection, review, archive, storage, or
+  simulated trading behavior.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-dashboard-retirement
+```
+
+Run this before PRs that disable or remove the legacy single-stock Streamlit
+dashboard surface.
+
 ## R7 Browser Proof Gate
 
 Checks:
@@ -213,6 +239,68 @@ scripts/harness/check.sh r7-legacy-write-freeze
 Run this before PRs that freeze legacy writes, add new product storage paths,
 or start surface-specific retirement.
 
+## R7 Chart Export Retirement Gate
+
+Checks:
+
+- `docs/agent-harness/r7-chart-export-retirement.md` documents the retirement
+  decision, product replacement proof, rollback override, and validation;
+- `dashboard/export_kline_charts.py` exits before reading legacy candidate files
+  unless `STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1` is set;
+- the default exit explains `R7 legacy retirement` and `POST
+  /api/runs/chart-export`;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-chart-export-retirement
+```
+
+Run this before PRs that disable or remove the legacy chart export writer.
+
+## R7 Product Launcher Gate
+
+Checks:
+
+- `start_product` exists and is executable;
+- the launcher starts `stocktrade_api.main:app` and the React/Vite workstation
+  with local host/port defaults;
+- `start_workbench` points users to `./start_product` for supported
+  React/FastAPI workflows;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-product-launcher
+```
+
+Run this before PRs that change local product startup, replacement launch docs,
+or `start_workbench` retirement.
+
+## R7 Runtime Terminal Integrity Gate
+
+Checks:
+
+- `docs/agent-harness/r7-runtime-terminal-integrity.md` documents the terminal
+  state rule and validation command;
+- `RunRepository.transition_run()` rejects attempts to overwrite a terminal
+  run status or summary;
+- `RunRepository.transition_step()` rejects attempts to overwrite a terminal
+  step status or error payload;
+- late cancellation preserves the existing terminal run state;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-runtime-terminal-integrity
+```
+
+Run this before PRs that change product runtime status transitions,
+cancellation, recovery, or error-diagnostics behavior.
+
 ## R7 Resource Envelope Gate
 
 Checks:
@@ -234,6 +322,31 @@ scripts/harness/check.sh r7-resource-envelope
 Run this before PRs that claim resource envelope evidence, materially change
 product workflow storage writes, or prepare final R7 browser/legacy retirement
 proof.
+
+## R7 Runtime Recovery Gate
+
+Checks:
+
+- `docs/agent-harness/r7-runtime-recovery.md` documents FastAPI startup
+  recovery, local concurrency rules, unsupported multi-process writes, and
+  rollback;
+- `JobRuntime` exposes recovery and serializes product workflow jobs with an
+  in-process workflow lock;
+- `RunRepository` can recover interrupted `queued`, `running`, and `cancelling`
+  runs into terminal states with `RuntimeRecovery` diagnostics;
+- targeted job runtime tests cover startup recovery, serialized workflow calls,
+  and late-cancellation terminal protection;
+- simulated trading remains out of scope.
+
+Expected command:
+
+```bash
+scripts/harness/check.sh r7-runtime-recovery
+```
+
+Run this before PRs that change FastAPI job lifecycle behavior, startup
+recovery, local concurrency semantics, cancellation behavior, or final runtime
+hardening evidence.
 
 ## Runtime Gates
 
@@ -267,10 +380,15 @@ that existing `skip_existing` output cannot satisfy the validation.
 | storage migration | docs + contracts + python | import/export fixture and rollback check |
 | storage cutover plan | storage-cutover-plan + product-refactor-readiness | quick before PR |
 | R7 planning | r7-retirement-plan + product-refactor-readiness | quick before PR |
+| R7 dashboard retirement | r7-dashboard-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 browser proof | r7-browser-proof + web build/lint | screenshots, console/API notes, no-overflow matrix |
 | R7 Gemini API reviewer retirement | r7-gemini-api-review-retirement + r7-retirement-plan | targeted harness test + quick before PR |
 | R7 legacy write freeze | r7-legacy-write-freeze + r7-retirement-plan | quick before PR |
+| R7 chart export retirement | r7-chart-export-retirement + r7-retirement-plan | quick before PR |
+| R7 product launcher | r7-product-launcher + r7-retirement-plan | bash syntax + targeted harness test + quick before PR |
+| R7 runtime terminal integrity | r7-runtime-terminal-integrity + r7-retirement-plan | quick before PR |
 | R7 resource evidence | r7-resource-envelope + r7-retirement-plan | quick before PR |
+| R7 runtime recovery | r7-runtime-recovery + r7-retirement-plan | targeted job lifecycle tests + quick before PR |
 | major product refactor | product-refactor-readiness + quick | phase-specific fixture, migration proof, rollback check |
 | R5 UI browser review | ui-smoke-fixture + web build/lint | browser screenshots and no-overflow notes |
 
@@ -285,4 +403,4 @@ that existing `skip_existing` output cannot satisfy the validation.
 | R4 backend runtime/API | python | API contract and job lifecycle tests |
 | R5 frontend UI/UX | ui-smoke-fixture + python | fixture UI smoke and screenshot/browser notes |
 | R6 storage cutover | storage-cutover-plan + product-refactor-readiness + quick | migration fixture and rollback drill |
-| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |
+| R7 hardening/retirement | r7-retirement-plan + product-refactor-readiness + quick | r7-gemini-api-review-retirement for Gemini API reviewer retirement, r7-dashboard-retirement for dashboard surface retirement, r7-chart-export-retirement for legacy chart export retirement, r7-product-launcher for local launch changes, r7-runtime-terminal-integrity and r7-runtime-recovery for job lifecycle changes, r7-resource-envelope when runtime/storage changes, r7-browser-proof for UI changes, r7-legacy-write-freeze before retirement, rollback, and final parity |

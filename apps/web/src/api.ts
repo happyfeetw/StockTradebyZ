@@ -141,6 +141,15 @@ export interface CandidateBatch {
   created_at: string
 }
 
+export interface CandidateBatchSummary extends CandidateBatch {
+  candidate_count: number
+  review_run_count: number
+  latest_review_run_id: string | null
+  latest_reviewed_count: number
+  latest_recommended_count: number
+  archive_snapshot_count: number
+}
+
 export interface Candidate {
   id: number
   batch_id: string
@@ -165,11 +174,28 @@ export interface CandidateDetailResponse {
   candidate: Candidate
 }
 
+export interface CandidateBatchListResponse {
+  batches: CandidateBatchSummary[]
+  total: number
+}
+
+export interface CandidateBatchDetailResponse {
+  batch: CandidateBatchSummary
+  candidates: Candidate[]
+  total: number
+}
+
 export interface CandidateFilters {
+  batch_id?: string
   pick_date?: string
   run_id?: string
   strategy?: string
   code?: string
+}
+
+export interface CandidateBatchFilters {
+  pick_date?: string
+  run_id?: string
 }
 
 export type RecommendationStatus = 'all' | 'recommended' | 'reviewed'
@@ -490,6 +516,21 @@ export function listCandidates(filters: CandidateFilters = {}): Promise<Candidat
   }
   const query = params.toString()
   return request<CandidateListResponse>(`/api/candidates${query ? `?${query}` : ''}`)
+}
+
+export function listCandidateBatches(filters: CandidateBatchFilters = {}): Promise<CandidateBatchListResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value?.trim()) {
+      params.set(key, value.trim())
+    }
+  }
+  const query = params.toString()
+  return request<CandidateBatchListResponse>(`/api/candidate-batches${query ? `?${query}` : ''}`)
+}
+
+export function getCandidateBatch(batchId: string): Promise<CandidateBatchDetailResponse> {
+  return request<CandidateBatchDetailResponse>(`/api/candidate-batches/${encodeURIComponent(batchId)}`)
 }
 
 export function getCandidate(candidateId: number): Promise<CandidateDetailResponse> {

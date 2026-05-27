@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
@@ -27,6 +27,7 @@ import './App.css'
 import {
   artifactFileUrl,
   cancelRun,
+  createArchiveRun,
   createDiagnosticRun,
   createPreselectRun,
   dryRunLegacyImport,
@@ -40,6 +41,7 @@ import {
   importLegacyCandidateBatch,
   importLegacyHistorySnapshot,
   importLegacyReviewRun,
+  listCandidateBatches,
   listArchiveRows,
   listArchiveSnapshots,
   listCandidates,
@@ -52,6 +54,7 @@ import {
   type ArchiveStatus,
   type Artifact,
   type Candidate,
+  type CandidateBatchSummary,
   type CandidateFilters,
   type JobEvent,
   type LegacyImportIssue,
@@ -131,15 +134,12 @@ function App() {
 
 function CandidatesView() {
   const queryClient = useQueryClient()
-  const [filters, setFilters] = useState<Required<CandidateFilters>>({
-    pick_date: '',
-    run_id: '',
-    strategy: '',
-    code: '',
-  })
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = candidateFiltersFromParams(searchParams)
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null)
 
   const normalizedFilters = {
+    batch_id: filters.batch_id.trim(),
     pick_date: filters.pick_date.trim(),
     run_id: filters.run_id.trim(),
     strategy: filters.strategy.trim(),
@@ -150,7 +150,18 @@ function CandidatesView() {
     queryKey: ['candidates', normalizedFilters],
     queryFn: () => listCandidates(normalizedFilters),
   })
+  const candidateBatchesQuery = useQuery({
+    queryKey: ['candidate-batches', normalizedFilters.pick_date, normalizedFilters.run_id],
+    queryFn: () =>
+      listCandidateBatches({
+        pick_date: normalizedFilters.pick_date,
+        run_id: normalizedFilters.run_id,
+      }),
+  })
   const candidates = candidatesQuery.data?.candidates ?? []
+  const candidateBatches = candidateBatchesQuery.data?.batches ?? []
+  const activeBatchId = normalizedFilters.batch_id
+  const activeBatch = candidateBatches.find((batch) => batch.id === activeBatchId) ?? null
   const selectedStillVisible = selectedCandidateId !== null && candidates.some((candidate) => candidate.id === selectedCandidateId)
   const activeCandidateId = selectedStillVisible ? selectedCandidateId : candidates[0]?.id
 
@@ -159,15 +170,46 @@ function CandidatesView() {
     queryFn: () => getCandidate(activeCandidateId as number),
     enabled: typeof activeCandidateId === 'number',
   })
+  const archiveBatchMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) => {
+      if (!batch.latest_review_run_id) {
+        throw new Error('Selected batch has no review run to archive')
+      }
+      return createArchiveRun({
+        candidate_batch_id: batch.id,
+        review_run_id: batch.latest_review_run_id,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
+    },
+  })
 
   const hasFilters = Object.values(filters).some((value) => value.trim())
 
   function updateFilter(key: keyof CandidateFilters, value: string) {
-    setFilters((current) => ({ ...current, [key]: value }))
+    const nextFilters = { ...filters, [key]: value }
+    setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
+    setSelectedCandidateId(null)
   }
 
   function resetFilters() {
-    setFilters({ pick_date: '', run_id: '', strategy: '', code: '' })
+    const nextFilters = emptyCandidateFilters()
+    setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
+    setSelectedCandidateId(null)
+  }
+
+  function selectBatch(batch: CandidateBatchSummary) {
+    const nextFilters = {
+      ...filters,
+      batch_id: batch.id,
+      pick_date: '',
+      run_id: '',
+    }
+    setSearchParams(candidateFiltersToParams(nextFilters), { replace: true })
     setSelectedCandidateId(null)
   }
 
@@ -184,6 +226,7 @@ function CandidatesView() {
           aria-label="Refresh candidates"
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['candidates'] })
+            queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
             queryClient.invalidateQueries({ queryKey: ['candidate'] })
           }}
         >
@@ -191,7 +234,114 @@ function CandidatesView() {
         </button>
       </header>
 
-      <form className="filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+      <section className="candidate-batch-panel" aria-label="Historical candidate batches">
+        <div className="panel-heading">
+          <div>
+            <h2>Candidate batches</h2>
+            <p>
+              {candidateBatchesQuery.isLoading
+                ? 'Loading historical batches'
+                : `${candidateBatchesQuery.data?.total ?? 0} batches${activeBatch ? `, selected ${activeBatch.pick_date}` : ''}`}
+            </p>
+          </div>
+          <div className="button-row">
+            {activeBatch ? (
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => archiveBatchMutation.mutate(activeBatch)}
+                disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
+              >
+                {archiveBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Archive size={17} aria-hidden="true" />}
+                <span>Archive selected</span>
+              </button>
+            ) : null}
+            {activeBatchId ? (
+              <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
+                <XCircle size={17} aria-hidden="true" />
+                <span>Clear batch</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {candidateBatchesQuery.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(candidateBatchesQuery.error)}</span>
+          </div>
+        ) : null}
+        {archiveBatchMutation.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(archiveBatchMutation.error)}</span>
+          </div>
+        ) : null}
+        {archiveBatchMutation.isSuccess ? (
+          <div className="alert success-alert compact-alert" role="status">
+            <CheckCircle2 size={18} aria-hidden="true" />
+            <span>Archive run {archiveBatchMutation.data.run.id} created from {archiveBatchMutation.data.snapshot.review_run_id}.</span>
+          </div>
+        ) : null}
+
+        {candidateBatchesQuery.isLoading ? <RunSkeleton /> : null}
+        {!candidateBatchesQuery.isLoading && candidateBatches.length === 0 ? (
+          <div className="empty-state batch-empty">
+            <Database size={24} aria-hidden="true" />
+            <h3>{normalizedFilters.pick_date || normalizedFilters.run_id ? 'No batches match the filters' : 'No candidate batches yet'}</h3>
+          </div>
+        ) : null}
+
+        <div className="candidate-batch-grid">
+          {candidateBatches.map((batch) => (
+            <article
+              key={batch.id}
+              className={batch.id === activeBatchId ? 'candidate-batch-row selected' : 'candidate-batch-row'}
+            >
+              <button
+                type="button"
+                className="candidate-batch-main"
+                onClick={() => selectBatch(batch)}
+                aria-label={`Use candidate batch ${batch.id} from ${batch.pick_date}`}
+              >
+                <span className="batch-row-head">
+                  <strong>{batch.pick_date}</strong>
+                  <span className="strategy-chip">{batch.source}</span>
+                </span>
+                <span className="batch-id-line">{batch.id}</span>
+                <span className="batch-metrics">
+                  <span>{batch.candidate_count} candidates</span>
+                  <span>{batch.latest_reviewed_count} reviewed</span>
+                  <span>{batch.latest_recommended_count} rec</span>
+                  <span>{batch.archive_snapshot_count} archives</span>
+                </span>
+                <span className="batch-lineage">
+                  <code>{batch.run_id}</code>
+                  <code>{batch.latest_review_run_id ?? 'no review run'}</code>
+                </span>
+              </button>
+              <span className="batch-actions">
+                <Link className="artifact-open-link" to={`/reviews?candidate_batch_id=${encodeURIComponent(batch.id)}`}>
+                  <FileSearch size={15} aria-hidden="true" />
+                  <span>Reviews</span>
+                </Link>
+                <Link className="artifact-open-link" to={`/archive?pick_date=${encodeURIComponent(batch.pick_date)}`}>
+                  <Archive size={15} aria-hidden="true" />
+                  <span>Archive</span>
+                </Link>
+              </span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <form className="filter-bar candidate-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+        <FilterInput
+          label="Batch"
+          placeholder="candidate batch"
+          value={filters.batch_id}
+          onChange={(value) => updateFilter('batch_id', value)}
+        />
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
@@ -285,17 +435,8 @@ function CandidatesView() {
 
 function ReviewsView() {
   const queryClient = useQueryClient()
-  const [filters, setFilters] = useState<Required<ReviewFilters>>({
-    pick_date: '',
-    run_id: '',
-    review_run_id: '',
-    candidate_batch_id: '',
-    strategy: '',
-    code: '',
-    review_key: '',
-    reviewer: '',
-    recommendation_status: 'all',
-  })
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = reviewFiltersFromParams(searchParams)
   const [selectedReviewId, setSelectedReviewId] = useState<number | null>(null)
 
   const normalizedFilters = {
@@ -330,25 +471,20 @@ function ReviewsView() {
   })
 
   function updateFilter(key: Exclude<keyof ReviewFilters, 'recommendation_status'>, value: string) {
-    setFilters((current) => ({ ...current, [key]: value }))
+    const nextFilters = { ...filters, [key]: value }
+    setSearchParams(reviewFiltersToParams(nextFilters), { replace: true })
+    setSelectedReviewId(null)
   }
 
   function updateRecommendationStatus(value: RecommendationStatus) {
-    setFilters((current) => ({ ...current, recommendation_status: value }))
+    const nextFilters = { ...filters, recommendation_status: value }
+    setSearchParams(reviewFiltersToParams(nextFilters), { replace: true })
+    setSelectedReviewId(null)
   }
 
   function resetFilters() {
-    setFilters({
-      pick_date: '',
-      run_id: '',
-      review_run_id: '',
-      candidate_batch_id: '',
-      strategy: '',
-      code: '',
-      review_key: '',
-      reviewer: '',
-      recommendation_status: 'all',
-    })
+    const nextFilters = emptyReviewFilters()
+    setSearchParams(reviewFiltersToParams(nextFilters), { replace: true })
     setSelectedReviewId(null)
   }
 
@@ -491,16 +627,8 @@ function ReviewsView() {
 
 function ArchiveView() {
   const queryClient = useQueryClient()
-  const [filters, setFilters] = useState<Required<ArchiveRowFilters>>({
-    pick_date: '',
-    run_id: '',
-    strategy: '',
-    code: '',
-    review_key: '',
-    status: 'all',
-    rank: '',
-  })
-  const [selectedPickDate, setSelectedPickDate] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = archiveFiltersFromParams(searchParams)
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
 
   const snapshotsQuery = useQuery({
@@ -509,8 +637,7 @@ function ArchiveView() {
   })
   const snapshots = snapshotsQuery.data?.snapshots ?? []
   const filteredPickDate = filters.pick_date.trim()
-  const selectedDateVisible = selectedPickDate !== null && snapshots.some((snapshot) => snapshot.pick_date === selectedPickDate)
-  const activePickDate = filteredPickDate || (selectedDateVisible ? selectedPickDate : snapshots[0]?.pick_date ?? '')
+  const activePickDate = filteredPickDate || (snapshots[0]?.pick_date ?? '')
   const activeSnapshot = findActiveSnapshot(snapshots, activePickDate, filters.run_id.trim())
 
   const normalizedFilters = {
@@ -544,35 +671,30 @@ function ArchiveView() {
   })
 
   function updateFilter(key: Exclude<keyof ArchiveRowFilters, 'status'>, value: string) {
-    setFilters((current) => ({ ...current, [key]: value }))
+    const nextFilters = { ...filters, [key]: value }
+    setSearchParams(archiveFiltersToParams(nextFilters), { replace: true })
     setSelectedRowId(null)
   }
 
   function updateArchiveStatus(value: ArchiveStatus) {
-    setFilters((current) => ({ ...current, status: value }))
+    const nextFilters = { ...filters, status: value }
+    setSearchParams(archiveFiltersToParams(nextFilters), { replace: true })
     setSelectedRowId(null)
   }
 
   function selectSnapshot(snapshot: ArchiveSnapshot) {
-    setSelectedPickDate(snapshot.pick_date)
     setSelectedRowId(null)
-    setFilters((current) => ({
-      ...current,
-      pick_date: '',
+    const nextFilters = {
+      ...filters,
+      pick_date: snapshot.pick_date,
       run_id: snapshot.run_id,
-    }))
+    }
+    setSearchParams(archiveFiltersToParams(nextFilters), { replace: true })
   }
 
   function resetFilters() {
-    setFilters({
-      pick_date: '',
-      run_id: '',
-      strategy: '',
-      code: '',
-      review_key: '',
-      status: 'all',
-      rank: '',
-    })
+    const nextFilters = emptyArchiveFilters()
+    setSearchParams(archiveFiltersToParams(nextFilters), { replace: true })
     setSelectedRowId(null)
   }
 
@@ -1875,6 +1997,143 @@ function sectionLabel(section: string) {
   if (section === 'reviews') return 'Reviews'
   if (section === 'history') return 'History'
   return section
+}
+
+function emptyCandidateFilters(): Required<CandidateFilters> {
+  return {
+    batch_id: '',
+    pick_date: '',
+    run_id: '',
+    strategy: '',
+    code: '',
+  }
+}
+
+function candidateFiltersFromParams(params: URLSearchParams): Required<CandidateFilters> {
+  return {
+    batch_id: paramValue(params, 'batch_id'),
+    pick_date: paramValue(params, 'pick_date'),
+    run_id: paramValue(params, 'run_id'),
+    strategy: paramValue(params, 'strategy'),
+    code: paramValue(params, 'code'),
+  }
+}
+
+function candidateFiltersToParams(filters: Required<CandidateFilters>) {
+  return nonEmptyParams({
+    batch_id: filters.batch_id,
+    pick_date: filters.pick_date,
+    run_id: filters.run_id,
+    strategy: filters.strategy,
+    code: filters.code,
+  })
+}
+
+function emptyReviewFilters(): Required<ReviewFilters> {
+  return {
+    pick_date: '',
+    run_id: '',
+    review_run_id: '',
+    candidate_batch_id: '',
+    strategy: '',
+    code: '',
+    review_key: '',
+    reviewer: '',
+    recommendation_status: 'all',
+  }
+}
+
+function reviewFiltersFromParams(params: URLSearchParams): Required<ReviewFilters> {
+  return {
+    pick_date: paramValue(params, 'pick_date'),
+    run_id: paramValue(params, 'run_id'),
+    review_run_id: paramValue(params, 'review_run_id'),
+    candidate_batch_id: paramValue(params, 'candidate_batch_id'),
+    strategy: paramValue(params, 'strategy'),
+    code: paramValue(params, 'code'),
+    review_key: paramValue(params, 'review_key'),
+    reviewer: paramValue(params, 'reviewer'),
+    recommendation_status: recommendationStatusValue(params.get('recommendation_status')),
+  }
+}
+
+function reviewFiltersToParams(filters: Required<ReviewFilters>) {
+  const params = nonEmptyParams({
+    pick_date: filters.pick_date,
+    run_id: filters.run_id,
+    review_run_id: filters.review_run_id,
+    candidate_batch_id: filters.candidate_batch_id,
+    strategy: filters.strategy,
+    code: filters.code,
+    review_key: filters.review_key,
+    reviewer: filters.reviewer,
+  })
+  if (filters.recommendation_status !== 'all') {
+    params.set('recommendation_status', filters.recommendation_status)
+  }
+  return params
+}
+
+function emptyArchiveFilters(): Required<ArchiveRowFilters> {
+  return {
+    pick_date: '',
+    run_id: '',
+    strategy: '',
+    code: '',
+    review_key: '',
+    status: 'all',
+    rank: '',
+  }
+}
+
+function archiveFiltersFromParams(params: URLSearchParams): Required<ArchiveRowFilters> {
+  return {
+    pick_date: paramValue(params, 'pick_date'),
+    run_id: paramValue(params, 'run_id'),
+    strategy: paramValue(params, 'strategy'),
+    code: paramValue(params, 'code'),
+    review_key: paramValue(params, 'review_key'),
+    status: archiveStatusValue(params.get('status')),
+    rank: paramValue(params, 'rank'),
+  }
+}
+
+function archiveFiltersToParams(filters: Required<ArchiveRowFilters>) {
+  const params = nonEmptyParams({
+    pick_date: filters.pick_date,
+    run_id: filters.run_id,
+    strategy: filters.strategy,
+    code: filters.code,
+    review_key: filters.review_key,
+    rank: filters.rank,
+  })
+  if (filters.status !== 'all') {
+    params.set('status', filters.status)
+  }
+  return params
+}
+
+function paramValue(params: URLSearchParams, key: string) {
+  return params.get(key)?.trim() ?? ''
+}
+
+function nonEmptyParams(values: Record<string, string>) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(values)) {
+    const trimmed = value.trim()
+    if (trimmed) params.set(key, trimmed)
+  }
+  return params
+}
+
+function recommendationStatusValue(value: string | null): RecommendationStatus {
+  if (value === 'recommended' || value === 'reviewed') return value
+  return 'all'
+}
+
+function archiveStatusValue(value: string | null): ArchiveStatus {
+  if (value === 'recommended' || value === 'reviewed' || value === 'unreviewed') return value
+  return 'all'
 }
 
 function compactPreselectRequest(form: Record<keyof PreselectRunRequest, string>): PreselectRunRequest {

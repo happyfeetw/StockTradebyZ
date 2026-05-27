@@ -70,6 +70,7 @@ def create_app(
         dispose_sqlite=dispose_sqlite,
     )
     app.state.job_runtime = JobRuntime(run_repository)
+    app.state.review_provider_executor = None
     app.state.session_factory = session_factory
     app.state.sqlite_path = sqlite_path
     app.state.duckdb_path = duckdb_path

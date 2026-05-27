@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .sqlite_models import CandidateBatch, Recommendation, Review, ReviewRun
+from .sqlite_models import Artifact, CandidateBatch, Recommendation, Review, ReviewRun
 
 RECOMMENDATION_STATUSES = {"all", "recommended", "reviewed"}
 
@@ -26,6 +26,12 @@ class CreatedReviewRun:
     review_run: ReviewRun
     reviews: list[Review]
     recommendations: list[Recommendation]
+
+
+@dataclass(frozen=True)
+class ReviewProviderSources:
+    candidate_batch: CandidateBatch
+    chart_artifacts_by_code: dict[str, Artifact]
 
 
 def review_key_for(code: str, strategy: str = "") -> str:
@@ -120,6 +126,16 @@ class ReviewRepository:
             if batch is None:
                 raise CandidateBatchNotFoundError(batch_id)
             return batch
+
+    def get_review_provider_sources(self, batch_id: str) -> ReviewProviderSources:
+        with self.session_factory() as session:
+            batch = self._load_candidate_batch(session, batch_id)
+            if batch is None:
+                raise CandidateBatchNotFoundError(batch_id)
+            return ReviewProviderSources(
+                candidate_batch=batch,
+                chart_artifacts_by_code=self._chart_artifacts_by_code(session, batch_id),
+            )
 
     def create_review_run(
         self,
@@ -224,6 +240,24 @@ class ReviewRepository:
             ).scalars()
         )
         return CreatedReviewRun(review_run=review_run, reviews=reviews, recommendations=recommendations)
+
+    def _chart_artifacts_by_code(self, session: Session, candidate_batch_id: str) -> dict[str, Artifact]:
+        artifacts = session.execute(
+            select(Artifact)
+            .where(Artifact.kind == "chart")
+            .order_by(Artifact.created_at.desc(), Artifact.id.desc())
+        ).scalars()
+        by_code: dict[str, Artifact] = {}
+        for artifact in artifacts:
+            metadata = artifact.metadata_json or {}
+            if metadata.get("source") != "product:chart_export":
+                continue
+            if metadata.get("candidate_batch_id") != candidate_batch_id:
+                continue
+            code = str(metadata.get("code") or "")
+            if code and code not in by_code:
+                by_code[code] = artifact
+        return by_code
 
 
 def _float_or_none(value: Any) -> float | None:

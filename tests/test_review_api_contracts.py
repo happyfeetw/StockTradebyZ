@@ -20,7 +20,7 @@ from stocktrade_api.storage.duckdb import apply_migrations as apply_duckdb_migra
 from stocktrade_api.storage.duckdb import connect_duckdb  # noqa: E402
 from stocktrade_api.storage.review_repository import ReviewRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
-from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Recommendation, Review, ReviewRun, Run  # noqa: E402
+from stocktrade_api.storage.sqlite_models import Artifact, Candidate, CandidateBatch, Recommendation, Review, ReviewRun, Run  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -170,7 +170,7 @@ def seed_reviews(db_path: Path) -> None:
     engine.dispose()
 
 
-def seed_historical_candidate_batch(db_path: Path) -> None:
+def seed_historical_candidate_batch(db_path: Path, *, include_chart_artifacts: bool = False) -> None:
     engine = create_sqlite_engine(db_path)
     session_factory = create_session_factory(engine)
     with session_factory() as session:
@@ -207,6 +207,48 @@ def seed_historical_candidate_batch(db_path: Path) -> None:
                 ),
             ]
         )
+        if include_chart_artifacts:
+            chart_run = Run(
+                id="run-chart-history",
+                kind="chart_export",
+                status="succeeded",
+                pick_date="2026-05-25",
+            )
+            session.add(chart_run)
+            session.add_all(
+                [
+                    Artifact(
+                        id="artifact-chart-history-000001",
+                        run=chart_run,
+                        kind="chart",
+                        path="run-chart-history/charts/batch-history/000001_day.jpg",
+                        content_type="image/jpeg",
+                        metadata_json={
+                            "source": "product:chart_export",
+                            "candidate_batch_id": "batch-history",
+                            "candidate_run_id": "run-preselect-history",
+                            "pick_date": "2026-05-25",
+                            "code": "000001",
+                            "strategies": ["b2"],
+                        },
+                    ),
+                    Artifact(
+                        id="artifact-chart-history-000002",
+                        run=chart_run,
+                        kind="chart",
+                        path="run-chart-history/charts/batch-history/000002_day.jpg",
+                        content_type="image/jpeg",
+                        metadata_json={
+                            "source": "product:chart_export",
+                            "candidate_batch_id": "batch-history",
+                            "candidate_run_id": "run-preselect-history",
+                            "pick_date": "2026-05-25",
+                            "code": "000002",
+                            "strategies": ["brick"],
+                        },
+                    ),
+                ]
+            )
         session.commit()
     engine.dispose()
 
@@ -233,6 +275,28 @@ def review_result(
             "classic_pattern_match": 5,
         },
     }
+
+
+class StaticReviewProviderExecutor:
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def run(self, request) -> list[dict]:
+        self.requests.append(request)
+        results = []
+        for item in request.items:
+            weak = item.code == "000002"
+            results.append(
+                review_result(
+                    item.code,
+                    item.strategy,
+                    trend_structure=1 if weak else 5,
+                    price_position=1 if weak else 5,
+                    volume_behavior=1 if weak else 5,
+                    previous_abnormal_move=1 if weak else 5,
+                )
+            )
+        return results
 
 
 def review_repository(db_path: Path) -> tuple[ReviewRepository, object]:
@@ -324,6 +388,7 @@ from pathlib import Path
 root = Path({str(ROOT)!r})
 sys.path.insert(0, str(root / "apps" / "api"))
 import stocktrade_api.routes.reviews
+import stocktrade_api.routes.runs
 import stocktrade_api.storage.review_repository
 print("pipeline.select_stock" in sys.modules)
 print("agent.gemini_cli_review" in sys.modules)
@@ -457,6 +522,119 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(rows), 4)
             self.assertEqual({row[4] for row in rows}, {"000001_b2", "000002_brick"})
             self.assertEqual(len({row[1] for row in rows}), 2)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_review_provider_run_uses_chart_artifact_lineage_and_duckdb_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            apply_duckdb_migrations(duckdb_path)
+            seed_historical_candidate_batch(db_path, include_chart_artifacts=True)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            executor = StaticReviewProviderExecutor()
+            app.state.review_provider_executor = executor
+
+            request_payload = {
+                "candidate_batch_id": "batch-history",
+                "provider": "fixture-reviewer",
+                "min_score": 4.0,
+                "classic_pattern_config": {"classic_pattern_enabled": True},
+            }
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/runs/review/provider", json=request_payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                payload = response.json()
+                self.assertEqual(payload["run"]["kind"], "review")
+                self.assertEqual(payload["run"]["summary"]["mode"], "review_provider")
+                self.assertEqual(payload["review_run"]["provider"], "fixture-reviewer")
+                self.assertEqual(payload["review_run"]["summary"]["source"]["chart_artifact_count"], 2)
+                self.assertEqual(payload["review_run"]["summary"]["source"]["selected_candidates"], 2)
+                self.assertEqual([item["review_key"] for item in payload["recommendations"]], ["000001_b2"])
+                self.assertEqual(len(executor.requests), 1)
+                self.assertEqual(
+                    [(item.review_key, item.chart_artifact_id) for item in executor.requests[0].items],
+                    [
+                        ("000001_b2", "artifact-chart-history-000001"),
+                        ("000002_brick", "artifact-chart-history-000002"),
+                    ],
+                )
+
+                reviews_by_key = {item["review_key"]: item for item in payload["reviews"]}
+                first_payload = reviews_by_key["000001_b2"]["payload"]
+                self.assertEqual(first_payload["chart_artifact_id"], "artifact-chart-history-000001")
+                self.assertEqual(first_payload["chart_path"], "run-chart-history/charts/batch-history/000001_day.jpg")
+                self.assertEqual(
+                    first_payload["provider_source"],
+                    {
+                        "candidate_batch_id": "batch-history",
+                        "candidate_id": reviews_by_key["000001_b2"]["candidate_id"],
+                        "chart_artifact_id": "artifact-chart-history-000001",
+                        "chart_path": "run-chart-history/charts/batch-history/000001_day.jpg",
+                    },
+                )
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        review_key,
+                        json_extract_string(payload_json, '$.chart_artifact_id')
+                    FROM review_facts
+                    ORDER BY review_key
+                    """
+                ).fetchall()
+            self.assertEqual(
+                rows,
+                [
+                    ("000001_b2", "artifact-chart-history-000001"),
+                    ("000002_brick", "artifact-chart-history-000002"),
+                ],
+            )
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_review_provider_run_rejects_missing_required_chart_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            seed_historical_candidate_batch(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=None)
+            app.state.review_provider_executor = StaticReviewProviderExecutor()
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/runs/review/provider",
+                    json={"candidate_batch_id": "batch-history", "provider": "fixture-reviewer"},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("missing chart artifacts", response.json()["detail"])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_review_provider_run_requires_configured_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            seed_historical_candidate_batch(db_path, include_chart_artifacts=True)
+            app = create_app(sqlite_path=db_path, duckdb_path=None)
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/runs/review/provider",
+                    json={"candidate_batch_id": "batch-history", "provider": "gemini-cli"},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("executor is not configured", response.json()["detail"])
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

@@ -22,6 +22,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     compute_brick_green_run,
     compute_brick_growth,
     compute_brick_pattern_mask,
+    compute_brick_pick_mask,
     compute_brick_values,
     compute_daily_return,
     compute_kdj,
@@ -188,6 +189,45 @@ def reference_compute_brick_pattern_mask(
         green_run = reference_compute_brick_green_run(brick_values)
         cond_green_count = cond_green & (green_run >= min_prior_green_bars)
     return cond_ret & cond_red & cond_green_count & cond_growth
+
+
+def reference_compute_brick_pick_mask(
+    frame: pd.DataFrame,
+    brick_values: np.ndarray | None = None,
+    *,
+    daily_return_threshold: float = 0.05,
+    brick_growth_ratio: float = 1.0,
+    min_prior_green_bars: int = 1,
+    zxdq_ratio: float | None = 1.0,
+    require_zxdq_gt_zxdkx: bool = True,
+    require_weekly_ma_bull: bool = True,
+) -> np.ndarray:
+    if brick_values is None:
+        brick_values = (
+            frame["brick"].to_numpy(dtype=float)
+            if "brick" in frame.columns
+            else reference_compute_brick_values(frame)
+        )
+    mask = reference_compute_brick_pattern_mask(
+        frame,
+        brick_values,
+        daily_return_threshold=daily_return_threshold,
+        brick_growth_ratio=brick_growth_ratio,
+        min_prior_green_bars=min_prior_green_bars,
+    )
+    if zxdq_ratio is not None:
+        mask &= reference_compute_zxdq_ratio_mask(frame, frame["zxdq"], zxdq_ratio=zxdq_ratio)
+    if require_zxdq_gt_zxdkx:
+        mask &= reference_compute_zx_condition_mask(
+            frame,
+            frame["zxdq"],
+            frame["zxdkx"],
+            require_close_gt_long=False,
+            require_short_gt_long=True,
+        )
+    if require_weekly_ma_bull:
+        mask &= frame["wma_bull"].to_numpy(dtype=bool)
+    return mask
 
 
 def reference_compute_max_volume_not_bearish(frame: pd.DataFrame, lookback: int = 20) -> np.ndarray:
@@ -627,6 +667,40 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         np.testing.assert_array_equal(actual, expected)
 
+    def test_product_brick_pick_mask_matches_reference_formula(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "close": [10.0, 9.8, 10.0, 10.2, 10.3],
+                "zxdq": [11.0, 11.0, 11.0, 11.0, 11.0],
+                "zxdkx": [9.0, 9.0, 9.0, 12.0, 9.0],
+                "wma_bull": [True, True, True, True, False],
+            }
+        )
+        brick_values = np.array([0.0, -1.0, 1.5, -0.5, 0.7])
+
+        actual = compute_brick_pick_mask(frame, brick_values)
+        expected = reference_compute_brick_pick_mask(frame, brick_values)
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([False, False, True, False, False]))
+
+        optional_filters_disabled = compute_brick_pick_mask(
+            frame,
+            brick_values,
+            zxdq_ratio=None,
+            require_zxdq_gt_zxdkx=False,
+            require_weekly_ma_bull=False,
+        )
+        expected_optional = reference_compute_brick_pick_mask(
+            frame,
+            brick_values,
+            zxdq_ratio=None,
+            require_zxdq_gt_zxdkx=False,
+            require_weekly_ma_bull=False,
+        )
+        np.testing.assert_array_equal(optional_filters_disabled, expected_optional)
+        np.testing.assert_array_equal(optional_filters_disabled, np.array([False, False, True, False, True]))
+
     def test_legacy_selector_brick_helpers_delegate_to_product_helpers_when_available(self) -> None:
         frame = pd.DataFrame(
             {
@@ -687,6 +761,55 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         np.testing.assert_array_equal(mask, np.array([False, False, True], dtype=np.bool_))
         np.testing.assert_allclose(growth, np.array([0.0, -1.0, 2.0]))
+
+    def test_legacy_brick_selector_prepare_df_delegates_vec_pick_to_product_helper(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "high": [10.0, 11.0, 12.0, 13.0],
+                "low": [9.0, 10.0, 11.0, 12.0],
+                "close": [9.5, 10.5, 11.5, 12.5],
+            },
+            index=pd.to_datetime(["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08"]),
+        )
+
+        def fake_product_compute_brick_pick_mask(
+            input_frame: pd.DataFrame,
+            brick_values: np.ndarray,
+            **kwargs: float,
+        ) -> np.ndarray:
+            self.assertIn("brick", input_frame.columns)
+            self.assertIn("brick_growth", input_frame.columns)
+            self.assertIn("zxdq", input_frame.columns)
+            self.assertIn("zxdkx", input_frame.columns)
+            self.assertNotIn("wma_bull", input_frame.columns)
+            np.testing.assert_allclose(brick_values, input_frame["brick"].to_numpy(dtype=float))
+            self.assertEqual(kwargs["daily_return_threshold"], 0.03)
+            self.assertEqual(kwargs["brick_growth_ratio"], 1.2)
+            self.assertEqual(kwargs["min_prior_green_bars"], 2)
+            self.assertEqual(kwargs["zxdq_ratio"], 0.95)
+            self.assertFalse(kwargs["require_zxdq_gt_zxdkx"])
+            self.assertFalse(kwargs["require_weekly_ma_bull"])
+            return np.array([False, True, False, True], dtype=np.bool_)
+
+        with patch.object(
+            selector_module,
+            "_product_compute_brick_pick_mask",
+            fake_product_compute_brick_pick_mask,
+        ):
+            prepared = selector_module.BrickChartSelector(
+                daily_return_threshold=0.03,
+                brick_growth_ratio=1.2,
+                min_prior_green_bars=2,
+                n=2,
+                m1=4,
+                m2=5,
+                m3=6,
+                zxdq_ratio=0.95,
+                require_zxdq_gt_zxdkx=False,
+                require_weekly_ma_bull=False,
+            ).prepare_df(frame)
+
+        np.testing.assert_array_equal(prepared["_vec_pick"].to_numpy(dtype=bool), np.array([False, True, False, True]))
 
     def test_legacy_selector_compute_kdj_delegates_to_product_helper_when_available(self) -> None:
         frame = pd.DataFrame({"high": [1.0], "low": [1.0], "close": [1.0]})

@@ -46,6 +46,7 @@ try:
         compute_brick_chart as _product_compute_brick_chart,
         compute_brick_growth as _product_compute_brick_growth,
         compute_brick_pattern_mask as _product_compute_brick_pattern_mask,
+        compute_brick_pick_mask as _product_compute_brick_pick_mask,
         compute_brick_values as _product_compute_brick_values,
         compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
@@ -70,6 +71,7 @@ except ImportError:
     _product_compute_brick_chart = None
     _product_compute_brick_growth = None
     _product_compute_brick_pattern_mask = None
+    _product_compute_brick_pick_mask = None
     _product_compute_brick_values = None
     _product_compute_daily_return = None
     _product_compute_kdj = None
@@ -1435,13 +1437,38 @@ class BrickChartSelector(PipelineSelector):
     def _precompute_brick(self, df: pd.DataFrame) -> None:
         """就地写入 brick / brick_growth。"""
         bv   = self._bp.compute_arr(df)
+        df["brick"]        = bv
+        if _product_compute_brick_growth is not None:
+            df["brick_growth"] = _product_compute_brick_growth(bv)
+            return
+
         bp_  = np.empty_like(bv); bp_[0] = np.nan; bp_[1:] = bv[:-1]
         abp  = np.abs(bp_)
         safe = np.where(abp > 0, abp, 1.0)    # 分母置 1 避免除零警告
-        df["brick"]        = bv
         df["brick_growth"] = np.where(abp > 0, bv / safe, bv)
 
     def _compute_vec_pick(self, df: pd.DataFrame) -> np.ndarray:
+        if _product_compute_brick_pick_mask is not None:
+            brick_values = (
+                df["brick"].to_numpy(dtype=float)
+                if "brick" in df.columns
+                else self._bp.compute_arr(df)
+            )
+            return _product_compute_brick_pick_mask(
+                df,
+                brick_values,
+                daily_return_threshold=self._pattern_filter.daily_return_threshold,
+                brick_growth_ratio=self._pattern_filter.brick_growth_ratio,
+                min_prior_green_bars=self._pattern_filter.min_prior_green_bars,
+                zxdq_ratio=(
+                    self._zxdq_ratio_filter.zxdq_ratio
+                    if self._zxdq_ratio_filter is not None
+                    else None
+                ),
+                require_zxdq_gt_zxdkx=self._zxdq_gt_filter is not None,
+                require_weekly_ma_bull=self._wma_filter is not None,
+            )
+
         fs: list = [self._pattern_filter]
         if self._zxdq_ratio_filter is not None: fs.append(self._zxdq_ratio_filter)
         if self._zxdq_gt_filter    is not None: fs.append(self._zxdq_gt_filter)

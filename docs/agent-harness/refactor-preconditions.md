@@ -94,6 +94,30 @@ user explicitly changes the architecture.
    - Need explicit approval before rewriting, migrating, or adding UI for that
      module.
 
+## Agent-Owned Defaults
+
+The user has confirmed the foundational stack and delegated remaining
+implementation choices to agents inside that boundary. Agents may choose small
+technical details without asking again when all of these are true:
+
+- the choice stays within React/Vite/TypeScript, FastAPI, Python domain logic,
+  SQLite, and DuckDB;
+- the choice does not add a new production dependency outside the confirmed
+  stack without issue/PR rationale;
+- the choice preserves strict behavior parity for core business logic;
+- the choice does not reopen simulated trading / paper trading;
+- the choice is documented in the issue or PR when it affects architecture,
+  UX, API contracts, storage schema, job runtime, or validation strategy;
+- the choice can be verified by the relevant harness gate, unit/API/storage
+  test, or browser smoke evidence.
+
+Default agent-owned choices include route/component/file naming, service
+method shape, Pydantic schema factoring, SQLAlchemy model organization, DuckDB
+migration file layout, local worker implementation details, UI component
+composition, table/chart configuration, fixture shape, and test split. These
+defaults should optimize for readability, maintainability, resource usage, and
+future agent navigation rather than novelty.
+
 ## Remaining Confirmation Triggers
 
 Stop and ask before implementation when a task would:

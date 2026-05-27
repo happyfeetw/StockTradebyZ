@@ -2,6 +2,7 @@
 
 Issue: #29
 Current status sync issue: #111
+Current stack calibration issue: #132
 Parent epic: #23
 
 This is the Phase 2 architecture plan for the React/FastAPI product rewrite. It
@@ -25,6 +26,25 @@ masters in `tests/fixtures/golden_master/`.
 - Product shape: local-first React web frontend plus FastAPI backend.
 - Out of scope: simulated trading / paper trading, real broker integration,
   multi-user auth, cloud-only services.
+
+## Default Implementation Decisions
+
+Agents may decide implementation details that stay inside the confirmed stack
+without reopening foundational architecture in chat. Those decisions should
+prefer simple, inspectable, repo-local mechanisms that Codex can validate:
+
+- keep business rules in pure Python domain modules before wiring them to
+  FastAPI, storage, or UI surfaces;
+- use a modular monolith and local FastAPI-owned job runtime before introducing
+  queues or additional services;
+- use SQLite for durable workflow state and DuckDB for analytical scans rather
+  than new file-system write paths;
+- use product-owned artifacts under `var/artifacts/` for generated files that
+  should be linked from database rows;
+- use React route-level boundaries, typed API clients, and dense workflow views
+  before adding complex global state or visual effects;
+- capture architectural deviations as issue/PR notes and, when repeated, turn
+  them into docs or checks.
 
 ## Repository Shape
 

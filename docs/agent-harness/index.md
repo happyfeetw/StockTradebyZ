@@ -36,8 +36,9 @@ constraints, and recurring cleanup. The project-specific interpretation here is:
   conditions for the product-level rewrite.
 - [refactor-contracts.md](refactor-contracts.md): compatibility contracts that
   must survive or be explicitly migrated during the rewrite.
-- [refactor-preconditions.md](refactor-preconditions.md): decisions that need
-  user confirmation before destructive implementation work.
+- [refactor-preconditions.md](refactor-preconditions.md): confirmed decisions,
+  agent-owned defaults, and cases that still need user confirmation before
+  destructive implementation work.
 - [uiux-quality-bar.md](uiux-quality-bar.md): measurable UI/UX acceptance bar.
 - [architecture-quality-bar.md](architecture-quality-bar.md): frontend,
   backend, system, storage, maintainability, and resource quality bar.

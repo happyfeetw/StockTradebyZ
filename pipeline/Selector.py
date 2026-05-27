@@ -39,6 +39,7 @@ except ImportError:
 
 try:
     from stocktrade.domain.selection.indicators import (
+        compute_b1_pick_mask as _product_compute_b1_pick_mask,
         compute_body_pct as _product_compute_body_pct,
         compute_brick_chart as _product_compute_brick_chart,
         compute_brick_growth as _product_compute_brick_growth,
@@ -60,6 +61,7 @@ try:
         compute_zxdq_ratio_mask as _product_compute_zxdq_ratio_mask,
     )
 except ImportError:
+    _product_compute_b1_pick_mask = None
     _product_compute_body_pct = None
     _product_compute_brick_chart = None
     _product_compute_brick_growth = None
@@ -880,6 +882,17 @@ class B1Selector(PipelineSelector):
             df, ma_periods=(self.wma_short, self.wma_mid, self.wma_long)
         ).to_numpy()
         # 向量化 pick
+        if _product_compute_b1_pick_mask is not None:
+            df["_vec_pick"] = _product_compute_b1_pick_mask(
+                df,
+                j_threshold=self._kdj_filter.j_threshold,
+                j_q_threshold=self._kdj_filter.j_q_threshold,
+                require_close_gt_long=self._zx_filter.require_close_gt_long,
+                require_short_gt_long=self._zx_filter.require_short_gt_long,
+                max_vol_lookback=self._max_vol_filter.n,
+            )
+            return df
+
         _b1_vec_filters: list = [self._kdj_filter, self._zx_filter, self._wma_filter]
         if self._max_vol_filter is not None:
             _b1_vec_filters.append(self._max_vol_filter)

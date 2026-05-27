@@ -7,6 +7,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .routes.archive import router as archive_router
+from .routes.analytics import router as analytics_router
 from .routes.artifacts import router as artifacts_router
 from .routes.backups import router as backups_router
 from .routes.candidates import router as candidates_router
@@ -14,12 +15,14 @@ from .routes.health import router as health_router
 from .routes.migrations import router as migrations_router
 from .routes.reviews import router as reviews_router
 from .routes.runs import router as runs_router
+from .routes.settings import router as settings_router
+from .routes.strategies import router as strategies_router
 from .jobs.runtime import JobRuntime
 from .storage.artifact_service import DEFAULT_ARTIFACT_ROOT
 from .storage.archive_repository import ArchiveRepository
 from .storage.backup_service import DEFAULT_BACKUP_ROOT, BackupService
 from .storage.candidate_repository import CandidateRepository
-from .storage.duckdb import DEFAULT_DUCKDB_PATH, DuckDBAnalyticsWriter
+from .storage.duckdb import DEFAULT_DUCKDB_PATH, DuckDBAnalyticsReader, DuckDBAnalyticsWriter
 from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
@@ -50,7 +53,9 @@ def create_app(
     app.state.review_repository = ReviewRepository(session_factory)
     app.state.archive_repository = ArchiveRepository(session_factory)
     analytics_writer = DuckDBAnalyticsWriter(duckdb_path) if duckdb_path is not None else None
+    analytics_reader = DuckDBAnalyticsReader(duckdb_path) if duckdb_path is not None else None
     app.state.analytics_writer = analytics_writer
+    app.state.analytics_reader = analytics_reader
     app.state.migration_repository = MigrationRepository(
         session_factory,
         analytics_writer=analytics_writer,
@@ -79,6 +84,9 @@ def create_app(
     app.state.sqlite_engine = sqlite_engine
 
     app.include_router(health_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
+    app.include_router(strategies_router, prefix="/api")
+    app.include_router(analytics_router, prefix="/api")
     app.include_router(artifacts_router, prefix="/api")
     app.include_router(backups_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")

@@ -29,10 +29,25 @@ class DuckDBFactWriteError(RuntimeError):
     pass
 
 
+class DuckDBAnalyticsReadError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class DuckDBMigration:
     version: str
     path: Path
+
+
+@dataclass(frozen=True)
+class StrategySummaryMetric:
+    pick_date: str
+    run_id: str
+    strategy: str
+    total: int
+    reviewed: int
+    recommended: int
+    unreviewed: int
 
 
 def resolve_duckdb_path(path: str | Path = DEFAULT_DUCKDB_PATH) -> Path | str:
@@ -300,6 +315,67 @@ class DuckDBAnalyticsWriter:
                     raise
         except Exception as exc:
             raise DuckDBFactWriteError(f"failed to write DuckDB {label}") from exc
+
+
+class DuckDBAnalyticsReader:
+    def __init__(self, path: str | Path = DEFAULT_DUCKDB_PATH):
+        self.path = path
+
+    def strategy_summary(
+        self,
+        *,
+        pick_date: str | None = None,
+        run_id: str | None = None,
+        strategy: str | None = None,
+        limit: int = 100,
+    ) -> list[StrategySummaryMetric]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if pick_date:
+            clauses.append("pick_date = ?")
+            params.append(pick_date)
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if strategy:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        query = f"""
+            SELECT
+                CAST(pick_date AS VARCHAR) AS pick_date,
+                run_id,
+                strategy,
+                total,
+                reviewed,
+                recommended,
+                unreviewed
+            FROM strategy_run_metrics
+            {where}
+            ORDER BY pick_date DESC, run_id DESC, strategy ASC
+            LIMIT ?
+        """
+        try:
+            apply_migrations(self.path)
+            with connect_duckdb(self.path, read_only=True) as connection:
+                rows = connection.execute(query, params).fetchall()
+        except Exception as exc:
+            raise DuckDBAnalyticsReadError("failed to read DuckDB strategy summary") from exc
+
+        return [
+            StrategySummaryMetric(
+                pick_date=str(row[0]),
+                run_id=str(row[1]),
+                strategy=str(row[2]),
+                total=int(row[3] or 0),
+                reviewed=int(row[4] or 0),
+                recommended=int(row[5] or 0),
+                unreviewed=int(row[6] or 0),
+            )
+            for row in rows
+        ]
 
 
 def _json_payload(value: Any) -> str | None:

@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.reviews import ReviewDetailResponse, ReviewListResponse  # noqa: E402
+from stocktrade_api.storage.duckdb import apply_migrations as apply_duckdb_migrations  # noqa: E402
+from stocktrade_api.storage.duckdb import connect_duckdb  # noqa: E402
 from stocktrade_api.storage.review_repository import ReviewRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Recommendation, Review, ReviewRun, Run  # noqa: E402
@@ -168,6 +170,71 @@ def seed_reviews(db_path: Path) -> None:
     engine.dispose()
 
 
+def seed_historical_candidate_batch(db_path: Path) -> None:
+    engine = create_sqlite_engine(db_path)
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        candidate_run = Run(
+            id="run-preselect-history",
+            kind="preselect",
+            status="succeeded",
+            pick_date="2026-05-25",
+        )
+        batch = CandidateBatch(
+            id="batch-history",
+            run=candidate_run,
+            pick_date="2026-05-25",
+            source="fixture",
+            strategy_counts_json={"b2": 1, "brick": 1},
+        )
+        session.add_all(
+            [
+                Candidate(
+                    batch=batch,
+                    code="000001",
+                    strategy="b2",
+                    pick_date="2026-05-25",
+                    close=10.1,
+                    turnover_n=2.3,
+                ),
+                Candidate(
+                    batch=batch,
+                    code="000002",
+                    strategy="brick",
+                    pick_date="2026-05-25",
+                    close=12.2,
+                    turnover_n=1.7,
+                ),
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+
+def review_result(
+    code: str,
+    strategy: str,
+    *,
+    trend_structure: float = 5.0,
+    price_position: float = 5.0,
+    volume_behavior: float = 5.0,
+    previous_abnormal_move: float = 5.0,
+) -> dict:
+    return {
+        "code": code,
+        "strategy": strategy,
+        "signal_type": "fixture",
+        "comment": f"{code} {strategy} fixture",
+        "scores": {
+            "trend_structure": trend_structure,
+            "price_position": price_position,
+            "volume_behavior": volume_behavior,
+            "previous_abnormal_move": previous_abnormal_move,
+            "classic_pattern_match": 5,
+        },
+    }
+
+
 def review_repository(db_path: Path) -> tuple[ReviewRepository, object]:
     engine = create_sqlite_engine(db_path)
     return ReviewRepository(create_session_factory(engine)), engine
@@ -303,6 +370,93 @@ class ReviewApiContractTests(unittest.IsolatedAsyncioTestCase):
 
                 missing = await client.get("/api/reviews/99999")
                 self.assertEqual(missing.status_code, 404)
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_review_run_api_records_historical_batch_reruns_and_duckdb_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            apply_duckdb_migrations(duckdb_path)
+            seed_historical_candidate_batch(db_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+
+            request_payload = {
+                "candidate_batch_id": "batch-history",
+                "provider": "fixture-reviewer",
+                "min_score": 4.0,
+                "classic_pattern_config": {"classic_pattern_enabled": True},
+                "results": [
+                    review_result("000001", "b2"),
+                    review_result(
+                        "000002",
+                        "brick",
+                        trend_structure=1,
+                        price_position=1,
+                        volume_behavior=1,
+                        previous_abnormal_move=1,
+                    ),
+                ],
+            }
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post("/api/runs/review", json=request_payload)
+                self.assertEqual(first.status_code, 200, first.text)
+                first_payload = first.json()
+                self.assertEqual(first_payload["run"]["kind"], "review")
+                self.assertEqual(first_payload["run"]["status"], "succeeded")
+                self.assertEqual(first_payload["run"]["pick_date"], "2026-05-25")
+                self.assertEqual(first_payload["review_run"]["candidate_batch_id"], "batch-history")
+                self.assertEqual(first_payload["review_run"]["provider"], "fixture-reviewer")
+                self.assertEqual(first_payload["review_run"]["summary"]["total_candidates"], 2)
+                self.assertEqual(first_payload["review_run"]["summary"]["total_reviewed"], 2)
+                self.assertEqual(first_payload["review_run"]["summary"]["recommended"], 1)
+                self.assertEqual(len(first_payload["reviews"]), 2)
+                self.assertEqual([item["review_key"] for item in first_payload["recommendations"]], ["000001_b2"])
+
+                second = await client.post("/api/runs/review", json=request_payload)
+                self.assertEqual(second.status_code, 200, second.text)
+                self.assertNotEqual(first_payload["review_run"]["id"], second.json()["review_run"]["id"])
+
+                history = await client.get(
+                    "/api/reviews",
+                    params={"candidate_batch_id": "batch-history", "limit": 10},
+                )
+                self.assertEqual(history.status_code, 200)
+                history_payload = history.json()
+                self.assertEqual(history_payload["total"], 4)
+                self.assertEqual(
+                    {item["review_run_id"] for item in history_payload["reviews"]},
+                    {first_payload["review_run"]["id"], second.json()["review_run"]["id"]},
+                )
+
+                missing = await client.post(
+                    "/api/runs/review",
+                    json={**request_payload, "candidate_batch_id": "not-found"},
+                )
+                self.assertEqual(missing.status_code, 404)
+
+                mismatched = await client.post(
+                    "/api/runs/review",
+                    json={**request_payload, "results": [review_result("000003", "b2")]},
+                )
+                self.assertEqual(mismatched.status_code, 400)
+
+            with connect_duckdb(duckdb_path, read_only=True) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT run_id, review_run_id, code, strategy, review_key, total_score
+                    FROM review_facts
+                    ORDER BY run_id, review_key
+                    """
+                ).fetchall()
+            self.assertEqual(len(rows), 4)
+            self.assertEqual({row[4] for row in rows}, {"000001_b2", "000002_brick"})
+            self.assertEqual(len({row[1] for row in rows}), 2)
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()

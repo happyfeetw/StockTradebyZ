@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "agent"))
 sys.path.insert(0, str(ROOT / "pipeline"))
 
@@ -19,6 +21,7 @@ from archive_results import build_rows, build_summary  # noqa: E402
 from base_reviewer import BaseReviewer  # noqa: E402
 from pipeline_io import merge_same_date_by_strategy  # noqa: E402
 from schemas import CandidateRun  # noqa: E402
+from stocktrade.domain.review import generate_suggestion, normalize_scores  # noqa: E402
 
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "golden_master"
 
@@ -180,6 +183,36 @@ class GoldenMasterContractTests(unittest.TestCase):
         )
 
         self.assertEqual(suggestion, case["expected_suggestion"])
+
+        domain_results = [
+            normalize_scores(deepcopy(result), case["classic_pattern_config"])
+            for result in case["results"]
+        ]
+        domain_suggestion = generate_suggestion(
+            pick_date=case["pick_date"],
+            all_results=domain_results,
+            min_score=case["min_score"],
+            candidates=case["candidates"],
+        )
+        self.assertEqual(domain_results, normalized_results)
+        self.assertEqual(domain_suggestion, case["expected_suggestion"])
+
+    def test_review_domain_imports_without_legacy_agent_modules(self) -> None:
+        script = f"""
+import sys
+from pathlib import Path
+root = Path({str(ROOT)!r})
+sys.path.insert(0, str(root / "src"))
+from stocktrade.domain.review import generate_suggestion, normalize_scores
+print(callable(generate_suggestion))
+print(callable(normalize_scores))
+print("base_reviewer" in sys.modules)
+print("agent.gemini_cli_review" in sys.modules)
+"""
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines(), ["True", "True", "False", "False"])
 
 
 if __name__ == "__main__":

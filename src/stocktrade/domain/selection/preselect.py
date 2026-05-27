@@ -8,6 +8,7 @@ import sys
 from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -280,6 +281,78 @@ def _load_csv_market_data(data_dir: str, end_date: str | None = None) -> dict[st
     return data
 
 
+def _prepare_market_frame(args: tuple[str, Any, Any, Any, int, int]) -> tuple[str, Any | None]:
+    import numpy as np
+    import pandas as pd
+
+    code, frame, start_date, end_date, warmup_bars, n_turnover_days = args
+    frame = frame.copy()
+    frame.columns = [column.lower() for column in frame.columns]
+
+    if "date" not in frame.columns:
+        return code, None
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame = frame.sort_values("date").reset_index(drop=True)
+
+    if start_date is not None:
+        dates = frame["date"].values
+        idx_start = int(np.searchsorted(dates, start_date.to_datetime64(), side="left"))
+        if idx_start >= len(frame):
+            return code, None
+        warmup_start = max(0, idx_start - int(warmup_bars))
+        frame = frame.iloc[warmup_start:].reset_index(drop=True)
+
+    if end_date is not None:
+        frame = frame[frame["date"] <= end_date].reset_index(drop=True)
+
+    if frame.empty:
+        return code, None
+
+    for column in ("open", "close", "volume"):
+        if column not in frame.columns:
+            return code, None
+    open_, close, volume = frame["open"], frame["close"], frame["volume"]
+    frame["signed_turnover"] = (open_ + close) / 2 * volume
+    frame["turnover_n"] = frame["signed_turnover"].rolling(int(n_turnover_days), min_periods=1).sum()
+    frame = frame.set_index("date", drop=False)
+    return code, frame
+
+
+def _preparation_executor_class(executor: str) -> tuple[type[ThreadPoolExecutor] | type[ProcessPoolExecutor], str]:
+    if str(executor).lower() in {"thread", "threads", "threadpool"}:
+        return ThreadPoolExecutor, "thread"
+    return ProcessPoolExecutor, "process"
+
+
+def _prepare_market_frames(
+    tasks: list[tuple[str, Any, Any, Any, int, int]],
+    *,
+    n_jobs: int | None,
+    executor: str,
+    allow_process_fallback: bool = True,
+) -> dict[str, Any]:
+    prepared: dict[str, Any] = {}
+    Executor, _ = _preparation_executor_class(executor)
+    try:
+        with Executor(max_workers=n_jobs) as pool:
+            futures = {pool.submit(_prepare_market_frame, task): task[0] for task in tasks}
+            for future in as_completed(futures):
+                code, frame = future.result()
+                if frame is not None:
+                    prepared[code] = frame
+    except PermissionError as exc:
+        if Executor is not ProcessPoolExecutor or not allow_process_fallback:
+            raise
+        logger.warning("进程池初始化失败，自动降级为线程池：%s", exc)
+        with ThreadPoolExecutor(max_workers=n_jobs) as pool:
+            futures = {pool.submit(_prepare_market_frame, task): task[0] for task in tasks}
+            for future in as_completed(futures):
+                code, frame = future.result()
+                if frame is not None:
+                    prepared[code] = frame
+    return prepared
+
+
 def _load_legacy_select_stock() -> Any:
     if str(PIPELINE_DIR) not in sys.path:
         sys.path.insert(0, str(PIPELINE_DIR))
@@ -312,6 +385,33 @@ class LegacyWarmupBarsPort:
 
     def calculate_warmup(self, config: dict[str, Any], min_bars_buffer: int) -> int:
         return self._module_provider()._calc_warmup(config, min_bars_buffer)
+
+
+class ProductMarketPreparationPort:
+    def __init__(self, *, warmup: WarmupBarsPort | None = None):
+        self.warmup = warmup or ProductWarmupBarsPort()
+
+    def prepare(
+        self,
+        raw_data: dict[str, Any],
+        *,
+        config: dict[str, Any],
+        settings: PreselectExecutionSettings,
+        parameters: PreselectParameters,
+    ) -> dict[str, Any]:
+        import pandas as pd
+
+        end_date = pd.to_datetime(parameters.end_date) if parameters.end_date else None
+        warmup_bars = self.warmup.calculate_warmup(config, settings.min_bars_buffer)
+        tasks = [
+            (code, frame, None, end_date, warmup_bars, settings.n_turnover_days)
+            for code, frame in raw_data.items()
+        ]
+        return _prepare_market_frames(
+            tasks,
+            n_jobs=settings.n_jobs,
+            executor=settings.prepare_executor,
+        )
 
 
 class LegacyMarketPreparationPort:
@@ -654,7 +754,7 @@ class LegacyPreselectExecutionPort:
         self._module_loader = module_loader
         self._module: Any | None = None
         self.market_data = market_data or ProductCsvMarketDataPort()
-        self.market_preparation = market_preparation or LegacyMarketPreparationPort(lambda: self.module)
+        self.market_preparation = market_preparation or ProductMarketPreparationPort()
         self.pick_dates = pick_dates or ProductPickDatePort()
         self.liquidity_pool = liquidity_pool or ProductLiquidityPoolPort()
         self.strategy_selectors = strategy_selectors or ProductStrategySelectorPort(

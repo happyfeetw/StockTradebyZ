@@ -33,6 +33,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     PreselectService,
     ProductCsvMarketDataPort,
     ProductLiquidityPoolPort,
+    ProductMarketPreparationPort,
     ProductPickDatePort,
     ProductStrategySelectorPort,
     ProductWarmupBarsPort,
@@ -489,10 +490,78 @@ print("pipeline.select_stock" in sys.modules)
             with self.assertRaisesRegex(ValueError, "未找到任何 CSV 数据"):
                 ProductCsvMarketDataPort().load_raw_data(settings, PreselectParameters())
 
+    def test_product_market_preparation_port_matches_legacy_base_preparation(self) -> None:
+        raw_data = {
+            "000001": pd.DataFrame(
+                [
+                    {"Date": "2026-05-22", "Open": 12.0, "Close": 13.0, "Volume": 3000},
+                    {"Date": "2026-05-20", "Open": 10.0, "Close": 11.0, "Volume": 1000},
+                    {"Date": "2026-05-21", "Open": 11.0, "Close": 12.0, "Volume": 2000},
+                    {"Date": "2026-05-24", "Open": 14.0, "Close": 15.0, "Volume": 4000},
+                ]
+            ),
+            "000002": pd.DataFrame(
+                [
+                    {"date": "2026-05-20", "open": 8.0, "close": 8.5, "volume": 500},
+                    {"date": "2026-05-22", "open": 9.0, "close": 9.5, "volume": 800},
+                ]
+            ),
+            "missing-volume": pd.DataFrame(
+                [{"date": "2026-05-22", "open": 1.0, "close": 1.1}]
+            ),
+            "missing-date": pd.DataFrame(
+                [{"open": 1.0, "close": 1.1, "volume": 100}]
+            ),
+            "filtered-out": pd.DataFrame(
+                [{"date": "2026-05-25", "open": 1.0, "close": 1.1, "volume": 100}]
+            ),
+        }
+        config = {
+            "b1": {"enabled": False},
+            "b2": {"enabled": False},
+            "brick": {"enabled": False},
+        }
+        settings = PreselectExecutionSettings(
+            data_dir="fixture/raw",
+            top_m=20,
+            n_turnover_days=2,
+            min_bars_buffer=4,
+            n_jobs=1,
+            prepare_executor="thread",
+        )
+        parameters = PreselectParameters(end_date="2026-05-22")
+
+        product_prepared = ProductMarketPreparationPort().prepare(
+            raw_data,
+            config=config,
+            settings=settings,
+            parameters=parameters,
+        )
+        legacy_preparer = select_stock.MarketDataPreparer(
+            end_date=pd.to_datetime(parameters.end_date),
+            warmup_bars=select_stock._calc_warmup(config, settings.min_bars_buffer),
+            n_turnover_days=settings.n_turnover_days,
+            selector=None,
+            n_jobs=settings.n_jobs,
+            executor=settings.prepare_executor,
+        )
+        legacy_prepared = legacy_preparer.prepare(raw_data)
+
+        self.assertEqual(product_prepared.keys(), legacy_prepared.keys())
+        self.assertEqual(set(product_prepared), {"000001", "000002"})
+        self.assertEqual(
+            product_prepared["000001"]["date"].dt.strftime("%Y-%m-%d").tolist(),
+            ["2026-05-20", "2026-05-21", "2026-05-22"],
+        )
+        self.assertEqual(product_prepared["000001"].index.name, "date")
+        for code in product_prepared:
+            pd.testing.assert_frame_equal(product_prepared[code], legacy_prepared[code])
+
     def test_legacy_preselect_default_uses_product_owned_date_and_pool_ports(self) -> None:
         port = LegacyPreselectExecutionPort(module_loader=lambda: SimpleNamespace())
 
         self.assertIsInstance(port.market_data, ProductCsvMarketDataPort)
+        self.assertIsInstance(port.market_preparation, ProductMarketPreparationPort)
         self.assertIsInstance(port.pick_dates, ProductPickDatePort)
         self.assertIsInstance(port.liquidity_pool, ProductLiquidityPoolPort)
         self.assertIsInstance(port.strategy_selectors, ProductStrategySelectorPort)

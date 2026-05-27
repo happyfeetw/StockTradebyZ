@@ -1,12 +1,15 @@
 # Target Architecture Design
 
-Issue: #29  
+Issue: #29
+Current status sync issue: #111
 Parent epic: #23
 
 This is the Phase 2 architecture plan for the React/FastAPI product rewrite. It
-is a design baseline, not implementation. Implementation PRs should reference
-this document and keep business behavior parity with the golden masters in
-`tests/fixtures/golden_master/`.
+started as a design baseline. Some slices are now implemented; current phase
+status and next issue selection live in
+[product-refactor-status.md](product-refactor-status.md). Implementation PRs
+should reference this document and keep business behavior parity with the golden
+masters in `tests/fixtures/golden_master/`.
 
 ## Confirmed Stack
 
@@ -157,7 +160,8 @@ var/artifacts/{run_id}/
     normalized.json
     suggestion.json
   charts/
-    {pick_date}/{code}_day.png
+    {candidate_batch_id}/{code}_day.jpg
+    {candidate_batch_id}/{code}_{strategy}_day.jpg
   archive/
     summary.json
     all.json
@@ -168,6 +172,9 @@ Rules:
 - SQLite `artifacts.path` stores relative paths under `var/artifacts/`.
 - Legacy chart files under `data/kline/` can be referenced during migration but
   new product runs should write product-owned artifacts.
+- New product chart export creates both code-level compatibility artifacts and
+  strategy-scoped artifacts keyed by `review_key`. Review provider and archive
+  flows should prefer strategy-scoped charts and fall back to code-level charts.
 - Large raw provider responses should be artifacts, not SQLite blobs.
 
 ## FastAPI Route Groups
@@ -219,9 +226,11 @@ Run kinds:
 - `preselect`
 - `review`
 - `archive`
+- `chart_export`
 - `legacy_import`
 - `backup`
 - `restore`
+- `diagnostic`
 
 Job rules:
 
@@ -290,22 +299,24 @@ summary.
 
 ## API Contract Test Plan
 
-Phase 2 is design-only. Later implementation PRs should add:
+The initial API contract plan has partially landed. Remaining implementation
+PRs should keep adding:
 
-- schema tests for every Pydantic request/response model;
+- schema tests for every new Pydantic request/response model;
 - SQLite migration tests using a temporary database;
 - DuckDB migration tests using a temporary database;
-- API tests for health, settings, run creation, run status, candidates,
-  reviews, archive, artifacts, migration dry run, backup, and restore;
-- job lifecycle tests for success, failure, cancellation, and resume.
+- API tests for settings, strategy metadata, analytics summary, and any new
+  route groups;
+- job lifecycle tests for success, failure, cancellation, and resume when
+  runtime semantics change.
 
 ## Implementation PR Split
 
-Recommended next issues:
+The original Phase 2 split has mostly landed through #31, #33, #35, #37, #39,
+and #41, then later API/UI/migration slices. The current next queue is tracked
+in [product-refactor-status.md](product-refactor-status.md):
 
-1. scaffold FastAPI app, Python package boundaries, and dependency files;
-2. add SQLite models and Alembic migrations;
-3. add DuckDB migration runner and initial analytical schema;
-4. add job runtime skeleton and API contracts;
-5. add legacy import dry-run for candidates/reviews/history;
-6. scaffold React/Vite app after API contract shape is stable.
+1. #112: isolate strategy selection domain behind parity-tested ports;
+2. #113: add settings, strategy metadata, and analytics summary APIs;
+3. #114: productize the React workstation UI;
+4. #115: define and execute product storage cutover.

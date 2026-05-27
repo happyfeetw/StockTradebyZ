@@ -83,6 +83,28 @@ The repo currently uses local files as the source of truth:
 Agents should assume these directories may be absent in a clean clone and may be
 large in a local working copy.
 
+## Product Refactor Architecture
+
+The product-level rewrite is tracked by issue #23. Current phase status and the
+next issue queue live in
+[`docs/agent-harness/product-refactor-status.md`](docs/agent-harness/product-refactor-status.md).
+
+The confirmed target stack is:
+
+- React/Vite/TypeScript web UI under `apps/web/`.
+- FastAPI backend under `apps/api/stocktrade_api/`.
+- Python business domain modules under `src/stocktrade/domain/`.
+- SQLite product-state database under `var/db/app.sqlite`.
+- DuckDB analytical database under `var/db/analytics.duckdb`.
+- Product-owned generated artifacts under `var/artifacts/{run_id}/`.
+
+Current product-owned surfaces include FastAPI routes for runs, candidates,
+reviews, archive, migrations, backups, artifacts, chart export, and Gemini CLI
+provider review. The React app has workflow views for runs, candidates,
+reviews, archive, and migrations. These are real refactor surfaces, but the
+full rewrite is not complete until the status file's completion boundary is
+met.
+
 ## Agent-Friendly Target Shape
 
 Future productization should move toward explicit layers:

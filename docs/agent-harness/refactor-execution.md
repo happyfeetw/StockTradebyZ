@@ -28,6 +28,11 @@ in the confirmed new stack.
 
 ## Phase Model
 
+Current phase status is tracked in
+[product-refactor-status.md](product-refactor-status.md). Treat that status file
+as the handoff map for choosing the next issue. This execution harness defines
+the durable phase gates; the status file records current evidence and gaps.
+
 ### R0 Product Charter and Decision Freeze
 
 Goal: define what the rebuilt product is before choosing implementation shape.
@@ -196,9 +201,11 @@ For every product refactor task:
 1. Name the active phase.
 2. Confirm the managing GitHub issue and PR plan from
    [issue-pr-governance.md](issue-pr-governance.md).
-3. Read the product charter, business spec, quality bar, and relevant contract.
-4. State the behavior oracle and parity evidence.
-5. State whether any precondition blocks implementation.
-6. Patch the smallest phase slice.
-7. Run the phase gate and `scripts/harness/check.sh quick`.
-8. Update the harness docs when a decision becomes durable.
+3. Read [product-refactor-status.md](product-refactor-status.md) and confirm
+   whether the chosen issue is still the correct next slice.
+4. Read the product charter, business spec, quality bar, and relevant contract.
+5. State the behavior oracle and parity evidence.
+6. State whether any precondition blocks implementation.
+7. Patch the smallest phase slice.
+8. Run the phase gate and `scripts/harness/check.sh quick`.
+9. Update the harness docs when a decision becomes durable.

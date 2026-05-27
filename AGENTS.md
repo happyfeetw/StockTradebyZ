@@ -12,6 +12,8 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   [docs/agent-harness/issue-pr-governance.md](docs/agent-harness/issue-pr-governance.md)
 - Product refactor charter:
   [docs/agent-harness/product-refactor-charter.md](docs/agent-harness/product-refactor-charter.md)
+- Product refactor status:
+  [docs/agent-harness/product-refactor-status.md](docs/agent-harness/product-refactor-status.md)
 - Business logic specification harness:
   [docs/agent-harness/business-logic-spec.md](docs/agent-harness/business-logic-spec.md)
 - Refactor execution harness:
@@ -65,9 +67,10 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
   land through a PR. Follow
   `docs/agent-harness/issue-pr-governance.md`.
 - Name the active phase from `docs/agent-harness/refactor-execution.md`, use
-  `docs/agent-harness/business-logic-spec.md` for parity rules, and confirm
-  blocking items in `docs/agent-harness/refactor-preconditions.md` before broad
-  implementation.
+  `docs/agent-harness/product-refactor-status.md` for current progress and
+  next issue selection, use `docs/agent-harness/business-logic-spec.md` for
+  parity rules, and confirm blocking items in
+  `docs/agent-harness/refactor-preconditions.md` before broad implementation.
 - Do not remove file-based storage, Streamlit/workbench paths, or legacy CLI
   handoffs until migration evidence and rollback notes exist.
 

@@ -22,6 +22,7 @@ from stocktrade.domain.selection import (  # noqa: E402
     compute_brick_values,
     compute_daily_return,
     compute_kdj,
+    compute_kdj_quantile_mask,
     compute_max_volume_not_bearish,
     compute_recent_b1_prior_j,
     compute_recent_b1_prior_lag,
@@ -52,6 +53,22 @@ def reference_compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
         d[i] = 2.0 / 3.0 * d[i - 1] + 1.0 / 3.0 * k[i]
     j = 3.0 * k - 2.0 * d
     return frame.assign(K=k, D=d, J=j)
+
+
+def reference_compute_kdj_quantile_mask(
+    j_values: pd.Series | np.ndarray,
+    *,
+    j_threshold: float = -5.0,
+    j_q_threshold: float = 0.10,
+) -> np.ndarray:
+    j_series = (
+        j_values.astype(float)
+        if isinstance(j_values, pd.Series)
+        else pd.Series(np.asarray(j_values, dtype=float))
+    )
+    j_array = j_series.to_numpy(dtype=float)
+    quantile = j_series.expanding(min_periods=1).quantile(j_q_threshold).to_numpy(dtype=float)
+    return (j_array < j_threshold) | (j_array <= quantile)
 
 
 def reference_compute_brick_values(
@@ -403,6 +420,41 @@ class SelectionIndicatorContractTests(unittest.TestCase):
 
         self.assertEqual(actual.columns.tolist(), ["high", "low", "close", "K", "D", "J"])
         self.assertTrue(actual.empty)
+
+    def test_product_kdj_quantile_mask_matches_reference_formula(self) -> None:
+        j_values = pd.Series([np.nan, -10.0, 5.0, -2.0, 3.0, -6.0])
+
+        actual = compute_kdj_quantile_mask(j_values, j_threshold=-5.0, j_q_threshold=0.50)
+        expected = reference_compute_kdj_quantile_mask(j_values, j_threshold=-5.0, j_q_threshold=0.50)
+
+        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(actual, np.array([False, True, False, True, False, True]))
+
+    def test_legacy_selector_kdj_quantile_filter_delegates_to_product_helper_when_available(self) -> None:
+        frame = pd.DataFrame({"J": [1.0, 2.0, 3.0]})
+
+        def fake_product_compute_kdj_quantile_mask(
+            j_values: pd.Series,
+            *,
+            j_threshold: float = -5.0,
+            j_q_threshold: float = 0.10,
+        ) -> np.ndarray:
+            self.assertEqual(j_values.tolist(), [1.0, 2.0, 3.0])
+            self.assertEqual(j_threshold, 1.5)
+            self.assertEqual(j_q_threshold, 0.25)
+            return np.array([True, False, True])
+
+        with patch.object(
+            selector_module,
+            "_product_compute_kdj_quantile_mask",
+            fake_product_compute_kdj_quantile_mask,
+        ):
+            actual = selector_module.KDJQuantileFilter(
+                j_threshold=1.5,
+                j_q_threshold=0.25,
+            ).vec_mask(frame)
+
+        np.testing.assert_array_equal(actual, np.array([True, False, True]))
 
     def test_product_brick_values_match_reference_formula(self) -> None:
         frame = pd.DataFrame(

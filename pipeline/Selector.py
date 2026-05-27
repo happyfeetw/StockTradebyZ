@@ -46,6 +46,7 @@ try:
         compute_brick_values as _product_compute_brick_values,
         compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
+        compute_kdj_quantile_mask as _product_compute_kdj_quantile_mask,
         compute_max_volume_not_bearish as _product_compute_max_volume_not_bearish,
         compute_recent_b1_prior_j as _product_compute_recent_b1_prior_j,
         compute_recent_b1_prior_lag as _product_compute_recent_b1_prior_lag,
@@ -66,6 +67,7 @@ except ImportError:
     _product_compute_brick_values = None
     _product_compute_daily_return = None
     _product_compute_kdj = None
+    _product_compute_kdj_quantile_mask = None
     _product_compute_max_volume_not_bearish = None
     _product_compute_recent_b1_prior_j = None
     _product_compute_recent_b1_prior_lag = None
@@ -451,6 +453,13 @@ class KDJQuantileFilter:
         向量化：expanding 历史分位（无未来泄漏）。
         """
         J = self._j_series(df)
+        if _product_compute_kdj_quantile_mask is not None:
+            return _product_compute_kdj_quantile_mask(
+                J,
+                j_threshold=self.j_threshold,
+                j_q_threshold=self.j_q_threshold,
+            )
+
         j_vals  = J.to_numpy(dtype=float)
         j_q_exp = J.expanding(min_periods=1).quantile(self.j_q_threshold).to_numpy(dtype=float)
         return (j_vals < self.j_threshold) | (j_vals <= j_q_exp)

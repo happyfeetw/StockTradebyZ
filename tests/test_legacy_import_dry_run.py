@@ -213,6 +213,9 @@ def build_valid_review_import_fixture(root: Path) -> Path:
 def build_valid_history_import_fixture(root: Path) -> Path:
     data_root = root / "data"
     history_dir = data_root / "history" / "2026-05-26"
+    chart_file = data_root / "kline" / "2026-05-26" / "000010_day.png"
+    chart_file.parent.mkdir(parents=True, exist_ok=True)
+    chart_file.write_bytes(b"legacy chart bytes")
     write_json(
         history_dir / "summary.json",
         {
@@ -428,7 +431,12 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=db_path,
+                duckdb_path=duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -741,10 +749,19 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(chart_artifact["id"], chart_artifact_id)
                 self.assertEqual(chart_artifact["run_id"], migration_id)
                 self.assertEqual(chart_artifact["kind"], "chart")
-                self.assertEqual(chart_artifact["path"], "data/kline/2026-05-26/000010_day.png")
+                self.assertEqual(chart_artifact["path"], f"{migration_id}/charts/data/kline/2026-05-26/000010_day.png")
                 self.assertEqual(chart_artifact["content_type"], "image/png")
                 self.assertEqual(chart_artifact["metadata"]["source"], "legacy:kline")
                 self.assertEqual(chart_artifact["metadata"]["review_key"], "000010_b2")
+                self.assertEqual(chart_artifact["metadata"]["legacy_chart_path"], "data/kline/2026-05-26/000010_day.png")
+                self.assertEqual(
+                    chart_artifact["metadata"]["product_artifact_path"],
+                    f"{migration_id}/charts/data/kline/2026-05-26/000010_day.png",
+                )
+
+                served_chart = await client.get(f"/api/artifacts/{chart_artifact_id}")
+                self.assertEqual(served_chart.status_code, 200)
+                self.assertEqual(served_chart.content, b"legacy chart bytes")
 
                 recommended = await client.get(
                     "/api/archive/2026-05-26",
@@ -799,7 +816,12 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=db_path,
+                duckdb_path=duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -829,7 +851,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(artifacts.status_code, 200)
                 artifacts_payload = artifacts.json()["artifacts"]
                 self.assertEqual(len(artifacts_payload), 1)
-                self.assertEqual(artifacts_payload[0]["path"], shared_chart_path)
+                self.assertEqual(artifacts_payload[0]["path"], f"{migration_id}/charts/data/kline/2026-05-26/000010_day.png")
                 self.assertEqual(artifacts_payload[0]["metadata"]["review_keys"], ["000010_b2", "000011_brick"])
 
             with connect_duckdb(duckdb_path, read_only=True) as connection:
@@ -846,6 +868,50 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(shared_fact_ids), 2)
                 self.assertEqual(len(set(shared_fact_ids)), 1)
                 self.assertIsNotNone(shared_fact_ids[0])
+
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+    async def test_import_legacy_api_keeps_missing_chart_as_legacy_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            data_root = build_valid_history_import_fixture(tmp)
+            chart_file = data_root / "kline" / "2026-05-26" / "000010_day.png"
+            chart_file.unlink()
+
+            db_path = tmp / "app.sqlite"
+            duckdb_path = tmp / "analytics.duckdb"
+            migrate_sqlite(db_path)
+            app = create_app(
+                sqlite_path=db_path,
+                duckdb_path=duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
+            transport = httpx.ASGITransport(app=app)
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                imported = await client.post(
+                    "/api/migrations/import-legacy",
+                    json={
+                        "dry_run": False,
+                        "data_root": str(data_root),
+                        "scope": "history",
+                        "pick_date": "2026-05-26",
+                    },
+                )
+                self.assertEqual(imported.status_code, 200)
+                migration_id = imported.json()["migration_id"]
+
+                artifacts = await client.get(f"/api/runs/{migration_id}/artifacts")
+                self.assertEqual(artifacts.status_code, 200)
+                artifact = artifacts.json()["artifacts"][0]
+                self.assertEqual(artifact["path"], "data/kline/2026-05-26/000010_day.png")
+                self.assertNotIn("product_artifact_path", artifact["metadata"])
+
+                served = await client.get(f"/api/artifacts/{artifact['id']}")
+                self.assertEqual(served.status_code, 409)
+                self.assertEqual(served.json()["detail"], "legacy reference artifact is not product-owned")
 
             if app.state.sqlite_engine is not None:
                 app.state.sqlite_engine.dispose()
@@ -894,7 +960,12 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
+            app = create_app(
+                sqlite_path=db_path,
+                duckdb_path=duckdb_path,
+                backup_root=tmp / "backups",
+                artifact_root=tmp / "artifacts",
+            )
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

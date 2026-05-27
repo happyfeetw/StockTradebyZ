@@ -19,8 +19,11 @@ import sys
 from pathlib import Path
 
 # 将 pipeline 目录加入 path（直接用 python cli.py 时需要）
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(ROOT))
 
+from legacy_compat import print_legacy_write_freeze_notice
 from select_stock import load_config, run_preselect, resolve_preselect_output_dir
 from schemas import CandidateRun
 from pipeline_io import save_candidates
@@ -67,6 +70,11 @@ def _add_log_file(log_dir: str, pick_date: str) -> None:
 # =============================================================================
 
 def cmd_preselect(args: argparse.Namespace) -> None:
+    print_legacy_write_freeze_notice(
+        surface="pipeline.cli preselect",
+        replacement="POST /api/runs/preselect",
+        writes="data/candidates",
+    )
     logger.info("===== 量化初选开始 =====")
 
     pick_ts, candidates = run_preselect(

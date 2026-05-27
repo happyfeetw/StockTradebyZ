@@ -38,6 +38,7 @@ REQUIRED_DOCS = [
     Path("docs/agent-harness/r6-storage-cutover-plan.md"),
     Path("docs/agent-harness/r7-hardening-retirement-plan.md"),
     Path("docs/agent-harness/r7-final-browser-proof.md"),
+    Path("docs/agent-harness/r7-legacy-write-freeze.md"),
     Path("docs/agent-harness/r7-resource-envelope.md"),
     Path("docs/agent-harness/workflows.md"),
     Path("docs/agent-harness/quality-scorecard.md"),
@@ -46,6 +47,19 @@ REQUIRED_DOCS = [
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 OPTIONAL_GENERATED_LINK_PREFIXES = ("data/",)
 IGNORED_PYTHON_PATH_PARTS = {"node_modules", "dist"}
+LEGACY_GENERATED_PATTERNS = (
+    "data/candidates",
+    "data/review",
+    "data/history",
+    "data/kline",
+    "data/runs",
+    "candidates_latest.json",
+    "suggestion.json",
+)
+PRODUCT_LEGACY_READ_ALLOWLIST = {
+    Path("apps/api/stocktrade_api/services/legacy_import.py"),
+    Path("apps/api/stocktrade_api/services/legacy_verify.py"),
+}
 
 
 class HarnessError(RuntimeError):
@@ -138,6 +152,7 @@ def check_docs() -> None:
             "scripts/harness/check.sh refactor-readiness",
             "scripts/harness/check.sh r7-retirement-plan",
             "scripts/harness/check.sh r7-browser-proof",
+            "scripts/harness/check.sh r7-legacy-write-freeze",
             "scripts/harness/check.sh r7-resource-envelope",
             "Maintenance Rule",
         ],
@@ -349,6 +364,7 @@ def check_refactor_readiness() -> None:
 def python_files() -> list[str]:
     roots = ["agent", "apps", "dashboard", "paper_trading", "pipeline", "src", "tests"]
     files: list[str] = [
+        "legacy_compat.py",
         "run_all.py",
         "scripts/harness/check.py",
         "scripts/harness/resource_envelope.py",
@@ -482,12 +498,81 @@ def check_r7_retirement_plan() -> None:
             "Final browser proof",
             "r7-browser-proof",
             "Legacy write freeze",
+            "r7-legacy-write-freeze",
             "Retirement PRs",
             "Rollback Rules",
             "scripts/harness/check.sh r7-retirement-plan",
         ],
     )
     print("[r7-retirement-plan] ok")
+
+
+def iter_product_source_files() -> list[Path]:
+    roots = [
+        ROOT / "apps" / "api" / "stocktrade_api",
+        ROOT / "apps" / "web" / "src",
+        ROOT / "src" / "stocktrade",
+    ]
+    suffixes = {".py", ".ts", ".tsx"}
+    files: list[Path] = []
+    for root in roots:
+        if root.exists():
+            files.extend(path for path in sorted(root.rglob("*")) if path.suffix in suffixes)
+    return files
+
+
+def product_legacy_read_violations() -> list[str]:
+    violations: list[str] = []
+    for path in iter_product_source_files():
+        relative = path.relative_to(ROOT)
+        if relative in PRODUCT_LEGACY_READ_ALLOWLIST:
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = [pattern for pattern in LEGACY_GENERATED_PATTERNS if pattern in text]
+        if hits:
+            violations.append(f"{relative.as_posix()}: {', '.join(hits)}")
+    return violations
+
+
+def check_r7_legacy_write_freeze() -> None:
+    assert_contains(
+        "docs/agent-harness/r7-legacy-write-freeze.md",
+        [
+            "Managing issue: #152",
+            "R7 Legacy Write Freeze",
+            "compatibility-only",
+            "pipeline.cli preselect",
+            "agent.gemini_cli_review",
+            "dashboard.export_kline_charts",
+            "pipeline.archive_results",
+            "workbench.runner",
+            "start_workbench",
+            "Product No-Read Guard",
+            "apps/api/stocktrade_api/services/legacy_import.py",
+            "apps/api/stocktrade_api/services/legacy_verify.py",
+            "scripts/harness/check.sh r7-legacy-write-freeze",
+            "simulated trading remains out of scope",
+            "Rollback",
+        ],
+    )
+    assert_contains("legacy_compat.py", ["R7 legacy write freeze", "compatibility-only"])
+    expected_notices = {
+        "pipeline/cli.py": ["print_legacy_write_freeze_notice", "data/candidates"],
+        "pipeline/archive_results.py": ["print_legacy_write_freeze_notice", "data/history"],
+        "agent/gemini_review.py": ["print_legacy_write_freeze_notice", "data/review"],
+        "agent/gemini_cli_review.py": ["print_legacy_write_freeze_notice", "data/review"],
+        "dashboard/export_kline_charts.py": ["print_legacy_write_freeze_notice", "data/kline"],
+        "workbench/runner.py": ["print_legacy_write_freeze_notice", "data/runs"],
+        "dashboard/app.py": ["LEGACY_UI_FREEZE_NOTICE"],
+        "workbench/app.py": ["LEGACY_UI_FREEZE_NOTICE"],
+        "start_workbench": ["R7 legacy write freeze", "compatibility-only"],
+    }
+    for path, needles in expected_notices.items():
+        assert_contains(path, needles)
+    violations = product_legacy_read_violations()
+    if violations:
+        raise HarnessError("product code directly references legacy generated paths:\n" + "\n".join(violations))
+    print("[r7-legacy-write-freeze] ok")
 
 
 def check_r7_browser_proof() -> None:
@@ -561,6 +646,7 @@ def parse_args() -> argparse.Namespace:
             "storage-cutover-plan",
             "r7-retirement-plan",
             "r7-browser-proof",
+            "r7-legacy-write-freeze",
             "r7-resource-envelope",
             "quick",
         ],
@@ -590,6 +676,8 @@ def main() -> int:
             check_r7_retirement_plan()
         elif args.gate == "r7-browser-proof":
             check_r7_browser_proof()
+        elif args.gate == "r7-legacy-write-freeze":
+            check_r7_legacy_write_freeze()
         elif args.gate == "r7-resource-envelope":
             check_r7_resource_envelope()
         elif args.gate == "quick":

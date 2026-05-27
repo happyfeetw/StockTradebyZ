@@ -36,6 +36,9 @@ from base_reviewer import BaseReviewer
 # ────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_review.yaml"
+sys.path.insert(0, str(_ROOT))
+
+from legacy_compat import print_legacy_write_freeze_notice
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # 路径参数（相对路径默认基于项目根目录）
@@ -142,6 +145,11 @@ def main():
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
+    print_legacy_write_freeze_notice(
+        surface="agent.gemini_review",
+        replacement="POST /api/runs/review/provider",
+        writes="data/review",
+    )
     reviewer = GeminiReviewer(config)
     reviewer.run()
 

@@ -22,6 +22,8 @@ _DASH = Path(__file__).parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_DASH))
 
+from legacy_compat import LEGACY_UI_FREEZE_NOTICE
+
 # ── 辅助加载 ─────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=60)
@@ -76,6 +78,8 @@ _css_path = _DASH / "assets" / "style.css"
 if _css_path.exists():
     st.markdown(f"<style>{_css_path.read_text(encoding='utf-8')}</style>",
                 unsafe_allow_html=True)
+
+st.warning(LEGACY_UI_FREEZE_NOTICE)
 
 # ── 组件导入 ─────────────────────────────────────────────────────────────────
 from components.charts import make_daily_chart, make_weekly_chart

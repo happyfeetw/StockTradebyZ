@@ -41,6 +41,10 @@ from base_reviewer import BaseReviewer
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _ROOT / "config" / "gemini_cli_review.yaml"
+sys.path.insert(0, str(_ROOT))
+
+from legacy_compat import print_legacy_write_freeze_notice
+
 GEMINI_CLI_IMAGE_LIMIT = 3000
 GEMINI_CLI_BATCH_TARGET_RATIO = 0.90
 MAX_BATCH_SIZE = int(GEMINI_CLI_IMAGE_LIMIT * GEMINI_CLI_BATCH_TARGET_RATIO)
@@ -1316,6 +1320,11 @@ def main():
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
+    print_legacy_write_freeze_notice(
+        surface="agent.gemini_cli_review",
+        replacement="POST /api/runs/review/provider",
+        writes="data/review and provider raw evidence",
+    )
     reviewer = GeminiCliReviewer(config)
     reviewer.run()
 

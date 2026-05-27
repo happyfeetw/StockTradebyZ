@@ -32,6 +32,7 @@ DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
 
+from legacy_compat import LEGACY_UI_FREEZE_NOTICE  # noqa: E402
 from dashboard.components.charts import make_daily_chart, make_weekly_chart  # noqa: E402
 from paper_trading.core import (  # noqa: E402
     complete_history_result,
@@ -1885,6 +1886,7 @@ def main() -> None:
     css = _read_text(WORKBENCH_DIR / "assets" / "style.css")
     if css:
         st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.warning(LEGACY_UI_FREEZE_NOTICE)
 
     with st.sidebar:
         st.title("AgentTrader")

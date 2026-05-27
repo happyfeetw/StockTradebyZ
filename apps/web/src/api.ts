@@ -327,6 +327,33 @@ export interface LegacyImportDryRunReport {
   import_summary: LegacyImportSummary | null
 }
 
+export type LegacyImportVerifyScope = 'candidates' | 'reviews' | 'history'
+
+export interface LegacyImportVerifyCounts {
+  legacy: number
+  sqlite: number
+  duckdb: number | null
+}
+
+export interface LegacyImportVerifyMismatches {
+  missing_in_sqlite: string[]
+  extra_in_sqlite: string[]
+  missing_in_duckdb: string[]
+  extra_in_duckdb: string[]
+}
+
+export interface LegacyImportVerifyReport {
+  passed: boolean
+  data_root: string
+  scope: LegacyImportVerifyScope
+  pick_date: string
+  run_id: string | null
+  source_path: string
+  duckdb_checked: boolean
+  counts: LegacyImportVerifyCounts
+  mismatches: LegacyImportVerifyMismatches
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -491,6 +518,23 @@ export function importLegacyHistorySnapshot(dataRoot: string, pickDate: string):
       data_root: dataRoot,
       scope: 'history',
       pick_date: pickDate,
+    }),
+  })
+}
+
+export function verifyLegacyImport(
+  dataRoot: string,
+  scope: LegacyImportVerifyScope,
+  pickDate: string,
+  runId?: string,
+): Promise<LegacyImportVerifyReport> {
+  return request<LegacyImportVerifyReport>('/api/migrations/verify-legacy', {
+    method: 'POST',
+    body: JSON.stringify({
+      data_root: dataRoot,
+      scope,
+      pick_date: pickDate,
+      run_id: runId ?? null,
     }),
   })
 }

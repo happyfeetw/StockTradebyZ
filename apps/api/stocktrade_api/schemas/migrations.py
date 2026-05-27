@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 LegacyImportScope = Literal["all", "candidates", "reviews", "history"]
+LegacyImportVerifyScope = Literal["candidates", "reviews", "history"]
 LegacyArchiveStatus = Literal["recommended", "reviewed", "unreviewed"]
 
 
@@ -146,6 +147,38 @@ class LegacyImportDryRunReport(BaseModel):
     warnings: list[LegacyImportIssue]
     quarantine: list[LegacyImportIssue]
     import_summary: LegacyImportSummary | None = None
+
+
+class LegacyImportVerifyRequest(BaseModel):
+    data_root: str = "data"
+    scope: LegacyImportVerifyScope
+    pick_date: str
+    run_id: str | None = None
+
+
+class LegacyImportVerifyCounts(BaseModel):
+    legacy: int
+    sqlite: int
+    duckdb: int | None = None
+
+
+class LegacyImportVerifyMismatches(BaseModel):
+    missing_in_sqlite: list[str] = Field(default_factory=list)
+    extra_in_sqlite: list[str] = Field(default_factory=list)
+    missing_in_duckdb: list[str] = Field(default_factory=list)
+    extra_in_duckdb: list[str] = Field(default_factory=list)
+
+
+class LegacyImportVerifyReport(BaseModel):
+    passed: bool
+    data_root: str
+    scope: LegacyImportVerifyScope
+    pick_date: str
+    run_id: str | None = None
+    source_path: str
+    duckdb_checked: bool
+    counts: LegacyImportVerifyCounts
+    mismatches: LegacyImportVerifyMismatches
 
 
 class MigrationQuarantineRecord(BaseModel):

@@ -23,7 +23,14 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import select_stock  # noqa: E402
-from stocktrade.domain.selection import LegacyPreselectExecutionPort, PreselectParameters, PreselectService  # noqa: E402
+from stocktrade.domain.selection import (  # noqa: E402
+    LegacyPreselectExecutionPort,
+    PreselectExecutionSettings,
+    PreselectParameters,
+    PreselectService,
+    ProductLiquidityPoolPort,
+    ProductPickDatePort,
+)
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.preselect import CandidateResponse, PreselectRunRequest, PreselectRunResponse  # noqa: E402
 from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
@@ -230,6 +237,62 @@ print("pipeline.select_stock" in sys.modules)
                 "False",
             ],
         )
+
+    def test_product_pick_date_port_matches_legacy_resolution(self) -> None:
+        prepared = {
+            "000001": pd.DataFrame(
+                {"turnover_n": [10.0, 20.0]},
+                index=pd.to_datetime(["2026-05-20", "2026-05-22"]),
+            ),
+            "000002": pd.DataFrame(
+                {"turnover_n": [30.0]},
+                index=pd.to_datetime(["2026-05-21"]),
+            ),
+            "ignored-non-trading-index": pd.DataFrame({"turnover_n": [999.0]}, index=[0]),
+        }
+        port = ProductPickDatePort()
+
+        for requested_pick_date in [None, "2026-05-20", "2026-05-21", "2026-05-23"]:
+            self.assertEqual(
+                port.resolve_pick_date(prepared, requested_pick_date),
+                select_stock._resolve_pick_date(prepared, requested_pick_date),
+            )
+
+        with self.assertRaisesRegex(ValueError, "早于最早可用日期"):
+            port.resolve_pick_date(prepared, "2026-05-19")
+        with self.assertRaisesRegex(ValueError, "prepared 数据中没有可用日期"):
+            port.resolve_pick_date({"ignored": pd.DataFrame({"turnover_n": [1.0]}, index=[0])}, None)
+
+    def test_product_liquidity_pool_port_matches_legacy_top_turnover_pool(self) -> None:
+        dates = pd.to_datetime(["2026-05-20", "2026-05-21"])
+        prepared = {
+            "000001": pd.DataFrame({"turnover_n": [100.0, 10.0]}, index=dates),
+            "000002": pd.DataFrame({"turnover_n": [90.0, 200.0]}, index=dates),
+            "000003": pd.DataFrame({"turnover_n": [50.0, 150.0]}, index=dates),
+        }
+        port = ProductLiquidityPoolPort()
+
+        for top_m in [0, 2, 10]:
+            settings = PreselectExecutionSettings(
+                data_dir="fixture/raw",
+                top_m=top_m,
+                n_turnover_days=3,
+                min_bars_buffer=4,
+                n_jobs=None,
+                prepare_executor="thread",
+            )
+            legacy_pool_by_date = select_stock.TopTurnoverPoolBuilder(top_m=top_m).build(prepared)
+            for pick_date in [*dates, pd.Timestamp("2026-05-22")]:
+                self.assertEqual(
+                    port.build_pool(prepared, pick_date=pick_date, settings=settings),
+                    list(legacy_pool_by_date.get(pick_date, [])),
+                )
+
+    def test_legacy_preselect_default_uses_product_owned_date_and_pool_ports(self) -> None:
+        port = LegacyPreselectExecutionPort(module_loader=lambda: SimpleNamespace())
+
+        self.assertIsInstance(port.pick_dates, ProductPickDatePort)
+        self.assertIsInstance(port.liquidity_pool, ProductLiquidityPoolPort)
 
     def test_legacy_port_orchestrates_named_selection_ports_and_preserves_identity_dedupe(self) -> None:
         calls: list[str] = []

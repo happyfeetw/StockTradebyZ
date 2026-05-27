@@ -1,8 +1,10 @@
 """
-Archive daily final stock-picking results for local workbench history.
+Archive daily final stock-picking results for legacy local history.
 
-The script reads existing candidates, review outputs, and chart paths, then
-writes a stable per-date history snapshot under data/history/.
+The legacy script is retired by default in R7. The supported product path is
+POST /api/runs/archive. With the rollback flag enabled, the script reads
+existing candidates, review outputs, and chart paths, then writes a stable
+per-date history snapshot under data/history/.
 """
 from __future__ import annotations
 
@@ -18,7 +20,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from legacy_compat import print_legacy_write_freeze_notice
+from legacy_compat import (
+    LEGACY_ARCHIVE_RESULTS_ENV,
+    LEGACY_ARCHIVE_RESULTS_RETIRED_NOTICE,
+    legacy_archive_results_enabled,
+    print_legacy_write_freeze_notice,
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -223,6 +230,15 @@ def update_index(history_dir: Path, summary: dict[str, Any]) -> None:
 
 
 def archive(args: argparse.Namespace) -> Path:
+    if not legacy_archive_results_enabled():
+        print(LEGACY_ARCHIVE_RESULTS_RETIRED_NOTICE, file=sys.stderr)
+        print(
+            "Use POST /api/runs/archive for product-owned archive workflows. "
+            f"Temporary rollback: set {LEGACY_ARCHIVE_RESULTS_ENV}=1.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     print_legacy_write_freeze_notice(
         surface="pipeline.archive_results",
         replacement="POST /api/runs/archive",

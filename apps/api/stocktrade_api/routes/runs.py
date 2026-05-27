@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..dependencies import (
     get_archive_repository,
     get_analytics_writer,
+    get_artifact_root,
+    get_candidate_repository,
     get_job_runtime,
     get_preselect_service,
     get_review_repository,
@@ -16,6 +19,7 @@ from ..jobs.runtime import JobRuntime
 from ..routes.archive import archive_row_response, archive_snapshot_response
 from ..routes.reviews import recommendation_response, review_response, review_run_response
 from ..schemas.archive import ArchiveRunCreateRequest, ArchiveRunCreateResponse
+from ..schemas.charts import ChartExportRunCreateRequest, ChartExportRunCreateResponse
 from ..schemas.preselect import (
     CandidateBatchResponse,
     CandidateResponse,
@@ -35,6 +39,8 @@ from ..schemas.runs import (
     RunSummary,
 )
 from ..storage.archive_repository import ArchiveRepository, ArchiveSourceNotFoundError
+from ..storage.candidate_repository import CandidateBatchNotFoundError as CandidateSelectionBatchNotFoundError
+from ..storage.candidate_repository import CandidateRepository
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.review_repository import CandidateBatchNotFoundError, ReviewRepository
 from ..storage.run_repository import RunNotFoundError, RunRepository
@@ -207,6 +213,33 @@ def create_archive_run(
         run=run_summary(run),
         snapshot=archive_snapshot_response(created.snapshot),
         rows=[archive_row_response(row) for row in created.rows],
+    )
+
+
+@router.post("/runs/chart-export", response_model=ChartExportRunCreateResponse)
+def create_chart_export_run(
+    request: ChartExportRunCreateRequest,
+    runtime: JobRuntime = Depends(get_job_runtime),
+    candidate_repository: CandidateRepository = Depends(get_candidate_repository),
+    run_repository: RunRepository = Depends(get_run_repository),
+    artifact_root: Path = Depends(get_artifact_root),
+) -> ChartExportRunCreateResponse:
+    from ..services.chart_runs import ChartExportRunService, ChartExportValidationError
+
+    service = ChartExportRunService(
+        candidate_repository,
+        run_repository,
+        artifact_root=artifact_root,
+    )
+    try:
+        run, created = runtime.run_chart_export_job(request, service=service)
+    except CandidateSelectionBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="candidate batch not found") from exc
+    except ChartExportValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ChartExportRunCreateResponse(
+        run=run_summary(run),
+        artifacts=[artifact_response(artifact) for artifact in created.artifacts],
     )
 
 

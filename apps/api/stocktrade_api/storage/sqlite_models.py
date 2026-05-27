@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 RUN_STATUSES = ("queued", "running", "succeeded", "failed", "cancelling", "cancelled")
-RUN_KINDS = ("preselect", "review", "archive", "legacy_import", "backup", "restore", "diagnostic")
+RUN_KINDS = ("preselect", "review", "archive", "chart_export", "legacy_import", "backup", "restore", "diagnostic")
 ARCHIVE_STATUSES = ("recommended", "reviewed", "unreviewed")
 
 

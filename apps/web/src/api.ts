@@ -5,7 +5,7 @@ export function artifactFileUrl(artifactId: string): string {
 }
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
-export type RunKind = 'preselect' | 'review' | 'archive' | 'legacy_import' | 'backup' | 'restore' | 'diagnostic'
+export type RunKind = 'preselect' | 'review' | 'archive' | 'chart_export' | 'legacy_import' | 'backup' | 'restore' | 'diagnostic'
 
 export interface ProductStack {
   frontend: string
@@ -338,6 +338,18 @@ export interface ArchiveRunCreateResponse {
   rows: ArchiveRow[]
 }
 
+export interface ChartExportRunCreateRequest {
+  candidate_batch_id: string
+  raw_dir?: string
+  bars?: number
+  limit?: number
+}
+
+export interface ChartExportRunCreateResponse {
+  run: RunSummary
+  artifacts: Artifact[]
+}
+
 export interface ArchiveSnapshotFilters {
   pick_date?: string
   run_id?: string
@@ -581,6 +593,13 @@ export function getArchiveRow(rowId: number): Promise<ArchiveRowDetailResponse> 
 
 export function createArchiveRun(payload: ArchiveRunCreateRequest): Promise<ArchiveRunCreateResponse> {
   return request<ArchiveRunCreateResponse>('/api/runs/archive', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createChartExportRun(payload: ChartExportRunCreateRequest): Promise<ChartExportRunCreateResponse> {
+  return request<ChartExportRunCreateResponse>('/api/runs/chart-export', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

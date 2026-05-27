@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 RunStatus = Literal["queued", "running", "succeeded", "failed", "cancelling", "cancelled"]
-RunKind = Literal["preselect", "review", "archive", "legacy_import", "backup", "restore", "diagnostic"]
+RunKind = Literal["preselect", "review", "archive", "chart_export", "legacy_import", "backup", "restore", "diagnostic"]
 
 
 class DiagnosticRunRequest(BaseModel):

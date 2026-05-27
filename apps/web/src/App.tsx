@@ -132,6 +132,7 @@ function App() {
 function CandidatesView() {
   const queryClient = useQueryClient()
   const [filters, setFilters] = useState<Required<CandidateFilters>>({
+    batch_id: '',
     pick_date: '',
     run_id: '',
     strategy: '',
@@ -140,6 +141,7 @@ function CandidatesView() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null)
 
   const normalizedFilters = {
+    batch_id: filters.batch_id.trim(),
     pick_date: filters.pick_date.trim(),
     run_id: filters.run_id.trim(),
     strategy: filters.strategy.trim(),
@@ -167,7 +169,7 @@ function CandidatesView() {
   }
 
   function resetFilters() {
-    setFilters({ pick_date: '', run_id: '', strategy: '', code: '' })
+    setFilters({ batch_id: '', pick_date: '', run_id: '', strategy: '', code: '' })
     setSelectedCandidateId(null)
   }
 

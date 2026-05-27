@@ -8,6 +8,7 @@ from .preselect import (
     LegacyPreselectExecutionPort,
     LegacyStrategyFormulaFactoryPort,
     LegacyStrategySelectorPort,
+    LegacyWarmupBarsPort,
     LiquidityPoolPort,
     MarketDataPort,
     MarketPreparationPort,
@@ -15,6 +16,7 @@ from .preselect import (
     ProductLiquidityPoolPort,
     ProductPickDatePort,
     ProductStrategySelectorPort,
+    ProductWarmupBarsPort,
     PreselectExecutionSettings,
     PreselectExecutionPort,
     PreselectParameters,
@@ -23,6 +25,7 @@ from .preselect import (
     SelectionCandidate,
     StrategyFormulaFactoryPort,
     StrategySelectorPort,
+    WarmupBarsPort,
 )
 
 __all__ = [
@@ -33,6 +36,7 @@ __all__ = [
     "LegacyPreselectExecutionPort",
     "LegacyStrategyFormulaFactoryPort",
     "LegacyStrategySelectorPort",
+    "LegacyWarmupBarsPort",
     "LiquidityPoolPort",
     "MarketDataPort",
     "MarketPreparationPort",
@@ -40,6 +44,7 @@ __all__ = [
     "ProductLiquidityPoolPort",
     "ProductPickDatePort",
     "ProductStrategySelectorPort",
+    "ProductWarmupBarsPort",
     "PreselectExecutionSettings",
     "PreselectExecutionPort",
     "PreselectParameters",
@@ -48,4 +53,5 @@ __all__ = [
     "SelectionCandidate",
     "StrategyFormulaFactoryPort",
     "StrategySelectorPort",
+    "WarmupBarsPort",
 ]

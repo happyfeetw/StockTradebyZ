@@ -40,6 +40,7 @@ import {
   importLegacyCandidateBatch,
   importLegacyHistorySnapshot,
   importLegacyReviewRun,
+  listCandidateBatches,
   listArchiveRows,
   listArchiveSnapshots,
   listCandidates,
@@ -52,6 +53,7 @@ import {
   type ArchiveStatus,
   type Artifact,
   type Candidate,
+  type CandidateBatchSummary,
   type CandidateFilters,
   type JobEvent,
   type LegacyImportIssue,
@@ -152,7 +154,18 @@ function CandidatesView() {
     queryKey: ['candidates', normalizedFilters],
     queryFn: () => listCandidates(normalizedFilters),
   })
+  const candidateBatchesQuery = useQuery({
+    queryKey: ['candidate-batches', normalizedFilters.pick_date, normalizedFilters.run_id],
+    queryFn: () =>
+      listCandidateBatches({
+        pick_date: normalizedFilters.pick_date,
+        run_id: normalizedFilters.run_id,
+      }),
+  })
   const candidates = candidatesQuery.data?.candidates ?? []
+  const candidateBatches = candidateBatchesQuery.data?.batches ?? []
+  const activeBatchId = normalizedFilters.batch_id
+  const activeBatch = candidateBatches.find((batch) => batch.id === activeBatchId) ?? null
   const selectedStillVisible = selectedCandidateId !== null && candidates.some((candidate) => candidate.id === selectedCandidateId)
   const activeCandidateId = selectedStillVisible ? selectedCandidateId : candidates[0]?.id
 
@@ -166,10 +179,21 @@ function CandidatesView() {
 
   function updateFilter(key: keyof CandidateFilters, value: string) {
     setFilters((current) => ({ ...current, [key]: value }))
+    setSelectedCandidateId(null)
   }
 
   function resetFilters() {
     setFilters({ batch_id: '', pick_date: '', run_id: '', strategy: '', code: '' })
+    setSelectedCandidateId(null)
+  }
+
+  function selectBatch(batch: CandidateBatchSummary) {
+    setFilters((current) => ({
+      ...current,
+      batch_id: batch.id,
+      pick_date: '',
+      run_id: '',
+    }))
     setSelectedCandidateId(null)
   }
 
@@ -186,6 +210,7 @@ function CandidatesView() {
           aria-label="Refresh candidates"
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['candidates'] })
+            queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
             queryClient.invalidateQueries({ queryKey: ['candidate'] })
           }}
         >
@@ -193,7 +218,75 @@ function CandidatesView() {
         </button>
       </header>
 
-      <form className="filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+      <section className="candidate-batch-panel" aria-label="Historical candidate batches">
+        <div className="panel-heading">
+          <div>
+            <h2>Candidate batches</h2>
+            <p>
+              {candidateBatchesQuery.isLoading
+                ? 'Loading historical batches'
+                : `${candidateBatchesQuery.data?.total ?? 0} batches${activeBatch ? `, selected ${activeBatch.pick_date}` : ''}`}
+            </p>
+          </div>
+          {activeBatchId ? (
+            <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
+              <XCircle size={17} aria-hidden="true" />
+              <span>Clear batch</span>
+            </button>
+          ) : null}
+        </div>
+
+        {candidateBatchesQuery.isError ? (
+          <div className="alert compact-alert" role="alert">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>{errorText(candidateBatchesQuery.error)}</span>
+          </div>
+        ) : null}
+
+        {candidateBatchesQuery.isLoading ? <RunSkeleton /> : null}
+        {!candidateBatchesQuery.isLoading && candidateBatches.length === 0 ? (
+          <div className="empty-state batch-empty">
+            <Database size={24} aria-hidden="true" />
+            <h3>{normalizedFilters.pick_date || normalizedFilters.run_id ? 'No batches match the filters' : 'No candidate batches yet'}</h3>
+          </div>
+        ) : null}
+
+        <div className="candidate-batch-grid">
+          {candidateBatches.map((batch) => (
+            <button
+              key={batch.id}
+              type="button"
+              className={batch.id === activeBatchId ? 'candidate-batch-row selected' : 'candidate-batch-row'}
+              onClick={() => selectBatch(batch)}
+              aria-label={`Use candidate batch ${batch.id} from ${batch.pick_date}`}
+            >
+              <span className="batch-row-head">
+                <strong>{batch.pick_date}</strong>
+                <span className="strategy-chip">{batch.source}</span>
+              </span>
+              <span className="batch-id-line">{batch.id}</span>
+              <span className="batch-metrics">
+                <span>{batch.candidate_count} candidates</span>
+                <span>{batch.latest_reviewed_count} reviewed</span>
+                <span>{batch.latest_recommended_count} rec</span>
+                <span>{batch.archive_snapshot_count} archives</span>
+              </span>
+              <span className="batch-lineage">
+                <code>{batch.run_id}</code>
+                <code>{batch.latest_review_run_id ?? 'no review run'}</code>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <form className="filter-bar candidate-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+        <FilterInput
+          label="Batch"
+          placeholder="candidate batch"
+          value={filters.batch_id}
+          onChange={(value) => updateFilter('batch_id', value)}
+        />
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"

@@ -40,6 +40,8 @@ except ImportError:
 try:
     from stocktrade.domain.selection.indicators import (
         compute_body_pct as _product_compute_body_pct,
+        compute_brick_chart as _product_compute_brick_chart,
+        compute_brick_values as _product_compute_brick_values,
         compute_daily_return as _product_compute_daily_return,
         compute_kdj as _product_compute_kdj,
         compute_max_volume_not_bearish as _product_compute_max_volume_not_bearish,
@@ -54,6 +56,8 @@ try:
     )
 except ImportError:
     _product_compute_body_pct = None
+    _product_compute_brick_chart = None
+    _product_compute_brick_values = None
     _product_compute_daily_return = None
     _product_compute_kdj = None
     _product_compute_max_volume_not_bearish = None
@@ -281,6 +285,21 @@ def compute_brick_chart(
     sma_w1: int = 1, sma_w2: int = 1, sma_w3: int = 1,
 ) -> pd.Series:
     """通达信砖型图公式 → 砖高 Series（red>0，green<0）。"""
+    if _product_compute_brick_chart is not None:
+        return _product_compute_brick_chart(
+            df,
+            n=n,
+            m1=m1,
+            m2=m2,
+            m3=m3,
+            t=t,
+            shift1=shift1,
+            shift2=shift2,
+            sma_w1=sma_w1,
+            sma_w2=sma_w2,
+            sma_w3=sma_w3,
+        )
+
     arr = _compute_brick_numba(
         df["high"].to_numpy(dtype=np.float64),
         df["low"].to_numpy(dtype=np.float64),
@@ -598,6 +617,13 @@ class BrickComputeParams:
 
     def compute_arr(self, df: pd.DataFrame) -> np.ndarray:
         """返回砖高 ndarray（直接调用 Numba JIT，避免 Series 包装开销）。"""
+        if _product_compute_brick_values is not None:
+            return _product_compute_brick_values(
+                df, n=self.n, m1=self.m1, m2=self.m2, m3=self.m3,
+                t=self.t, shift1=self.shift1, shift2=self.shift2,
+                sma_w1=self.sma_w1, sma_w2=self.sma_w2, sma_w3=self.sma_w3,
+            )
+
         return _compute_brick_numba(
             df["high"].to_numpy(dtype=np.float64),
             df["low"].to_numpy(dtype=np.float64),

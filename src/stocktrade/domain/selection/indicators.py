@@ -47,6 +47,80 @@ def _max_volume_not_bearish_core(
     return mask
 
 
+@_njit(cache=True)
+def _compute_brick_core(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    n: int,
+    m1: int,
+    m2: int,
+    m3: int,
+    t: float,
+    shift1: float,
+    shift2: float,
+    sma_w1: int,
+    sma_w2: int,
+    sma_w3: int,
+) -> np.ndarray:
+    length = len(close)
+    hhv = np.empty(length, dtype=np.float64)
+    llv = np.empty(length, dtype=np.float64)
+    for i in range(length):
+        start = max(0, i - n + 1)
+        h_max = high[start]
+        l_min = low[start]
+        for j in range(start + 1, i + 1):
+            if high[j] > h_max:
+                h_max = high[j]
+            if low[j] < l_min:
+                l_min = low[j]
+        hhv[i] = h_max
+        llv[i] = l_min
+
+    a1 = sma_w1 / m1
+    b1 = 1.0 - a1
+    var2a = np.empty(length, dtype=np.float64)
+    for i in range(length):
+        rng = hhv[i] - llv[i]
+        if rng == 0.0:
+            rng = 0.01
+        v1 = (hhv[i] - close[i]) / rng * 100.0 - shift1
+        if i == 0:
+            var2a[i] = v1 + shift2
+        else:
+            var2a[i] = a1 * v1 + b1 * (var2a[i - 1] - shift2) + shift2
+
+    a2 = sma_w2 / m2
+    b2 = 1.0 - a2
+    a3 = sma_w3 / m3
+    b3 = 1.0 - a3
+    var4a = np.empty(length, dtype=np.float64)
+    var5a = np.empty(length, dtype=np.float64)
+    for i in range(length):
+        rng = hhv[i] - llv[i]
+        if rng == 0.0:
+            rng = 0.01
+        v3 = (close[i] - llv[i]) / rng * 100.0
+        if i == 0:
+            var4a[i] = v3
+            var5a[i] = v3 + shift2
+        else:
+            var4a[i] = a2 * v3 + b2 * var4a[i - 1]
+            var5a[i] = a3 * var4a[i] + b3 * (var5a[i - 1] - shift2) + shift2
+
+    raw = np.empty(length, dtype=np.float64)
+    for i in range(length):
+        diff = var5a[i] - var2a[i]
+        raw[i] = diff - t if diff > t else 0.0
+
+    brick = np.empty(length, dtype=np.float64)
+    brick[0] = 0.0
+    for i in range(1, length):
+        brick[i] = raw[i] - raw[i - 1]
+    return brick
+
+
 def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
     if frame.empty:
         return frame.assign(K=np.nan, D=np.nan, J=np.nan)
@@ -57,6 +131,67 @@ def compute_kdj(frame: pd.DataFrame, n: int = 9) -> pd.DataFrame:
 
     k, d, j = _kdj_core(rsv)
     return frame.assign(K=k, D=d, J=j)
+
+
+def compute_brick_values(
+    frame: pd.DataFrame,
+    *,
+    n: int = 4,
+    m1: int = 4,
+    m2: int = 6,
+    m3: int = 6,
+    t: float = 4.0,
+    shift1: float = 90.0,
+    shift2: float = 100.0,
+    sma_w1: int = 1,
+    sma_w2: int = 1,
+    sma_w3: int = 1,
+) -> np.ndarray:
+    return _compute_brick_core(
+        frame["high"].to_numpy(dtype=np.float64),
+        frame["low"].to_numpy(dtype=np.float64),
+        frame["close"].to_numpy(dtype=np.float64),
+        n,
+        m1,
+        m2,
+        m3,
+        float(t),
+        float(shift1),
+        float(shift2),
+        sma_w1,
+        sma_w2,
+        sma_w3,
+    )
+
+
+def compute_brick_chart(
+    frame: pd.DataFrame,
+    *,
+    n: int = 4,
+    m1: int = 4,
+    m2: int = 6,
+    m3: int = 6,
+    t: float = 4.0,
+    shift1: float = 90.0,
+    shift2: float = 100.0,
+    sma_w1: int = 1,
+    sma_w2: int = 1,
+    sma_w3: int = 1,
+) -> pd.Series:
+    values = compute_brick_values(
+        frame,
+        n=n,
+        m1=m1,
+        m2=m2,
+        m3=m3,
+        t=t,
+        shift1=shift1,
+        shift2=shift2,
+        sma_w1=sma_w1,
+        sma_w2=sma_w2,
+        sma_w3=sma_w3,
+    )
+    return pd.Series(values, index=frame.index, name="brick")
 
 
 def compute_daily_return(frame: pd.DataFrame) -> np.ndarray:

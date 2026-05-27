@@ -495,7 +495,8 @@ hardening evidence.
 Checks:
 
 - `docs/agent-harness/r7-final-retirement-proof.md` exists and names #152;
-- the audit packet explicitly says the current verdict is `not complete`;
+- the audit packet explicitly says the current verdict is `complete for the
+  confirmed scope`;
 - every R7 proof document and gate is named in the audit packet or status map;
 - completion boundaries distinguish fixture-backed proof, compatibility-only
   retirement, unsupported multi-process writes, and deletion decisions;

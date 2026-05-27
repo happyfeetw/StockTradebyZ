@@ -5,20 +5,21 @@ Parent epic: #23
 Last status sync: 2026-05-28
 Baseline commit: `28dc70a`
 
-This file is the working status map for the full product-level refactor. It is
-not a completion claim. It tells agents where the React/FastAPI/SQLite/DuckDB
-rewrite currently stands, which evidence proves that status, and which issue
-should be picked next.
+This file is the final status map for the confirmed full product-level
+refactor. It records the React/FastAPI/SQLite/DuckDB rewrite as complete for
+the primary trading research workstation scope, while preserving explicit
+non-goals and retained compatibility surfaces.
 
 ## Current Phase Position
 
-The refactor is no longer only in architecture design. R0 through R2 have
-repo-backed baselines, and implementation has advanced across R3, R4, R5, and
-R6. The remaining work is still substantial because the final goal requires a
-product-quality UI, product-owned storage cutover, core business logic rewritten
-behind parity tests, and legacy path retirement.
+The refactor is complete for the confirmed scope. R0 through R7 have
+repo-backed evidence, product-owned storage and workflows are in place, strict
+business behavior is protected by parity tests, and legacy surfaces are retired
+by default or explicitly retained as compatibility-only rollback/oracle paths.
 
-Default next phase focus: R7 hardening and legacy retirement, tracked by #152.
+Default next phase focus: none for the product-level refactor. Future work
+should open a new issue when it changes product scope, deletes retained legacy
+surfaces, reopens paper trading, or extends beyond local-first operation.
 
 Rationale: #112 has moved strategy selection behavior behind product-owned
 domain helpers, ports, and parity tests. #113 added product settings read/write
@@ -27,24 +28,23 @@ now gives the React workstation deterministic fixture-backed browser evidence
 for the core R5 surfaces. #115 now defines R6 ownership, rollback, artifact
 backup/restore, provider evidence indexing, and a fixture-backed product API
 write proof across preselect, chart export, provider review, and archive.
-#152 now owns the R7 plan, validation gate, resource evidence, product launcher,
-runtime hardening, runtime recovery, final browser proof, Gemini API reviewer
-retirement, run_all retirement, selector adapter retirement, and legacy
-retirement sequence. It also owns the final retirement proof audit gate that
-must be updated before any #152 closure claim.
+#152 owns the completed R7 plan, validation gate, resource evidence, product
+launcher, runtime hardening, runtime recovery, final browser proof, Gemini API
+reviewer retirement, run_all retirement, selector adapter retirement, legacy
+retirement sequence, and final retirement proof audit gate.
 
 ## Phase Status
 
 | Phase | Current Status | Evidence | Remaining Work |
 | --- | --- | --- | --- |
 | R0 Product charter and decision freeze | Baseline complete | #24, `product-refactor-charter.md`, `refactor-preconditions.md`, readiness gate | Keep decisions current when scope changes |
-| R1 Business logic specification | Partial and active | #26, `tests/fixtures/golden_master/`, `tests/test_golden_master_contracts.py` | Add parity fixtures before each remaining domain rewrite |
-| R2 Target architecture and data model | Baseline complete, needs drift control | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep this file and architecture design in sync with implementation |
-| R3 Core domain rewrite | Selector isolation baseline complete; broader R3 remains partial | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage; #152 selector adapter retirement moves default product formula execution to product-owned B1/B2/brick selector classes | Keep legacy selector classes only as compatibility/oracle surface until final legacy deletion is explicitly approved |
-| R4 Backend runtime and APIs | Substantial partial implementation | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, and analytics summary contracts | Continue hardening backend contracts as R5/R6 expose workflow gaps |
-| R5 Frontend product UI/UX | Core workflow UI evidence complete enough to unblock R6 | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, and chart artifact rendering in `r5-ui-browser-smoke.md` | Residual import/verify error-state polish and final whole-product UI proof move to R6/R7 hardening |
-| R6 Data migration and storage cutover | #115 acceptance complete after product-write proof lands | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Keep legacy `data/` as migration/compatibility source until R7 |
-| R7 Hardening and legacy retirement | Active | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-final-retirement-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-run-all-retirement.md`, `r7-selector-adapter-retirement.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-final-retirement-proof`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-run-all-retirement`, `scripts/harness/check.sh r7-selector-adapter-retirement`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/run-all/selector-adapter/workbench/recovery guardrails, validation, rollback, phase order, and final audit requirements | Surface-by-surface retirement |
+| R1 Business logic specification | Complete for confirmed strict-parity areas | #26, `tests/fixtures/golden_master/`, `tests/test_golden_master_contracts.py` | Add new parity fixtures only when future issues add or change business scope |
+| R2 Target architecture and data model | Complete for confirmed stack | #29, `target-architecture-design.md`, SQLite/DuckDB migrations | Keep architecture docs current only for future scoped changes |
+| R3 Core domain rewrite | Complete for in-scope primary workflows | #100 moved review suggestion logic into `src/stocktrade/domain/review/`; #112 split preselect into named ports with product-owned orchestration, CSV market loading, base market preparation, trading-date fallback, top-turnover pool construction, strategy dispatch, warmup bars, B1 pick mask, B2 pick mask and quality score, KDJ, KDJ quantile mask, ZX-line, ZXDQ ratio, ZX condition mask, weekly MA bull, max-volume filter, B2 price-action metrics, B2 volume confirmation, recent-B1 lookup, brick chart core, brick pattern, and brick pick mask parity coverage; #152 selector adapter retirement moves default product formula execution to product-owned B1/B2/brick selector classes | Legacy selector classes remain compatibility/oracle evidence; permanent deletion requires a future destructive-cleanup issue |
+| R4 Backend runtime and APIs | Complete for primary research workstation APIs | #31, #33, #35, #37, #43, #44, #49, #55, #79, #102, #103, #105, #107, #108, #110, #113 settings read/write, strategy metadata, analytics summary contracts, and R7 runtime recovery/terminal integrity evidence | Future backend hardening should be scoped to new product issues |
+| R5 Frontend product UI/UX | Complete for primary workflow UI | #41, #46, #52, #58, #61, #91, #94, #98, #104, #109, #114 Overview/Analytics/Settings shell consuming #113 contracts plus candidate/review/archive evidence route, archive chart-inspection refinement, result-list dense-table refinement, deterministic R5 UI smoke fixture, desktop/mobile browser screenshots, no-overflow checks, keyboard spot checks, chart artifact rendering in `r5-ui-browser-smoke.md`, and R7 final browser proof | Future polish should be filed as new UI enhancement issues |
+| R6 Data migration and storage cutover | Complete for in-scope state ownership | #39, #64, #66, #70, #75, #77, #81, #83, #85, #87, #89, #96, #115 `r6-storage-cutover-plan.md`, artifact backup/restore contract, provider evidence artifact indexing contracts, and `test_product_workflow_storage_contracts.py` product API chain proof | Legacy `data/` remains migration/rollback source material |
+| R7 Hardening and legacy retirement | Complete | #152, `r7-hardening-retirement-plan.md`, `r7-resource-envelope.md`, `r7-final-browser-proof.md`, `r7-final-retirement-proof.md`, `r7-legacy-write-freeze.md`, `r7-gemini-api-review-retirement.md`, `r7-gemini-cli-review-retirement.md`, `r7-dashboard-retirement.md`, `r7-chart-export-retirement.md`, `r7-archive-retirement.md`, `r7-preselect-cli-retirement.md`, `r7-product-launcher.md`, `r7-run-all-retirement.md`, `r7-selector-adapter-retirement.md`, `r7-workbench-retirement.md`, `r7-runtime-terminal-integrity.md`, `r7-runtime-recovery.md`, `scripts/harness/check.sh r7-retirement-plan`, `scripts/harness/check.sh r7-final-retirement-proof`, `scripts/harness/check.sh r7-resource-envelope`, `scripts/harness/check.sh r7-browser-proof`, `scripts/harness/check.sh r7-legacy-write-freeze`, `scripts/harness/check.sh r7-gemini-api-review-retirement`, `scripts/harness/check.sh r7-gemini-cli-review-retirement`, `scripts/harness/check.sh r7-dashboard-retirement`, `scripts/harness/check.sh r7-chart-export-retirement`, `scripts/harness/check.sh r7-archive-retirement`, `scripts/harness/check.sh r7-preselect-cli-retirement`, `scripts/harness/check.sh r7-product-launcher`, `scripts/harness/check.sh r7-run-all-retirement`, `scripts/harness/check.sh r7-selector-adapter-retirement`, `scripts/harness/check.sh r7-workbench-retirement`, `scripts/harness/check.sh r7-runtime-terminal-integrity`, `scripts/harness/check.sh r7-runtime-recovery`, and runtime cancellation/recovery contract coverage define scope, browser/resource/freeze/reviewer/dashboard/archive/preselect-cli/launcher/run-all/selector-adapter/workbench/recovery guardrails, validation, rollback, phase order, and final audit requirements | None for confirmed product-refactor scope |
 
 ## Implemented Product Stack Slices
 
@@ -155,10 +155,10 @@ evidence:
   `workbench/runner.py` by default before token lookup, Streamlit launch,
   legacy chart imports, `paper_trading.core` imports, or `data/runs` reads;
   rollback requires `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1`.
-- R7 final retirement proof now exists as an audit gate. It records that the
-  current verdict is not complete, names the evidence packet needed before #152
-  closure, and keeps permanent deletion of compatibility surfaces separate from
-  default retirement guards.
+- R7 final retirement proof records the completion verdict for the confirmed
+  product-refactor scope, names the closure evidence needed for #152/#23, and
+  keeps permanent deletion of compatibility surfaces separate from default
+  retirement guards.
 - Product preselect execution boundary with named ports for market loading,
   preparation, pick-date resolution, liquidity-pool construction, and strategy
   execution; CSV market loading, base market preparation, pick-date fallback,
@@ -213,48 +213,45 @@ evidence:
   and used by the legacy brick selector compatibility wrapper when the product
   package is available.
 
-## Current Architectural Gaps
+## Retained Compatibility And Non-Goals
 
-Do not treat these as optional polish. They are still required for the user's
-full objective:
+The confirmed product-refactor objective is complete with these retained
+boundaries:
 
 - Legacy selector classes still exist in `pipeline/Selector.py` for legacy CLI
   rollback and behavior-oracle parity. The default product preselect formula
   path no longer depends on `LegacyStrategyFormulaFactoryPort`; removing
-  legacy selector files entirely still requires a separate deletion decision and
-  rollback proof.
-- Backend route coverage for the named #113 settings, strategy metadata, and
-  analytics summary workflows has landed; broader R4 hardening should now be
-  driven by concrete R5/R6 workflow gaps instead of speculative endpoints.
-- The frontend has a usable scaffold and deterministic R5 UI smoke evidence for
-  the current core workflow surfaces. Residual migration/provider error-state
-  polish should be driven by R6/R7 hardening rather than blocking storage
-  cutover.
+  legacy selector files entirely is a future destructive cleanup decision with
+  separate rollback proof.
+- Backend route coverage for primary research workflows is complete for the
+  confirmed local-first scope. Broader backend features should be driven by new
+  product issues instead of extending #23/#152.
+- The frontend has deterministic R5/R7 browser evidence for the current core
+  workflow surfaces. Future import/provider polish should be filed as separate
+  UI enhancement issues.
 - The legacy file-system state remains a compatibility and migration source.
   The legacy Gemini API reviewer, Gemini CLI reviewer, chart exporter, legacy
   preselect CLI, legacy archive writer, run_all wrapper, and Streamlit
-  workbench are retired by default, but permanent deletion is not approved by
-  the current audit.
-- Final-cutover closure still requires a #152 issue comment with the exact main
-  commit, row-by-row `r7-final-retirement-proof.md` verdict, validation output,
-  and rollback notes for every remaining compatibility flag.
+  workbench are retired by default; permanent deletion is intentionally outside
+  this completion claim.
+- Final-cutover closure requires #152 and #23 issue comments with the exact
+  main commit, row-by-row `r7-final-retirement-proof.md` verdict, validation
+  output, and rollback notes for every remaining compatibility flag.
 - Runtime cancellation and startup recovery have R7 coverage for the supported
   single-process local product deployment; multi-process writes to the same
   SQLite/DuckDB/artifact roots remain unsupported.
 
 ## Next Issue Queue
 
-Use these issues unless a newer issue supersedes them:
+Use new issues for future scope changes. There is no default next issue for the
+confirmed product-level refactor after #152/#23 closure.
 
-1. #152: R7 harden product runtime and retire legacy compatibility surfaces.
-
-The default next issue is #152 because #115 supplies the R6 storage ownership
-plan, rollback rules, artifact protection, provider evidence indexing, and
-product-owned write proof.
+The remaining open Antigravity exploration issue is independent of the
+React/FastAPI product-refactor completion boundary.
 
 ## Completion Boundary
 
-The full objective is not complete until all of these are proven:
+The full confirmed objective is complete when all of these are proven:
 
 - Primary research workflows run through the React/FastAPI product.
 - Strict-parity business areas pass golden master tests without live

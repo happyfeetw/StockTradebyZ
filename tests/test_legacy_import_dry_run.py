@@ -28,7 +28,7 @@ from stocktrade_api.services.legacy_import import (  # noqa: E402
     load_legacy_review_import_plan,
     scan_legacy_import_dry_run,
 )
-from stocktrade_api.storage.duckdb import connect_duckdb  # noqa: E402
+from stocktrade_api.storage.duckdb import DuckDBFactWriteError, connect_duckdb  # noqa: E402
 
 SQLITE_MIGRATIONS = ROOT / "apps" / "api" / "stocktrade_api" / "migrations" / "sqlite"
 
@@ -47,6 +47,17 @@ def alembic_config(db_path: Path) -> Config:
 
 def migrate_sqlite(db_path: Path) -> None:
     command.upgrade(alembic_config(db_path), "head")
+
+
+class FailingAnalyticsWriter:
+    def record_candidate_import(self, **_: object) -> None:
+        raise DuckDBFactWriteError("failed to write DuckDB candidate import facts")
+
+    def record_review_import(self, **_: object) -> None:
+        raise DuckDBFactWriteError("failed to write DuckDB review import facts")
+
+    def record_archive_import(self, **_: object) -> None:
+        raise DuckDBFactWriteError("failed to write DuckDB archive import facts")
 
 
 def build_legacy_fixture(root: Path) -> Path:
@@ -417,7 +428,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -450,6 +461,8 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 legacy_runs = [run for run in runs.json()["runs"] if run["id"] == migration_id]
                 self.assertEqual(len(legacy_runs), 1)
                 self.assertEqual(legacy_runs[0]["kind"], "legacy_import")
+                backup_runs = [run for run in runs.json()["runs"] if run["kind"] == "backup"]
+                self.assertEqual(backup_runs, [])
 
                 write_attempt = await client.post(
                     "/api/migrations/import-legacy",
@@ -471,7 +484,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -494,6 +507,8 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(import_summary["source_file"], "candidates/candidates_2026-05-26.json")
                 self.assertEqual(import_summary["candidates_imported"], 2)
                 self.assertEqual(import_summary["strategy_counts"], {"b2": 1, "brick": 1})
+                self.assertIsNotNone(import_summary["pre_import_backup_id"])
+                self.assertTrue(Path(import_summary["pre_import_backup_path"]).is_dir())
 
                 candidates = await client.get("/api/candidates", params={"run_id": migration_id})
                 self.assertEqual(candidates.status_code, 200)
@@ -530,7 +545,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             data_root = build_legacy_fixture(tmp)
             db_path = tmp / "app.sqlite"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -559,7 +574,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -583,6 +598,8 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(import_summary["reviews_imported"], 2)
                 self.assertEqual(import_summary["recommendations_imported"], 1)
                 self.assertEqual(import_summary["strategy_counts"], {"b2": 1, "brick": 1})
+                self.assertIsNotNone(import_summary["pre_import_backup_id"])
+                self.assertTrue(Path(import_summary["pre_import_backup_path"]).is_dir())
 
                 reviews = await client.get("/api/reviews", params={"run_id": migration_id})
                 self.assertEqual(reviews.status_code, 200)
@@ -638,7 +655,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             data_root = build_legacy_fixture(tmp)
             db_path = tmp / "app.sqlite"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -667,7 +684,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -693,6 +710,8 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(import_summary["archive_recommended_count"], 1)
                 self.assertIsNotNone(import_summary["archive_snapshot_id"])
                 self.assertEqual(import_summary["strategy_counts"]["b2"]["recommended"], 1)
+                self.assertIsNotNone(import_summary["pre_import_backup_id"])
+                self.assertTrue(Path(import_summary["pre_import_backup_path"]).is_dir())
 
                 archive = await client.get("/api/archive/2026-05-26", params={"run_id": migration_id})
                 self.assertEqual(archive.status_code, 200)
@@ -780,7 +799,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -837,7 +856,8 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             data_root = build_valid_candidate_import_fixture(tmp)
             db_path = tmp / "app.sqlite"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=tmp)
+            app = create_app(sqlite_path=db_path, duckdb_path=None, backup_root=tmp / "backups")
+            app.state.migration_repository.analytics_writer = FailingAnalyticsWriter()
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -855,7 +875,11 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
 
                 runs = await client.get("/api/runs")
                 self.assertEqual(runs.status_code, 200)
-                self.assertEqual(runs.json()["runs"], [])
+                backup_runs = [run for run in runs.json()["runs"] if run["kind"] == "backup"]
+                legacy_runs = [run for run in runs.json()["runs"] if run["kind"] == "legacy_import"]
+                self.assertEqual(len(backup_runs), 1)
+                self.assertEqual(backup_runs[0]["status"], "succeeded")
+                self.assertEqual(legacy_runs, [])
                 self.assertTrue((data_root / "candidates" / "candidates_2026-05-26.json").is_file())
 
             if app.state.sqlite_engine is not None:
@@ -870,7 +894,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -927,7 +951,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             db_path = tmp / "app.sqlite"
             duckdb_path = tmp / "analytics.duckdb"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path)
+            app = create_app(sqlite_path=db_path, duckdb_path=duckdb_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -981,7 +1005,7 @@ class LegacyImportDryRunApiTests(unittest.IsolatedAsyncioTestCase):
             data_root = build_legacy_fixture(tmp)
             db_path = tmp / "app.sqlite"
             migrate_sqlite(db_path)
-            app = create_app(sqlite_path=db_path)
+            app = create_app(sqlite_path=db_path, backup_root=tmp / "backups")
             transport = httpx.ASGITransport(app=app)
 
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

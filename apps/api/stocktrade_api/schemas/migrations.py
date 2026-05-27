@@ -130,6 +130,8 @@ class LegacyImportSummary(BaseModel):
     batch_id: str | None = None
     review_run_id: str | None = None
     archive_snapshot_id: str | None = None
+    pre_import_backup_id: str | None = None
+    pre_import_backup_path: str | None = None
     candidates_imported: int = 0
     reviews_imported: int = 0
     recommendations_imported: int = 0

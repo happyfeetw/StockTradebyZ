@@ -308,6 +308,8 @@ export interface LegacyImportSummary {
   batch_id: string | null
   review_run_id: string | null
   archive_snapshot_id: string | null
+  pre_import_backup_id: string | null
+  pre_import_backup_path: string | null
   candidates_imported: number
   reviews_imported: number
   recommendations_imported: number

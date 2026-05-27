@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..dependencies import get_migration_repository
+from ..dependencies import get_backup_service, get_migration_repository
 from ..schemas.migrations import (
     LegacyImportDryRunReport,
     LegacyImportDryRunRequest,
@@ -22,6 +22,7 @@ from ..services.legacy_import import (
     scan_legacy_import_dry_run,
 )
 from ..services.legacy_verify import verify_legacy_import
+from ..storage.backup_service import BackupError, BackupService
 from ..storage.duckdb import DuckDBFactWriteError
 from ..storage.migration_repository import MigrationRepository, MigrationRunNotFoundError
 from ..storage.sqlite_models import MigrationQuarantine, MigrationRun
@@ -33,6 +34,7 @@ router = APIRouter(tags=["migrations"])
 def import_legacy(
     request: LegacyImportDryRunRequest,
     repository: MigrationRepository = Depends(get_migration_repository),
+    backup_service: BackupService = Depends(get_backup_service),
 ) -> LegacyImportDryRunReport:
     if not request.dry_run and (request.scope not in {"candidates", "reviews", "history"} or not request.pick_date):
         raise HTTPException(
@@ -48,23 +50,34 @@ def import_legacy(
     try:
         if request.scope == "candidates":
             import_plan = load_legacy_candidate_import_plan(request.data_root, request.pick_date)
+            backup = backup_service.create_backup()
             migration_run = repository.record_candidate_import(
                 build_legacy_candidate_import_report(import_plan),
                 import_plan,
+                pre_import_backup_id=backup.backup_id,
+                pre_import_backup_path=backup.backup_path,
             )
         elif request.scope == "reviews":
             review_plan = load_legacy_review_import_plan(request.data_root, request.pick_date)
+            backup = backup_service.create_backup()
             migration_run = repository.record_review_import(
                 build_legacy_review_import_report(review_plan),
                 review_plan,
+                pre_import_backup_id=backup.backup_id,
+                pre_import_backup_path=backup.backup_path,
             )
         else:
             archive_plan = load_legacy_archive_import_plan(request.data_root, request.pick_date)
+            backup = backup_service.create_backup()
             migration_run = repository.record_archive_import(
                 build_legacy_archive_import_report(archive_plan),
                 archive_plan,
+                pre_import_backup_id=backup.backup_id,
+                pre_import_backup_path=backup.backup_path,
             )
     except LegacyCandidateImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except BackupError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except DuckDBFactWriteError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

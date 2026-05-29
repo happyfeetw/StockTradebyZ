@@ -29,6 +29,8 @@ fi
 exec .venv/bin/streamlit run workbench/app.py \
   --server.port 8601 \
   --server.headless true \
+  --server.sslCertFile .certs/cert.pem \
+  --server.sslKeyFile .certs/key.pem \
   --theme.base light \
   --theme.backgroundColor '#f7f8fa' \
   --theme.secondaryBackgroundColor '#ffffff' \

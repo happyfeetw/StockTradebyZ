@@ -17,6 +17,9 @@ venv/
 env/
 ENV/
 
+# SSL certificates
+.certs/
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/

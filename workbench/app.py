@@ -20,6 +20,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -651,7 +652,7 @@ def escape_log(lines: list[str] | str) -> str:
 
 def render_log_console(log_text: str, *, storage_key: str) -> None:
     escaped_key = json.dumps(storage_key)
-    st.iframe(
+    components.html(
         f"""
         <style>
         :root {{
@@ -738,7 +739,6 @@ def render_log_console(log_text: str, *, storage_key: str) -> None:
         }})();
         </script>
         """,
-        width="stretch",
         height=430,
     )
 

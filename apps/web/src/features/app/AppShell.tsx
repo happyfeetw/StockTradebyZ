@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -131,6 +131,7 @@ function ProductShell() {
 
   return (
     <div className="app-shell">
+      <LiquidGlassLayer />
       <aside className="sidebar" aria-label={t('Product navigation')}>
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">
@@ -192,6 +193,49 @@ function ProductShell() {
       </main>
     </div>
   )
+}
+
+function LiquidGlassLayer() {
+  const layerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const layer = layerRef.current
+    if (!layer) return undefined
+    const currentLayer: HTMLDivElement = layer
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let frame = 0
+
+    function hideLens() {
+      currentLayer.dataset.active = 'false'
+    }
+
+    function updateLens(event: PointerEvent) {
+      if (reducedMotion.matches || event.pointerType === 'touch') {
+        hideLens()
+        return
+      }
+      if (frame) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        currentLayer.style.setProperty('--glass-x', `${event.clientX}px`)
+        currentLayer.style.setProperty('--glass-y', `${event.clientY}px`)
+        currentLayer.dataset.active = 'true'
+      })
+    }
+
+    window.addEventListener('pointermove', updateLens, { passive: true })
+    window.addEventListener('pointerleave', hideLens)
+    window.addEventListener('blur', hideLens)
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      window.removeEventListener('pointermove', updateLens)
+      window.removeEventListener('pointerleave', hideLens)
+      window.removeEventListener('blur', hideLens)
+    }
+  }, [])
+
+  return <div ref={layerRef} className="liquid-glass-layer" aria-hidden="true" data-active="false" />
 }
 
 function OverviewView() {

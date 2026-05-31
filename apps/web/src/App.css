@@ -3,15 +3,80 @@
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
   color: var(--text-strong);
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.72), rgb(218 228 245 / 0.40) 44%, transparent 72%),
+    var(--app-bg);
+}
+
+html[data-theme="dark"] .app-shell {
+  background:
+    linear-gradient(135deg, rgb(79 96 150 / 0.18), rgb(18 24 39 / 0.10) 42%, transparent 70%),
+    var(--app-bg);
+}
+
+.liquid-glass-layer {
+  --glass-x: 50vw;
+  --glass-y: 42vh;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.liquid-glass-layer[data-active="true"] {
+  opacity: 1;
+}
+
+.liquid-glass-layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      240px 180px at var(--glass-x) var(--glass-y),
+      var(--glass-lens),
+      rgb(255 255 255 / 0.06) 42%,
+      transparent 72%
+    );
+  border: 1px solid transparent;
+  -webkit-backdrop-filter: blur(12px) saturate(150%) contrast(108%);
+  backdrop-filter: blur(12px) saturate(150%) contrast(108%);
+  -webkit-mask-image: radial-gradient(260px 200px at var(--glass-x) var(--glass-y), black 0 48%, transparent 74%);
+  mask-image: radial-gradient(260px 200px at var(--glass-x) var(--glass-y), black 0 48%, transparent 74%);
+}
+
+.liquid-glass-layer::after {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 160px;
+  left: var(--glass-x);
+  top: var(--glass-y);
+  border-radius: 50%;
+  border: 1px solid var(--glass-lens-line);
+  box-shadow:
+    inset 10px 12px 30px rgb(255 255 255 / 0.12),
+    inset -18px -20px 36px rgb(255 255 255 / 0.05);
+  transform: translate(-50%, -50%);
+  opacity: 0.56;
 }
 
 .sidebar {
-  background: var(--surface);
+  position: relative;
+  z-index: 1;
+  background: var(--glass-surface);
   border-right: 1px solid var(--line);
   padding: 24px 18px;
   display: flex;
   flex-direction: column;
   gap: 28px;
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: inset -1px 0 0 var(--glass-highlight);
 }
 
 .brand-lockup {
@@ -82,21 +147,21 @@
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   color: var(--text-strong);
   padding: 0 10px;
   font: inherit;
 }
 
 .preference-select select:focus {
-  outline: 3px solid rgba(15, 118, 110, 0.18);
+  outline: 3px solid rgb(82 110 211 / 0.20);
   border-color: var(--primary-line);
 }
 
 html[data-theme="dark"] .preference-select select:focus,
 html[data-theme="dark"] .filter-field input:focus,
 html[data-theme="dark"] .filter-field select:focus {
-  outline-color: rgba(82, 184, 170, 0.26);
+  outline-color: rgb(145 165 246 / 0.24);
 }
 
 .nav-item {
@@ -115,8 +180,9 @@ html[data-theme="dark"] .filter-field select:focus {
 .nav-item:focus-visible,
 .nav-item.active {
   color: var(--text-strong);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border-color: var(--line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .nav-pill,
@@ -127,21 +193,23 @@ html[data-theme="dark"] .filter-field select:focus {
   padding: 5px 7px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
 }
 
 .main-surface {
+  position: relative;
+  z-index: 1;
   min-width: 0;
   background:
-    linear-gradient(180deg, rgba(15, 118, 110, 0.06), rgba(15, 118, 110, 0) 280px),
-    var(--app-bg);
+    linear-gradient(180deg, rgb(82 110 211 / 0.10), transparent 280px),
+    transparent;
 }
 
 html[data-theme="dark"] .main-surface {
   background:
-    linear-gradient(180deg, rgba(19, 125, 116, 0.13), rgba(19, 125, 116, 0) 280px),
-    var(--app-bg);
+    linear-gradient(180deg, rgb(113 136 232 / 0.12), transparent 280px),
+    transparent;
 }
 
 .run-center,
@@ -226,7 +294,8 @@ h3 {
 .health-chip {
   padding: 0 12px;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--glass-surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .health-chip.online {
@@ -253,8 +322,9 @@ h3 {
   min-width: 0;
   padding: 14px;
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .metric span {
@@ -364,9 +434,12 @@ h3 {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--glass-surface);
   border: 1px solid var(--line);
   border-radius: 8px;
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(26px) saturate(150%);
+  box-shadow: var(--glass-shadow);
 }
 
 .run-list-panel,
@@ -421,25 +494,39 @@ button {
   cursor: pointer;
   transition:
     background-color 160ms ease,
+    box-shadow 160ms ease,
     border-color 160ms ease,
     transform 160ms ease;
 }
 
 .action-button {
   color: white;
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   border-color: var(--primary);
   padding: 0 13px;
+  box-shadow:
+    0 10px 26px rgb(82 110 211 / 0.22),
+    inset 0 1px 0 rgb(255 255 255 / 0.22);
+}
+
+html[data-theme="dark"] .action-button {
+  box-shadow:
+    0 12px 30px rgb(39 54 130 / 0.34),
+    inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 .action-button.secondary,
 .icon-button.secondary {
   color: var(--text-strong);
-  background: var(--surface);
+  background: var(--glass-surface-strong);
+  border-color: var(--line);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  backdrop-filter: blur(18px) saturate(145%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .action-button.danger {
-  background: var(--danger);
+  background: linear-gradient(135deg, var(--danger), var(--danger-strong));
   border-color: var(--danger);
 }
 
@@ -458,7 +545,10 @@ button {
   width: 40px;
   justify-content: center;
   color: var(--text-strong);
-  background: var(--surface);
+  background: var(--glass-surface-strong);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  backdrop-filter: blur(18px) saturate(145%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .run-list {
@@ -479,9 +569,12 @@ button {
   gap: 12px;
   align-items: end;
   padding: 14px;
-  background: var(--surface);
+  background: var(--glass-surface);
   border: 1px solid var(--line);
   border-radius: 8px;
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  backdrop-filter: blur(20px) saturate(145%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .candidate-filter-bar {
@@ -507,15 +600,16 @@ button {
   min-height: 40px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   color: var(--text-strong);
   padding: 0 11px;
   font: inherit;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .filter-field input:focus,
 .filter-field select:focus {
-  outline: 3px solid rgba(15, 118, 110, 0.18);
+  outline: 3px solid rgb(82 110 211 / 0.20);
   border-color: var(--primary-line);
 }
 
@@ -533,7 +627,10 @@ button {
   padding: 12px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  backdrop-filter: blur(20px) saturate(145%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .run-setup-submit {
@@ -616,10 +713,11 @@ button {
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   padding: 10px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .scope-button strong,
@@ -702,8 +800,9 @@ button {
   gap: 6px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   padding: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .migration-mismatch-row strong {
@@ -716,9 +815,10 @@ button {
 
 .migration-empty {
   margin-top: 18px;
-  background: var(--surface);
+  background: var(--glass-surface);
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .candidate-list {
@@ -741,15 +841,16 @@ button {
   gap: 10px;
   padding: 12px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .candidate-batch-row:hover,
 .candidate-batch-row.selected {
   border-color: var(--primary-line);
-  background: var(--surface-strong);
+  background: var(--primary-soft);
 }
 
 .candidate-batch-main {
@@ -765,7 +866,7 @@ button {
 }
 
 .candidate-batch-main:focus-visible {
-  outline: 3px solid rgba(15, 118, 110, 0.35);
+  outline: 3px solid rgb(82 110 211 / 0.34);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -802,7 +903,7 @@ button {
   align-items: center;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
@@ -825,7 +926,7 @@ button {
   gap: 2px 6px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   padding: 6px 7px;
 }
@@ -907,8 +1008,9 @@ button {
   min-height: 152px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   padding: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .strategy-card.selected {
@@ -968,9 +1070,10 @@ button {
   padding: 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   text-decoration: none;
   color: var(--text-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .overview-run-row {
@@ -1024,7 +1127,7 @@ button {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 750;
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
 }
 
 .data-table td {
@@ -1071,8 +1174,9 @@ button {
   align-items: flex-start;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   padding: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .strategy-toggle input,
@@ -1133,7 +1237,7 @@ button {
   padding: 0 9px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 750;
@@ -1183,10 +1287,11 @@ button {
   gap: 8px;
   padding: 11px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .review-result-header,
@@ -1202,10 +1307,11 @@ button {
   gap: 8px;
   padding: 11px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .archive-result-header,
@@ -1221,10 +1327,11 @@ button {
   gap: 8px;
   padding: 11px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .archive-snapshot-row {
@@ -1234,10 +1341,11 @@ button {
   gap: 8px;
   padding: 11px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .archive-snapshot-row > span:first-child {
@@ -1268,7 +1376,7 @@ button {
   padding: 0 8px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   font-size: 12px;
   font-weight: 700;
@@ -1283,9 +1391,10 @@ button {
 .migration-section-card {
   min-width: 0;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border-radius: 8px;
   padding: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .migration-section-head {
@@ -1332,8 +1441,9 @@ button {
   gap: 10px;
   padding: 10px;
   border-radius: 8px;
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .migration-issue-row strong {
@@ -1370,7 +1480,7 @@ button {
   justify-content: center;
   padding: 0 9px;
   border-radius: 999px;
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   color: var(--text-muted);
   font-size: 12px;
@@ -1403,7 +1513,7 @@ button {
 .archive-snapshot-row:focus-visible,
 .archive-snapshot-row.selected {
   border-color: var(--primary-line);
-  background: var(--surface-strong);
+  background: var(--primary-soft);
 }
 
 .candidate-row-head,
@@ -1427,7 +1537,7 @@ button {
   gap: 4px;
   padding: 7px 8px;
   border-radius: 7px;
-  background: var(--surface);
+  background: var(--glass-surface);
   border: 1px solid var(--line);
 }
 
@@ -1480,7 +1590,7 @@ button {
   padding: 6px 8px;
   border-radius: 7px;
   border: 1px solid var(--line);
-  background: var(--surface-muted);
+  background: var(--glass-surface);
 }
 
 .row-lineage-item span {
@@ -1531,7 +1641,7 @@ button {
   padding: 0 9px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   font-size: 12px;
   font-weight: 750;
@@ -1569,7 +1679,7 @@ button {
   padding: 0 9px;
   border-radius: 999px;
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   font-size: 12px;
   font-weight: 750;
@@ -1595,7 +1705,7 @@ button {
 
 .archive-status-chip.unreviewed {
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   border-color: var(--line);
 }
 
@@ -1615,17 +1725,18 @@ button {
   align-items: center;
   padding: 10px;
   text-align: left;
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .run-row:hover,
 .run-row:focus-visible,
 .run-row.selected {
   border-color: var(--primary-line);
-  background: var(--surface-strong);
+  background: var(--primary-soft);
 }
 
 .run-row-main {
@@ -1678,7 +1789,7 @@ code {
   min-height: 30px;
   padding: 0 9px;
   font-size: 12px;
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   border: 1px solid var(--line);
 }
@@ -1749,9 +1860,10 @@ code {
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border-radius: 8px;
   padding: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .step-row {
@@ -1774,7 +1886,7 @@ code {
   gap: 7px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 650;
@@ -1805,10 +1917,11 @@ code {
   gap: 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   color: var(--text-strong);
   padding: 10px;
   text-decoration: none;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .evidence-link-card:hover,
@@ -1819,7 +1932,7 @@ code {
 
 .evidence-link-card.disabled {
   color: var(--text-muted);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
 }
 
 .evidence-link-card span {
@@ -1854,8 +1967,9 @@ code {
   gap: 12px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   padding: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .evidence-asset-panel.product {
@@ -1908,7 +2022,7 @@ code {
   display: block;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--glass-surface);
   padding: 10px;
   overflow-wrap: anywhere;
 }
@@ -1921,7 +2035,7 @@ code {
   justify-self: end;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: var(--surface-muted);
+  background: var(--glass-surface-strong);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
@@ -1933,8 +2047,9 @@ code {
   margin-top: 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   padding: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .artifact-preview-head {
@@ -1966,7 +2081,7 @@ code {
   margin-top: 12px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--glass-surface);
 }
 
 .artifact-preview-note {
@@ -1985,7 +2100,7 @@ code {
   padding: 0 8px;
   font-size: 12px;
   color: var(--text-muted);
-  background: var(--surface);
+  background: var(--glass-surface-strong);
   border: 1px solid var(--line);
   text-transform: capitalize;
 }
@@ -2006,9 +2121,10 @@ code {
 .data-pair {
   min-width: 0;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border-radius: 8px;
   padding: 10px;
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
 .data-pair span {
@@ -2030,7 +2146,7 @@ code {
   max-height: 220px;
   overflow: auto;
   border: 1px solid var(--line);
-  background: var(--surface-strong);
+  background: var(--glass-surface-strong);
   border-radius: 8px;
   padding: 12px;
   color: var(--text-strong);
@@ -2126,7 +2242,44 @@ code {
   }
 }
 
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .liquid-glass-layer {
+    display: none;
+  }
+
+  .sidebar,
+  .filter-bar,
+  .run-setup-form,
+  .run-list-panel,
+  .candidate-batch-panel,
+  .candidate-list-panel,
+  .review-list-panel,
+  .archive-snapshot-panel,
+  .archive-list-panel,
+  .migration-control-panel,
+  .migration-action-panel,
+  .migration-section-panel,
+  .migration-issues-panel,
+  .overview-panel,
+  .analytics-panel,
+  .settings-panel,
+  .detail-panel,
+  .placeholder-panel {
+    background: var(--surface-strong);
+  }
+}
+
+@media (pointer: coarse) {
+  .liquid-glass-layer {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .liquid-glass-layer {
+    display: none;
+  }
+
   *,
   *::before,
   *::after {

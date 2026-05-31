@@ -5,11 +5,12 @@ httpx==0.28.1
 numba==0.64.0
 numpy==2.4.3
 pandas==3.0.1
+Pillow==12.2.0
 plotly==6.5.0
 protobuf==7.34.0
 pydantic==2.12.5
 PyYAML==6.0.3
-streamlit==1.55.0
+# streamlit==1.55.0  # retired — legacy workbench only; conflicts with pandas>=3
 SQLAlchemy==2.0.40
 tqdm==4.67.3
 tushare==1.4.25

@@ -69,8 +69,12 @@ R7 重构后的默认本地产品入口是 React web 前端 + FastAPI 后端：
 
 ~~~bash
 pip install -r requirements.txt
+nvm use
 cd apps/web && npm install
 ~~~
+
+The frontend toolchain is validated on Node 22. The repository includes
+`.nvmrc` so local Vite/Rolldown behavior stays reproducible.
 
 旧的 `start_workbench` 已默认退休；新工作流应使用 `./start_product`。
 仅在迁移、对照或回滚时可显式设置 `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1`

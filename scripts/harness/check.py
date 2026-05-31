@@ -997,16 +997,18 @@ def check_r7_product_launcher() -> None:
     assert_contains(
         "docs/agent-harness/r7-product-launcher.md",
         [
-            "Managing issue: #152",
-            "R7 Product Launcher",
+            "管理 issue：#152",
+            "R7 产品启动器",
             "./start_product",
             "stocktrade_api.main:app",
             "127.0.0.1:8000",
             "127.0.0.1:5173",
             "start_workbench",
             "simulated trading",
+            "语言：中文 / English",
+            "主题模式：跟随系统 / 浅色 / 深色",
             "scripts/harness/check.sh r7-product-launcher",
-            "Rollback",
+            "回滚",
         ],
     )
     launcher = ROOT / "start_product"
@@ -1041,8 +1043,27 @@ def check_r7_product_launcher() -> None:
             "test_start_product_is_executable_and_targets_react_fastapi_stack",
             "test_web_dev_proxy_tracks_product_launcher_api_port",
             "test_legacy_workbench_points_to_product_launcher",
+            "test_frontend_display_preferences_are_documented_and_wired",
         ],
     )
+    assert_contains(
+        "apps/web/src/features/app/uiPreferences.tsx",
+        [
+            "stocktrade.ui.language",
+            "stocktrade.ui.theme",
+            "document.documentElement.lang",
+            "document.documentElement.dataset.theme",
+        ],
+    )
+    assert_contains(
+        "apps/web/src/features/app/AppShell.tsx",
+        [
+            "UiPreferenceProvider",
+            "sidebar-controls",
+            "Theme mode",
+        ],
+    )
+    assert_contains("apps/web/src/index.css", ["html[data-theme=\"dark\"]", "color-scheme: dark"])
     print("[r7-product-launcher] ok")
 
 

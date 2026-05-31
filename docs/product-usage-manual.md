@@ -48,7 +48,18 @@ STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
 环境变量配置 `/api` 代理；覆盖 API 端口时不需要额外设置
 `VITE_API_BASE_URL`。
 
-## 3. 本地状态目录
+## 3. 前端显示偏好
+
+React 前端默认显示中文界面。侧栏底部提供两个本地显示偏好：
+
+- 语言：中文 / English。
+- 主题模式：跟随系统 / 浅色 / 深色。
+
+语言与主题保存在浏览器 `localStorage`，key 分别是
+`stocktrade.ui.language` 和 `stocktrade.ui.theme`。这些偏好只影响当前浏览器的显示，
+不会改写后端 SQLite settings；设置页面中的产品偏好仍由产品 API 管理。
+
+## 4. 本地状态目录
 
 产品路径使用这些本地生成目录：
 
@@ -61,7 +72,7 @@ STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
 
 这些目录默认被 gitignore。
 
-## 4. SQLite 迁移幂等性
+## 5. SQLite 迁移幂等性
 
 FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 `alembic upgrade head`。这个启动路径在 Alembic 正常管理的数据库上是幂等的：
@@ -79,11 +90,11 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 `:memory:` SQLite 测试库不会自动跑文件型迁移；测试若传入自定义
 `session_factory`，应自行准备 schema 或显式关闭 `auto_migrate`。
 
-## 5. Run Center 工作流
+## 6. 运行中心工作流
 
-### 5.1 Preselect
+### 6.1 初选
 
-在 Run Center 填写：
+在运行中心填写：
 
 - Config path: 默认可留空，等价于 `config/rules_preselect.yaml`。
 - Data dir: 默认可留空，等价于 legacy raw 数据目录。
@@ -92,12 +103,12 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
 候选 identity 始终是 `(code, strategy)`。
 
-### 5.2 Chart Export
+### 6.2 图表导出
 
 在候选批次页面选择批次后导出图表。产品图表产物写入 `var/artifacts/{run_id}/`
 并通过 artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
 
-### 5.3 Gemini CLI Review
+### 6.3 Gemini CLI 复评
 
 Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要求：
 
@@ -108,24 +119,24 @@ Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要
 provider raw prompt、stdout/stderr、checkpoint、usage、result cache 会作为 product
 artifact evidence 建索引；原始路径不会直接暴露给前端。
 
-### 5.4 Archive
+### 6.4 归档
 
 Archive 会把 candidate batch + review run 固化为日级归档快照，并把推荐状态、
 rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
-## 6. Migrations 页面
+## 7. 迁移页面
 
-Migrations 页面用于把 legacy `data/` 内容导入产品存储。
+迁移页面用于把 legacy `data/` 内容导入产品存储。
 
 推荐顺序：
 
-1. Dry run: 扫描 candidates、reviews、history，查看 warnings/quarantine。
-2. Import: 按 scope 和 pick date 单次导入。
-3. Verify: 对照 legacy 文件、SQLite 和 DuckDB 记录。
+1. 预检：扫描 candidates、reviews、history，查看 warnings/quarantine。
+2. 导入：按 scope 和 pick date 单次导入。
+3. 校验：对照 legacy 文件、SQLite 和 DuckDB 记录。
 
 交易账户和 simulated trading 数据不属于当前产品化迁移范围。
 
-## 7. Backup / Restore
+## 8. 备份 / 恢复
 
 产品备份包含：
 
@@ -134,20 +145,20 @@ Migrations 页面用于把 legacy `data/` 内容导入产品存储。
 - artifact manifest 和 artifacts
 - migration version metadata
 
-Restore 会替换本地产品状态。执行 restore 前应停止其它写入同一 `var/` 根目录
+恢复会替换本地产品状态。执行恢复前应停止其它写入同一 `var/` 根目录
 的 API 进程；R7 支持单本地 FastAPI 进程，不支持多进程同时写同一 SQLite/DuckDB。
 
-## 8. Settings
+## 9. 设置页面
 
-Settings 页面展示：
+设置页面展示：
 
 - 当前产品 stack。
 - 本地 state 路径。
 - 安全化后的 config inventory。
 - 外部集成是否配置，但不会显示 secret value。
-- 产品偏好，例如默认策略、分页大小、theme、timezone。
+- 产品偏好，例如默认策略、分页大小、产品主题、时区。
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### Node 版本不对
 
@@ -159,7 +170,7 @@ nvm use
 
 然后重新运行 `./start_product`。
 
-### Run Center 报缺少 raw CSV
+### 运行中心报缺少 raw CSV
 
 先确认 `data/raw/{code}.csv` 或自定义 raw dir 中存在对应股票 CSV。Chart Export
 只读取 raw CSV，不会自动下载。
@@ -180,7 +191,7 @@ gemini --version
 legacy 入口默认关闭，只用于迁移、对照或回滚。必须显式设置对应
 `STOCKTRADE_ALLOW_LEGACY_*` 环境变量。
 
-## 10. 验证命令
+## 11. 验证命令
 
 窄验证：
 

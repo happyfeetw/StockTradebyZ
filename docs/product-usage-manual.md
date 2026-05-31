@@ -7,7 +7,7 @@
 ## 1. 环境要求
 
 - Python 3.12 或兼容版本。
-- Node.js 22.x。仓库包含 `.nvmrc`，推荐使用 `nvm use`。
+- Node.js 23.x。仓库包含 `.nvmrc`，推荐使用 `nvm use`。
 - 本机已配置 Tushare token；Gemini CLI 复评需要先完成 `gemini` 登录。
 - 不要把 `TUSHARE_TOKEN`、`GEMINI_API_KEY`、Gemini OAuth 文件、`data/`、
   `var/` 或 provider raw logs 提交到 Git。
@@ -33,7 +33,7 @@ cd apps/web && npm install
 - Web: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:8000`
 
-`./start_product` 会在启动前检查 Node.js 22.x，并直接调用本地 Vite CLI；
+`./start_product` 会在启动前检查 Node.js 23.x，并直接调用本地 Vite CLI；
 `npm install` 只用于首次安装前端依赖。FastAPI 默认启动时会自动执行 SQLite
 Alembic migrations；空的 `var/db/app.sqlite` 会被初始化为产品 schema。DuckDB
 analytics schema 会在读取或写入 analytics 数据时自动迁移。
@@ -61,9 +61,27 @@ STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
 
 这些目录默认被 gitignore。
 
-## 4. Run Center 工作流
+## 4. SQLite 迁移幂等性
 
-### 4.1 Preselect
+FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
+`alembic upgrade head`。这个启动路径在 Alembic 正常管理的数据库上是幂等的：
+已经到达当前 head 的数据库再次启动时，Alembic 会读取 `alembic_version` 并跳过
+已执行版本，不会重复创建表或索引。
+
+这个幂等性有两个边界：
+
+- 它依赖 `alembic_version` 版本表，不代表每个 migration body 都能被手工裸重复
+  执行。绕过 Alembic 直接重复执行 `op.create_table(...)` 等 DDL 仍可能冲突。
+- R7 本地产品路径按单 FastAPI 进程设计，不承诺多个进程同时对同一个全新
+  SQLite 文件做首次迁移。需要多进程共享同一 SQLite 时，应先用单进程完成迁移，
+  或在启动器外层增加文件锁/迁移前置步骤。
+
+`:memory:` SQLite 测试库不会自动跑文件型迁移；测试若传入自定义
+`session_factory`，应自行准备 schema 或显式关闭 `auto_migrate`。
+
+## 5. Run Center 工作流
+
+### 5.1 Preselect
 
 在 Run Center 填写：
 
@@ -74,12 +92,12 @@ STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
 运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
 候选 identity 始终是 `(code, strategy)`。
 
-### 4.2 Chart Export
+### 5.2 Chart Export
 
 在候选批次页面选择批次后导出图表。产品图表产物写入 `var/artifacts/{run_id}/`
 并通过 artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
 
-### 4.3 Gemini CLI Review
+### 5.3 Gemini CLI Review
 
 Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要求：
 
@@ -90,12 +108,12 @@ Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要
 provider raw prompt、stdout/stderr、checkpoint、usage、result cache 会作为 product
 artifact evidence 建索引；原始路径不会直接暴露给前端。
 
-### 4.4 Archive
+### 5.4 Archive
 
 Archive 会把 candidate batch + review run 固化为日级归档快照，并把推荐状态、
 rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
-## 5. Migrations 页面
+## 6. Migrations 页面
 
 Migrations 页面用于把 legacy `data/` 内容导入产品存储。
 
@@ -107,7 +125,7 @@ Migrations 页面用于把 legacy `data/` 内容导入产品存储。
 
 交易账户和 simulated trading 数据不属于当前产品化迁移范围。
 
-## 6. Backup / Restore
+## 7. Backup / Restore
 
 产品备份包含：
 
@@ -119,7 +137,7 @@ Migrations 页面用于把 legacy `data/` 内容导入产品存储。
 Restore 会替换本地产品状态。执行 restore 前应停止其它写入同一 `var/` 根目录
 的 API 进程；R7 支持单本地 FastAPI 进程，不支持多进程同时写同一 SQLite/DuckDB。
 
-## 7. Settings
+## 8. Settings
 
 Settings 页面展示：
 
@@ -129,11 +147,11 @@ Settings 页面展示：
 - 外部集成是否配置，但不会显示 secret value。
 - 产品偏好，例如默认策略、分页大小、theme、timezone。
 
-## 8. 常见问题
+## 9. 常见问题
 
 ### Node 版本不对
 
-`./start_product` 会拒绝非 Node 22.x：
+`./start_product` 会拒绝非 Node 23.x：
 
 ```bash
 nvm use
@@ -162,7 +180,7 @@ gemini --version
 legacy 入口默认关闭，只用于迁移、对照或回滚。必须显式设置对应
 `STOCKTRADE_ALLOW_LEGACY_*` 环境变量。
 
-## 9. 验证命令
+## 10. 验证命令
 
 窄验证：
 

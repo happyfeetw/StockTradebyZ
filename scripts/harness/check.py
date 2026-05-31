@@ -1019,7 +1019,7 @@ def check_r7_product_launcher() -> None:
         [
             "stocktrade_api.main:app",
             "node node_modules/vite/bin/vite.js",
-            "requires Node.js 22.x",
+            "requires Node.js 23.x",
             "STOCKTRADE_API_PORT:-8000",
             "STOCKTRADE_WEB_PORT:-5173",
             "PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"",

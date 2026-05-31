@@ -20,6 +20,8 @@ The launcher starts:
 - FastAPI app: `stocktrade_api.main:app` on `127.0.0.1:8000` by default;
 - React/Vite web app on `127.0.0.1:5173` by default, launched through the
   local Vite CLI under `apps/web/node_modules`;
+- the Vite dev proxy reads `STOCKTRADE_API_HOST/STOCKTRADE_API_PORT`, so
+  `/api` follows launcher API port overrides instead of hard-coding `8000`;
 - `PYTHONPATH=apps/api:src` so the API imports product modules without relying
   on legacy CLI paths.
 - Node.js 22.x is enforced before Vite starts. Run `nvm use` when the launcher
@@ -71,6 +73,7 @@ The `r7-product-launcher` gate checks that:
 - `start_product` exists and is executable;
 - the launcher starts the FastAPI and Vite dev servers with local host/port
   defaults;
+- the Vite proxy follows launcher API host/port overrides;
 - the launcher rejects unsupported Node.js versions before invoking Vite;
 - the FastAPI app can serve product state APIs against a clean SQLite path;
 - `start_workbench` points to `./start_product` as the replacement;

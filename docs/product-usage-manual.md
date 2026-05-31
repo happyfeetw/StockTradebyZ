@@ -44,6 +44,10 @@ analytics schema 会在读取或写入 analytics 数据时自动迁移。
 STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
 ```
 
+前端开发服务器会使用同一组 `STOCKTRADE_API_HOST/STOCKTRADE_API_PORT`
+环境变量配置 `/api` 代理；覆盖 API 端口时不需要额外设置
+`VITE_API_BASE_URL`。
+
 ## 3. 本地状态目录
 
 产品路径使用这些本地生成目录：

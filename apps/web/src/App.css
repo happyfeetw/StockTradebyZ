@@ -96,7 +96,7 @@
 html[data-theme="dark"] .preference-select select:focus,
 html[data-theme="dark"] .filter-field input:focus,
 html[data-theme="dark"] .filter-field select:focus {
-  outline-color: rgba(52, 211, 153, 0.28);
+  outline-color: rgba(82, 184, 170, 0.26);
 }
 
 .nav-item {
@@ -140,7 +140,7 @@ html[data-theme="dark"] .filter-field select:focus {
 
 html[data-theme="dark"] .main-surface {
   background:
-    linear-gradient(180deg, rgba(52, 211, 153, 0.08), rgba(52, 211, 153, 0) 280px),
+    linear-gradient(180deg, rgba(19, 125, 116, 0.13), rgba(19, 125, 116, 0) 280px),
     var(--app-bg);
 }
 

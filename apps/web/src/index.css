@@ -33,26 +33,26 @@
 }
 
 html[data-theme="dark"] {
-  --app-bg: #111827;
-  --surface: #19231f;
-  --surface-strong: #202c27;
-  --surface-muted: #24342f;
-  --line: #35504a;
-  --text-strong: #ecfdf5;
-  --text-muted: #9bb5ae;
-  --primary: #34d399;
-  --primary-soft: #103b34;
-  --primary-line: #1f7f72;
-  --success: #86efac;
-  --success-soft: #123522;
-  --success-line: #2f7a48;
-  --accent: #fbbf24;
-  --accent-strong: #fde68a;
-  --accent-soft: #3a2b10;
-  --accent-line: #8a6418;
-  --danger: #fb7185;
-  --danger-soft: #3b1620;
-  --danger-line: #8f2e43;
+  --app-bg: #0f1716;
+  --surface: #16211f;
+  --surface-strong: #1c2926;
+  --surface-muted: #243430;
+  --line: #334a45;
+  --text-strong: #edf7f4;
+  --text-muted: #9cafaa;
+  --primary: #137d74;
+  --primary-soft: #12322f;
+  --primary-line: #2f6f66;
+  --success: #6fcf97;
+  --success-soft: #123321;
+  --success-line: #2f6f49;
+  --accent: #d49a37;
+  --accent-strong: #f2c978;
+  --accent-soft: #342711;
+  --accent-line: #765623;
+  --danger: #e76f85;
+  --danger-soft: #341821;
+  --danger-line: #7b3343;
   color-scheme: dark;
 }
 
@@ -84,7 +84,7 @@ a:focus-visible {
 
 html[data-theme="dark"] button:focus-visible,
 html[data-theme="dark"] a:focus-visible {
-  outline-color: rgba(52, 211, 153, 0.45);
+  outline-color: rgba(82, 184, 170, 0.42);
 }
 
 code {

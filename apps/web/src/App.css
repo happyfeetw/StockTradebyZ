@@ -37,32 +37,16 @@ html[data-theme="dark"] .app-shell {
   inset: 0;
   background:
     radial-gradient(
-      240px 180px at var(--glass-x) var(--glass-y),
+      300px 220px at var(--glass-x) var(--glass-y),
       var(--glass-lens),
-      rgb(113 136 232 / 0.08) 42%,
-      transparent 72%
+      rgb(113 136 232 / 0.05) 50%,
+      transparent 86%
     );
   border: 1px solid transparent;
   -webkit-backdrop-filter: blur(12px) saturate(150%) contrast(108%);
   backdrop-filter: blur(12px) saturate(150%) contrast(108%);
-  -webkit-mask-image: radial-gradient(260px 200px at var(--glass-x) var(--glass-y), black 0 48%, transparent 74%);
-  mask-image: radial-gradient(260px 200px at var(--glass-x) var(--glass-y), black 0 48%, transparent 74%);
-}
-
-.liquid-glass-layer::after {
-  content: "";
-  position: absolute;
-  width: 220px;
-  height: 160px;
-  left: var(--glass-x);
-  top: var(--glass-y);
-  border-radius: 50%;
-  border: 1px solid var(--glass-lens-line);
-  box-shadow:
-    inset 10px 12px 30px rgb(255 255 255 / 0.12),
-    inset -18px -20px 36px rgb(255 255 255 / 0.05);
-  transform: translate(-50%, -50%);
-  opacity: 0.56;
+  -webkit-mask-image: radial-gradient(340px 260px at var(--glass-x) var(--glass-y), rgb(0 0 0 / 0.78) 0%, rgb(0 0 0 / 0.42) 54%, transparent 88%);
+  mask-image: radial-gradient(340px 260px at var(--glass-x) var(--glass-y), rgb(0 0 0 / 0.78) 0%, rgb(0 0 0 / 0.42) 54%, transparent 88%);
 }
 
 .sidebar {

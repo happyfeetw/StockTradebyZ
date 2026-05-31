@@ -1026,11 +1026,20 @@ def check_r7_product_launcher() -> None:
             "cleanup()",
         ],
     )
+    assert_contains(
+        "apps/web/vite.config.ts",
+        [
+            "process.env.STOCKTRADE_API_HOST",
+            "process.env.STOCKTRADE_API_PORT",
+            "target: apiTarget",
+        ],
+    )
     assert_contains("start_workbench", ["R7 legacy write freeze", "./start_product", "React/FastAPI workflows"])
     assert_contains(
         "tests/test_product_launcher_harness.py",
         [
             "test_start_product_is_executable_and_targets_react_fastapi_stack",
+            "test_web_dev_proxy_tracks_product_launcher_api_port",
             "test_legacy_workbench_points_to_product_launcher",
         ],
     )

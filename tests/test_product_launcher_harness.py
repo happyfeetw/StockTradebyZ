@@ -26,6 +26,14 @@ class ProductLauncherHarnessTests(unittest.TestCase):
         self.assertIn("PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"", text)
         self.assertIn("cleanup()", text)
 
+    def test_web_dev_proxy_tracks_product_launcher_api_port(self) -> None:
+        text = (ROOT / "apps" / "web" / "vite.config.ts").read_text(encoding="utf-8")
+
+        self.assertIn("process.env.STOCKTRADE_API_HOST", text)
+        self.assertIn("process.env.STOCKTRADE_API_PORT", text)
+        self.assertIn("target: apiTarget", text)
+        self.assertNotIn("'/api': 'http://127.0.0.1:8000'", text)
+
     def test_legacy_workbench_points_to_product_launcher(self) -> None:
         text = (ROOT / "start_workbench").read_text(encoding="utf-8")
 

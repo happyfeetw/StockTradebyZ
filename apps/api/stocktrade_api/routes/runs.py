@@ -11,6 +11,7 @@ from ..dependencies import (
     get_artifact_root,
     get_candidate_repository,
     get_job_runtime,
+    get_market_data_service,
     get_preselect_service,
     get_review_repository,
     get_review_provider_executor,
@@ -21,6 +22,7 @@ from ..routes.archive import archive_row_response, archive_snapshot_response
 from ..routes.reviews import recommendation_response, review_response, review_run_response
 from ..schemas.archive import ArchiveRunCreateRequest, ArchiveRunCreateResponse
 from ..schemas.charts import ChartExportRunCreateRequest, ChartExportRunCreateResponse
+from ..schemas.market_data import MarketDataRunRequest, MarketDataRunResponse
 from ..schemas.preselect import (
     CandidateBatchResponse,
     CandidateResponse,
@@ -173,6 +175,31 @@ def create_preselect_run(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return PreselectRunResponse(run=run_summary(run), batch=candidate_batch_response(batch))
+
+
+@router.post("/runs/market-data", response_model=MarketDataRunResponse)
+def create_market_data_run(
+    request: MarketDataRunRequest,
+    runtime: JobRuntime = Depends(get_job_runtime),
+    service: Any = Depends(get_market_data_service),
+) -> MarketDataRunResponse:
+    from ..services.market_data_runs import MarketDataDownloadError, MarketDataDownloadValidationError
+
+    try:
+        run, created = runtime.run_market_data_job(request, service=service)
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except MarketDataDownloadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MarketDataDownloadError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return MarketDataRunResponse(
+        run=run_summary(run),
+        summary=created.summary,
+        artifacts=[artifact_response(artifact) for artifact in created.artifacts],
+    )
 
 
 @router.post("/runs/review", response_model=ReviewRunCreateResponse)

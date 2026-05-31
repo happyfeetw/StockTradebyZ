@@ -57,8 +57,8 @@ evidence:
   backup/restore metadata, and chart export run kind.
 - DuckDB migration runner and analytics fact writes for candidates, reviews,
   archive rows, and strategy run metrics.
-- Job runtime for diagnostic, preselect, review, provider review, archive, and
-  chart export workflows.
+- Job runtime for diagnostic, market data download, preselect, review, provider
+  review, archive, and chart export workflows.
 - Legacy import dry-run/import/verify paths for candidates, reviews, history,
   chart artifact references, and quarantine/audit reporting.
 - Product-owned artifact service for generated or imported artifacts.
@@ -100,9 +100,9 @@ evidence:
 - Product provider review runs index Gemini/provider evidence files as
   run-scoped SQLite `artifacts` rows, serve copied evidence through the artifact
   API, and preserve provider evidence artifact ids in review payload lineage.
-- Fixture-backed product API chain proof covers preselect, chart export,
-  provider review, and archive writes through SQLite, DuckDB, and product
-  artifact storage without live Tushare/Gemini calls.
+- Fixture-backed product API chain proof covers market data run contracts,
+  preselect, chart export, provider review, and archive writes through SQLite,
+  DuckDB, and product artifact storage without live Tushare/Gemini calls.
 - R7 resource envelope evidence now runs the same credential-free product API
   path through `scripts/harness/resource_envelope.py`, recording startup time,
   workflow runtime, memory, SQLite/DuckDB growth, and artifact growth under

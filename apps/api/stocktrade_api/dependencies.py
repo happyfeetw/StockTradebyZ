@@ -13,6 +13,7 @@ from .storage.migration_repository import MigrationRepository
 from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
 from .storage.settings_repository import SettingsRepository
+from .services.market_data_runs import MarketDataDownloadService
 
 
 def get_run_repository(request: Request) -> RunRepository:
@@ -67,3 +68,7 @@ def get_preselect_service():
     from stocktrade.domain.selection import PreselectService
 
     return PreselectService()
+
+
+def get_market_data_service(request: Request) -> MarketDataDownloadService:
+    return request.app.state.market_data_service

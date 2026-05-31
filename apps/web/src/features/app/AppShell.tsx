@@ -39,6 +39,7 @@ import {
   createArchiveRun,
   createChartExportRun,
   createDiagnosticRun,
+  createMarketDataRun,
   createPreselectRun,
   createReviewProviderRun,
   dryRunLegacyImport,
@@ -77,6 +78,7 @@ import {
   type LegacyImportSummary,
   type LegacyImportVerifyReport,
   type LegacyImportVerifyScope,
+  type MarketDataRunRequest,
   type PreselectRunRequest,
   type ProductPreferenceSettings,
   type ProductSettingsResponse,
@@ -1851,6 +1853,14 @@ function RunsView() {
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedRunId = paramValue(searchParams, 'run_id')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(requestedRunId || null)
+  const [marketDataForm, setMarketDataForm] = useState<Record<keyof MarketDataRunRequest, string>>({
+    config_path: '',
+    start: '',
+    end: '',
+    out_dir: '',
+    log_path: '',
+    workers: '',
+  })
   const [preselectForm, setPreselectForm] = useState<Record<keyof PreselectRunRequest, string>>({
     config_path: '',
     data_dir: '',
@@ -1889,6 +1899,17 @@ function RunsView() {
     },
   })
 
+  const marketDataMutation = useMutation({
+    mutationFn: () => createMarketDataRun(compactMarketDataRequest(marketDataForm)),
+    onSuccess: (response) => {
+      selectRun(response.run.id)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
+    },
+  })
+
   const preselectMutation = useMutation({
     mutationFn: () => createPreselectRun(compactPreselectRequest(preselectForm)),
     onSuccess: (response) => {
@@ -1909,7 +1930,12 @@ function RunsView() {
   })
 
   const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
+  const marketDataResult = marketDataMutation.isSuccess ? marketDataMutation.data : null
   const preselectResult = preselectMutation.isSuccess ? preselectMutation.data : null
+
+  function updateMarketDataField(key: keyof MarketDataRunRequest, value: string) {
+    setMarketDataForm((current) => ({ ...current, [key]: value }))
+  }
 
   function updatePreselectField(key: keyof PreselectRunRequest, value: string) {
     setPreselectForm((current) => ({ ...current, [key]: value }))
@@ -1977,12 +2003,88 @@ function RunsView() {
 
           <form
             className="run-setup-form"
+            aria-label={t('Market data download setup')}
+            onSubmit={(event) => {
+              event.preventDefault()
+              marketDataMutation.mutate()
+            }}
+          >
+            <div className="run-setup-heading">
+              <Database size={18} aria-hidden="true" />
+              <h3>{t('Daily data download')}</h3>
+            </div>
+            <FilterInput
+              label="Fetch config path"
+              placeholder="config/fetch_kline.yaml"
+              value={marketDataForm.config_path}
+              onChange={(value) => updateMarketDataField('config_path', value)}
+            />
+            <FilterInput
+              label="Start date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={marketDataForm.start}
+              onChange={(value) => updateMarketDataField('start', value)}
+            />
+            <FilterInput
+              label="End date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={marketDataForm.end}
+              onChange={(value) => updateMarketDataField('end', value)}
+            />
+            <FilterInput
+              label="Output dir"
+              placeholder="data/raw"
+              value={marketDataForm.out_dir}
+              onChange={(value) => updateMarketDataField('out_dir', value)}
+            />
+            <FilterInput
+              label="Workers"
+              placeholder="4"
+              value={marketDataForm.workers}
+              onChange={(value) => updateMarketDataField('workers', value)}
+            />
+            <FilterInput
+              label="Log path"
+              placeholder="auto"
+              value={marketDataForm.log_path}
+              onChange={(value) => updateMarketDataField('log_path', value)}
+            />
+            <button type="submit" className="action-button run-setup-submit" disabled={marketDataMutation.isPending}>
+              {marketDataMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Database size={17} aria-hidden="true" />}
+              <span>{t('Download daily data')}</span>
+            </button>
+          </form>
+
+          {marketDataMutation.isError ? (
+            <div className="alert compact-alert" role="alert">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>{errorText(marketDataMutation.error)}</span>
+            </div>
+          ) : null}
+
+          {marketDataResult ? (
+            <div className="run-setup-result" aria-label={t('Market data result')}>
+              <StatusBadge status={marketDataResult.run.status} />
+              <DataPair label="Output dir" value={summaryText(marketDataResult.summary, 'out_dir')} />
+              <DataPair label="CSV files" value={summaryText(marketDataResult.summary, 'csv_file_count')} />
+              <DataPair label="Latest local date" value={summaryText(marketDataResult.summary, 'local_latest_date')} />
+            </div>
+          ) : null}
+
+          <form
+            className="run-setup-form"
             aria-label={t('Preselect run setup')}
             onSubmit={(event) => {
               event.preventDefault()
               preselectMutation.mutate()
             }}
           >
+            <div className="run-setup-heading">
+              <Search size={18} aria-hidden="true" />
+              <h3>{t('Quant preselect')}</h3>
+            </div>
             <FilterInput
               label="Config path"
               placeholder="config/rules_preselect.yaml"
@@ -3345,6 +3447,24 @@ function archiveStatusValue(value: string | null): ArchiveStatus {
 
 function compactPreselectRequest(form: Record<keyof PreselectRunRequest, string>): PreselectRunRequest {
   return Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]))
+}
+
+function compactMarketDataRequest(form: Record<keyof MarketDataRunRequest, string>): MarketDataRunRequest {
+  const request: MarketDataRunRequest = {}
+  for (const key of ['config_path', 'start', 'end', 'out_dir', 'log_path'] as const) {
+    const value = form[key].trim()
+    if (value) request[key] = value
+  }
+  const workers = Number.parseInt(form.workers.trim(), 10)
+  if (Number.isFinite(workers) && workers > 0) request.workers = workers
+  return request
+}
+
+function summaryText(summary: Record<string, unknown>, key: string) {
+  const value = summary[key]
+  if (value === null || value === undefined || value === '') return 'Not set'
+  if (Array.isArray(value)) return value.length ? value.join(', ') : 'none'
+  return String(value)
 }
 
 function languageConfirmText(t: (text: string) => string, pickDate: string, candidateCount: number) {

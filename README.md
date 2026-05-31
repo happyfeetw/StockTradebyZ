@@ -22,7 +22,7 @@
 默认产品流程在 `./start_product` 的运行中心中执行；历史完整流程由
 [run_all.py](run_all.py) 串联，但 R7 后已默认退休：
 
-1. 下载 K 线数据（pipeline.fetch_kline）
+1. 下载 K 线数据（运行中心 / `POST /api/runs/market-data`）
 2. 量化初选（运行中心 / `POST /api/runs/preselect`）
 3. 导出候选图表（运行中心 / `POST /api/runs/chart-export`）
 4. Gemini CLI 复评（运行中心 / `POST /api/runs/review/provider`）
@@ -122,7 +122,7 @@ Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧�
 ./start_product
 ~~~
 
-然后在运行中心运行初选、图表导出、复评和归档。旧的 `run_all.py` 与
+然后在运行中心运行每日数据下载、初选、图表导出、复评和归档。旧的 `run_all.py` 与
 legacy CLI 链路仅保留用于迁移、对照或回滚；一键脚本本身需要显式设置
 `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1`，子步骤还需要按需设置对应的 legacy
 flag。
@@ -149,6 +149,9 @@ python run_all.py --skip-fetch
 ## 5. 分步运行攻略
 
 ### 步骤 1：拉取 K 线
+
+默认产品路径是在 React/FastAPI 运行中心运行“每日数据下载”，或调用
+`POST /api/runs/market-data`。旧 CLI 仅用于迁移、对照或回滚：
 
 ~~~bash
 python -m pipeline.fetch_kline

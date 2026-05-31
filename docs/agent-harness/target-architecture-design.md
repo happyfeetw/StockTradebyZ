@@ -206,6 +206,7 @@ All routes are prefixed with `/api`.
 | `GET /health` | API health and version |
 | `GET/PUT /settings` | product settings and provider metadata |
 | `GET /strategies` | available strategy definitions and config versions |
+| `POST /runs/market-data` | download daily market CSV data |
 | `POST /runs/preselect` | create candidate selection run |
 | `POST /runs/review` | create review run for a candidate batch |
 | `POST /runs/archive` | create archive snapshot |

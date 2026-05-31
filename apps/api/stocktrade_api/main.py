@@ -29,6 +29,7 @@ from .storage.run_repository import RunRepository
 from .storage.settings_repository import SettingsRepository
 from .storage.sqlite import DEFAULT_SQLITE_PATH, create_session_factory, create_sqlite_engine
 from .storage.sqlite_migrations import run_sqlite_migrations
+from .services.market_data_runs import MarketDataDownloadService
 
 API_TITLE = "StockTradebyZ API"
 API_VERSION = "0.1.0"
@@ -84,6 +85,7 @@ def create_app(
     )
     job_runtime = JobRuntime(run_repository)
     app.state.job_runtime = job_runtime
+    app.state.market_data_service = MarketDataDownloadService(run_repository, artifact_root=artifact_root)
     app.state.recovered_runs = []
     if recover_on_create:
         app.state.recovered_runs = job_runtime.recover_interrupted_runs()

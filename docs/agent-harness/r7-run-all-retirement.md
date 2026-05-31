@@ -20,6 +20,7 @@ The supported local product entrypoint is:
 
 From the React/FastAPI Run Center, run the product-owned workflow steps:
 
+- `POST /api/runs/market-data`
 - `POST /api/runs/preselect`
 - `POST /api/runs/chart-export`
 - `POST /api/runs/review/provider`

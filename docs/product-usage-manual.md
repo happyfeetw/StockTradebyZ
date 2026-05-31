@@ -92,7 +92,28 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 
 ## 6. 运行中心工作流
 
-### 6.1 初选
+### 6.1 每日数据下载
+
+每日行情下载已经进入产品运行中心，不需要回到 legacy workbench。
+
+在运行中心填写：
+
+- Fetch config path: 默认可留空，等价于 `config/fetch_kline.yaml`。
+- Start date / End date: 可留空使用配置文件；页面日期会由 API 转为
+  `YYYYMMDD` 后传给抓取层。
+- Output dir: 默认可留空，沿用配置文件中的 `out`，通常是 `data/raw`。
+- Workers: 默认可留空，沿用配置文件中的并发数。
+- Log path: 默认可留空，日志会写入本次运行的 product artifact 目录。
+
+点击“下载每日数据”会创建 `market_data` run，调用 Tushare 下载日线 CSV，
+并把本次有效配置和日志登记为 product artifacts。该步骤仍需要本机已设置
+`TUSHARE_TOKEN`；前端和 API 只展示配置状态，不会展示 token 值。
+
+当前下载实现复用 `pipeline.fetch_kline` 的抓取逻辑，因此下载过程中只能在
+单只股票任务之间检查取消信号；如果已经进入 Tushare 请求或冷却等待，取消会在
+当前抓取函数返回后落库为 cancelled。
+
+### 6.2 初选
 
 在运行中心填写：
 
@@ -103,12 +124,12 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
 候选 identity 始终是 `(code, strategy)`。
 
-### 6.2 图表导出
+### 6.3 图表导出
 
 在候选批次页面选择批次后导出图表。产品图表产物写入 `var/artifacts/{run_id}/`
 并通过 artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
 
-### 6.3 Gemini CLI 复评
+### 6.4 Gemini CLI 复评
 
 Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要求：
 
@@ -119,7 +140,7 @@ Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要
 provider raw prompt、stdout/stderr、checkpoint、usage、result cache 会作为 product
 artifact evidence 建索引；原始路径不会直接暴露给前端。
 
-### 6.4 归档
+### 6.5 归档
 
 Archive 会把 candidate batch + review run 固化为日级归档快照，并把推荐状态、
 rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
@@ -172,8 +193,8 @@ nvm use
 
 ### 运行中心报缺少 raw CSV
 
-先确认 `data/raw/{code}.csv` 或自定义 raw dir 中存在对应股票 CSV。Chart Export
-只读取 raw CSV，不会自动下载。
+先在运行中心执行“每日数据下载”，或确认 `data/raw/{code}.csv` / 自定义 raw dir
+中存在对应股票 CSV。Chart Export 只读取 raw CSV，不会在图表导出时自动下载。
 
 ### Gemini CLI 未配置
 

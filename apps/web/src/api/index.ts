@@ -5,7 +5,16 @@ export function artifactFileUrl(artifactId: string): string {
 }
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelling' | 'cancelled'
-export type RunKind = 'preselect' | 'review' | 'archive' | 'chart_export' | 'legacy_import' | 'backup' | 'restore' | 'diagnostic'
+export type RunKind =
+  | 'preselect'
+  | 'market_data'
+  | 'review'
+  | 'archive'
+  | 'chart_export'
+  | 'legacy_import'
+  | 'backup'
+  | 'restore'
+  | 'diagnostic'
 
 export interface ProductStack {
   frontend: string
@@ -222,6 +231,21 @@ export interface PreselectRunRequest {
   data_dir?: string
   pick_date?: string
   end_date?: string
+}
+
+export interface MarketDataRunRequest {
+  config_path?: string
+  start?: string
+  end?: string
+  out_dir?: string
+  log_path?: string
+  workers?: number
+}
+
+export interface MarketDataRunResponse {
+  run: RunSummary
+  summary: Record<string, unknown>
+  artifacts: Artifact[]
 }
 
 export interface PreselectCandidate {
@@ -667,6 +691,13 @@ export function createDiagnosticRun(fail = false): Promise<RunDetail> {
 
 export function createPreselectRun(payload: PreselectRunRequest): Promise<PreselectRunResponse> {
   return request<PreselectRunResponse>('/api/runs/preselect', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createMarketDataRun(payload: MarketDataRunRequest): Promise<MarketDataRunResponse> {
+  return request<MarketDataRunResponse>('/api/runs/market-data', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

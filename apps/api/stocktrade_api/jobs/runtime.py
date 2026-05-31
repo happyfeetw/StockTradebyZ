@@ -12,9 +12,11 @@ if TYPE_CHECKING:
 
     from ..schemas.archive import ArchiveRunCreateRequest
     from ..schemas.charts import ChartExportRunCreateRequest
+    from ..schemas.market_data import MarketDataRunRequest
     from ..schemas.reviews import ReviewRunCreateRequest
     from ..services.archive_runs import ArchiveRunService
     from ..services.chart_runs import ChartExportRunService, CreatedChartExport
+    from ..services.market_data_runs import CreatedMarketDataDownload, MarketDataDownloadService
     from ..services.review_runs import ReviewRunService
     from ..storage.archive_repository import CreatedArchive
     from ..storage.duckdb import DuckDBAnalyticsWriter
@@ -154,6 +156,64 @@ class JobRuntime:
             return final_run, batch, result
         except WorkflowCancellationRequested:
             self._mark_workflow_cancelled(run.id, step.id, mode="preselect")
+            raise
+        except Exception as exc:
+            error = {"type": type(exc).__name__, "message": str(exc)}
+            self.repository.transition_step(step.id, status="failed", error=error)
+            self.repository.append_event(run.id, step_id=step.id, level="error", message=error["message"])
+            self.repository.transition_run(run.id, status="failed", summary=error)
+            raise
+
+    def run_market_data_job(
+        self,
+        request: "MarketDataRunRequest",
+        *,
+        service: "MarketDataDownloadService",
+    ) -> tuple[Run, "CreatedMarketDataDownload"]:
+        with self._workflow_lock:
+            return self._run_market_data_job(request, service=service)
+
+    def _run_market_data_job(
+        self,
+        request: "MarketDataRunRequest",
+        *,
+        service: "MarketDataDownloadService",
+    ) -> tuple[Run, "CreatedMarketDataDownload"]:
+        run = self.repository.create_run(
+            kind="market_data",
+            summary={
+                "mode": "market_data",
+                "config_path": request.config_path,
+                "start": request.start,
+                "end": request.end,
+                "out_dir": request.out_dir,
+                "message": "queued",
+            },
+        )
+        step = self.repository.add_step(run.id, name="market_data")
+        self.repository.append_event(run.id, message="Market data download queued")
+        self.repository.transition_run(run.id, status="running")
+        self.repository.transition_step(step.id, status="running")
+        self.repository.append_event(run.id, step_id=step.id, message="Market data download started")
+
+        try:
+            self._raise_if_cancelled(run.id, mode="market_data")
+            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            self._raise_if_cancelled(run.id, mode="market_data")
+            self.repository.transition_step(step.id, status="succeeded")
+            self.repository.append_event(
+                run.id,
+                step_id=step.id,
+                message=f"Market data download completed with {created.summary.get('csv_file_count', 0)} CSV files",
+            )
+            final_run = self.repository.transition_run(
+                run.id,
+                status="succeeded",
+                summary=created.summary,
+            )
+            return final_run, created
+        except WorkflowCancellationRequested:
+            self._mark_workflow_cancelled(run.id, step.id, mode="market_data")
             raise
         except Exception as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}

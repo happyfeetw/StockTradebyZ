@@ -10,6 +10,7 @@ from stocktrade.domain.review import (
 )
 
 from ..schemas.reviews import ReviewRunCreateRequest
+from .cancellation import CancellationCheck, raise_if_cancelled
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.review_repository import CreatedReviewRun, ReviewRepository
 from ..storage.sqlite_models import Candidate, CandidateBatch
@@ -35,8 +36,10 @@ class ReviewRunService:
         run_id: str,
         request: ReviewRunCreateRequest,
         source: dict[str, Any] | None = None,
+        should_cancel: CancellationCheck | None = None,
     ) -> CreatedReviewRun:
         batch = self.repository.get_candidate_batch(request.candidate_batch_id)
+        raise_if_cancelled(should_cancel)
         candidates = [_candidate_payload(candidate) for candidate in batch.candidates]
         candidates_by_key = {candidate_review_key(candidate): candidate for candidate in candidates}
         normalized_results = self._normalize_results(
@@ -44,12 +47,14 @@ class ReviewRunService:
             candidates_by_key=candidates_by_key,
             classic_pattern_config=request.classic_pattern_config,
         )
+        raise_if_cancelled(should_cancel)
         suggestion = generate_suggestion(
             pick_date=batch.pick_date,
             all_results=normalized_results,
             min_score=request.min_score,
             candidates=candidates,
         )
+        raise_if_cancelled(should_cancel)
         summary = _summary_payload(
             batch=batch,
             provider=request.provider,
@@ -68,6 +73,7 @@ class ReviewRunService:
             results=normalized_results,
             recommendations=list(suggestion["recommendations"]),
         )
+        raise_if_cancelled(should_cancel)
         if self.analytics_writer is not None:
             self.analytics_writer.record_review_import(
                 run_id=run_id,

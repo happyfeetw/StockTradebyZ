@@ -28,6 +28,7 @@ from .storage.review_repository import ReviewRepository
 from .storage.run_repository import RunRepository
 from .storage.settings_repository import SettingsRepository
 from .storage.sqlite import DEFAULT_SQLITE_PATH, create_session_factory, create_sqlite_engine
+from .storage.sqlite_migrations import run_sqlite_migrations
 
 API_TITLE = "StockTradebyZ API"
 API_VERSION = "0.1.0"
@@ -40,12 +41,15 @@ def create_app(
     backup_root: str | Path = DEFAULT_BACKUP_ROOT,
     artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
     session_factory: sessionmaker[Session] | None = None,
+    auto_migrate: bool = True,
     recover_on_create: bool = False,
 ) -> FastAPI:
     app = FastAPI(title=API_TITLE, version=API_VERSION)
     sqlite_engine: Engine | None = None
 
     if session_factory is None:
+        if auto_migrate:
+            run_sqlite_migrations(sqlite_path)
         sqlite_engine = create_sqlite_engine(sqlite_path)
         session_factory = create_session_factory(sqlite_engine)
 

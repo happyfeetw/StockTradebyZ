@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from stocktrade_api.jobs.runtime import JobRuntime  # noqa: E402
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.runs import RunDetail, RunEventsResponse, RunListResponse, RunSummary  # noqa: E402
+from stocktrade_api.services.cancellation import WorkflowCancellationRequested  # noqa: E402
 from stocktrade_api.storage.run_repository import (  # noqa: E402
     RunRepository,
     TerminalRunTransitionError,
@@ -215,6 +216,53 @@ class JobRuntimeContractTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(call_order, ["first", "second"])
             self.assertEqual([run.status for run in repository.list_runs(limit=10)], ["succeeded", "succeeded"])
+            engine.dispose()
+
+    def test_runtime_cancellation_during_preselect_prevents_success_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+            runtime = JobRuntime(repository)
+            parameters = PreselectParameters(pick_date="2026-05-31")
+            entered = threading.Event()
+            release = threading.Event()
+            errors: list[BaseException] = []
+
+            class BlockingPreselectService:
+                def run(self, _parameters: PreselectParameters) -> PreselectResult:
+                    entered.set()
+                    if not release.wait(timeout=5):
+                        raise TimeoutError("preselect service was not released")
+                    return empty_preselect_result()
+
+            def run_preselect() -> None:
+                try:
+                    runtime.run_preselect_job(parameters, service=BlockingPreselectService())  # type: ignore[arg-type]
+                except WorkflowCancellationRequested as exc:
+                    errors.append(exc)
+                except BaseException as exc:  # pragma: no cover - reported below
+                    errors.append(exc)
+
+            worker = threading.Thread(target=run_preselect)
+            worker.start()
+            self.assertTrue(entered.wait(timeout=2))
+            active = repository.list_runs(limit=1)[0]
+
+            cancelling = runtime.request_cancellation(active.id)
+            release.set()
+            worker.join(timeout=2)
+
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(errors)
+            self.assertIsInstance(errors[0], WorkflowCancellationRequested)
+            self.assertEqual(cancelling.status, "cancelling")
+
+            detail = repository.get_run_detail(active.id)
+            self.assertEqual(detail.status, "cancelled")
+            self.assertEqual(detail.steps[0].status, "cancelled")
+            self.assertIn("Cancellation requested", [event.message for event in detail.events])
+            self.assertIn("preselect workflow cancelled", [event.message for event in detail.events])
             engine.dispose()
 
     def test_runtime_terminal_run_state_cannot_be_overwritten(self) -> None:

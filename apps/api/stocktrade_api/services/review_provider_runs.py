@@ -9,6 +9,7 @@ from uuid import uuid4
 from stocktrade.domain.review import candidate_review_key, result_review_key
 
 from ..schemas.reviews import ReviewProviderRunCreateRequest, ReviewRunCreateRequest
+from .cancellation import CancellationCheck, raise_if_cancelled
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.review_repository import CreatedReviewRun, ReviewRepository
 from ..storage.run_repository import RunRepository
@@ -68,8 +69,15 @@ class ReviewProviderRunService:
         self.artifact_root = _resolve_artifact_root(artifact_root) if artifact_root is not None else None
         self.review_service = ReviewRunService(repository, analytics_writer=analytics_writer)
 
-    def run(self, *, run_id: str, request: ReviewProviderRunCreateRequest) -> CreatedReviewRun:
+    def run(
+        self,
+        *,
+        run_id: str,
+        request: ReviewProviderRunCreateRequest,
+        should_cancel: CancellationCheck | None = None,
+    ) -> CreatedReviewRun:
         sources = self.repository.get_review_provider_sources(request.candidate_batch_id)
+        raise_if_cancelled(should_cancel)
         items = _provider_items(
             sources.candidate_batch,
             chart_artifacts_by_review_key=sources.chart_artifacts_by_review_key,
@@ -90,9 +98,12 @@ class ReviewProviderRunService:
             items=items,
             provider_config=request.provider_config,
         )
+        raise_if_cancelled(should_cancel)
         raw_results = self.executor.run(provider_input)
+        raise_if_cancelled(should_cancel)
         results = _results_with_lineage(raw_results, items=items, reviewer=reviewer)
         if self.run_repository is not None and self.artifact_root is not None:
+            raise_if_cancelled(should_cancel)
             _attach_provider_evidence_artifacts(
                 results,
                 run_id=run_id,
@@ -125,7 +136,8 @@ class ReviewProviderRunService:
             classic_pattern_config=request.classic_pattern_config,
             results=results,
         )
-        return self.review_service.run(run_id=run_id, request=review_request, source=source)
+        raise_if_cancelled(should_cancel)
+        return self.review_service.run(run_id=run_id, request=review_request, source=source, should_cancel=should_cancel)
 
 
 def _provider_items(

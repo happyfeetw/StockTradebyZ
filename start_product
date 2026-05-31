@@ -16,13 +16,24 @@ API_PORT="${STOCKTRADE_API_PORT:-8000}"
 WEB_HOST="${STOCKTRADE_WEB_HOST:-127.0.0.1}"
 WEB_PORT="${STOCKTRADE_WEB_PORT:-5173}"
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "Missing npm. Install Node.js, then run: cd apps/web && npm install" >&2
+if ! command -v node >/dev/null 2>&1; then
+  echo "Missing node. Install Node.js 22, then run: nvm use" >&2
+  exit 1
+fi
+
+NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || true)"
+if [ "$NODE_MAJOR" != "22" ]; then
+  echo "Unsupported Node.js $(node --version 2>/dev/null || echo unknown). StockTradebyZ requires Node.js 22.x; run: nvm use" >&2
   exit 1
 fi
 
 if [ ! -d "apps/web/node_modules" ]; then
   echo "Missing apps/web/node_modules. Run: cd apps/web && npm install" >&2
+  exit 1
+fi
+
+if [ ! -f "apps/web/node_modules/vite/bin/vite.js" ]; then
+  echo "Missing Vite CLI. Run: cd apps/web && npm install" >&2
   exit 1
 fi
 
@@ -45,7 +56,7 @@ API_PID=$!
 echo "Starting StockTradebyZ web app: http://${WEB_HOST}:${WEB_PORT}"
 (
   cd apps/web
-  npm run dev -- --host "$WEB_HOST" --port "$WEB_PORT"
+  node node_modules/vite/bin/vite.js --host "$WEB_HOST" --port "$WEB_PORT"
 ) &
 WEB_PID=$!
 

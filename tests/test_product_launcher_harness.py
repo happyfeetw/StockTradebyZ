@@ -16,7 +16,11 @@ class ProductLauncherHarnessTests(unittest.TestCase):
 
         self.assertTrue(mode & stat.S_IXUSR)
         self.assertIn("stocktrade_api.main:app", text)
-        self.assertIn("npm run dev", text)
+        self.assertIn("node node_modules/vite/bin/vite.js", text)
+        self.assertIn("command -v node", text)
+        self.assertIn("NODE_MAJOR", text)
+        self.assertIn("requires Node.js 22.x", text)
+        self.assertIn("Missing Vite CLI", text)
         self.assertIn("STOCKTRADE_API_PORT:-8000", text)
         self.assertIn("STOCKTRADE_WEB_PORT:-5173", text)
         self.assertIn("PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"", text)

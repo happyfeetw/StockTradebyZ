@@ -3,6 +3,7 @@ from __future__ import annotations
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from ..services.cancellation import WorkflowCancellationRequested
 from ..storage.run_repository import TERMINAL_STATUSES, RunRepository
 from ..storage.sqlite_models import CandidateBatch, Run
 
@@ -77,6 +78,26 @@ class JobRuntime:
             summary={"mode": "diagnostic", "message": "cancelled before execution"},
         )
 
+    def _cancellation_check(self, run_id: str):
+        return lambda: self.repository.is_cancellation_requested(run_id)
+
+    def _raise_if_cancelled(self, run_id: str, *, mode: str) -> None:
+        if self.repository.is_cancellation_requested(run_id):
+            raise WorkflowCancellationRequested(f"{mode} workflow cancelled by user request")
+
+    def _mark_workflow_cancelled(self, run_id: str, step_id: int, *, mode: str) -> Run:
+        self.repository.transition_step(
+            step_id,
+            status="cancelled",
+            error={"type": "WorkflowCancellationRequested", "message": "cancelled by user request"},
+        )
+        self.repository.append_event(run_id, step_id=step_id, level="warning", message=f"{mode} workflow cancelled")
+        return self.repository.transition_run(
+            run_id,
+            status="cancelled",
+            summary={"mode": mode, "message": "cancelled by user request"},
+        )
+
     def run_preselect_job(
         self,
         parameters: "PreselectParameters",
@@ -106,14 +127,18 @@ class JobRuntime:
         self.repository.append_event(run.id, step_id=step.id, message="Preselect job started")
 
         try:
+            self._raise_if_cancelled(run.id, mode="preselect")
             result = service.run(parameters)
+            self._raise_if_cancelled(run.id, mode="preselect")
             batch = self.repository.create_candidate_batch(run_id=run.id, result=result)
+            self._raise_if_cancelled(run.id, mode="preselect")
             if analytics_writer is not None:
                 analytics_writer.record_candidate_import(
                     run_id=run.id,
                     batch=batch,
                     candidates=batch.candidates,
                 )
+            self._raise_if_cancelled(run.id, mode="preselect")
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -127,6 +152,9 @@ class JobRuntime:
                 summary=result.meta,
             )
             return final_run, batch, result
+        except WorkflowCancellationRequested:
+            self._mark_workflow_cancelled(run.id, step.id, mode="preselect")
+            raise
         except Exception as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}
             self.repository.transition_step(step.id, status="failed", error=error)
@@ -164,7 +192,9 @@ class JobRuntime:
         self.repository.append_event(run.id, step_id=step.id, message="Review job started")
 
         try:
-            created = service.run(run_id=run.id, request=request)
+            self._raise_if_cancelled(run.id, mode="review")
+            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            self._raise_if_cancelled(run.id, mode="review")
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -178,6 +208,9 @@ class JobRuntime:
                 summary=created.review_run.summary_json,
             )
             return final_run, created
+        except WorkflowCancellationRequested:
+            self._mark_workflow_cancelled(run.id, step.id, mode="review")
+            raise
         except Exception as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}
             self.repository.transition_step(step.id, status="failed", error=error)
@@ -216,7 +249,9 @@ class JobRuntime:
         self.repository.append_event(run.id, step_id=step.id, message="Archive job started")
 
         try:
-            created = service.run(run_id=run.id, request=request)
+            self._raise_if_cancelled(run.id, mode="archive")
+            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            self._raise_if_cancelled(run.id, mode="archive")
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -230,6 +265,9 @@ class JobRuntime:
                 summary=created.snapshot.summary_json,
             )
             return final_run, created
+        except WorkflowCancellationRequested:
+            self._mark_workflow_cancelled(run.id, step.id, mode="archive")
+            raise
         except Exception as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}
             self.repository.transition_step(step.id, status="failed", error=error)
@@ -267,7 +305,9 @@ class JobRuntime:
         self.repository.append_event(run.id, step_id=step.id, message="Chart export job started")
 
         try:
-            created = service.run(run_id=run.id, request=request)
+            self._raise_if_cancelled(run.id, mode="chart_export")
+            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            self._raise_if_cancelled(run.id, mode="chart_export")
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -281,6 +321,9 @@ class JobRuntime:
                 summary=created.summary,
             )
             return final_run, created
+        except WorkflowCancellationRequested:
+            self._mark_workflow_cancelled(run.id, step.id, mode="chart_export")
+            raise
         except Exception as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}
             self.repository.transition_step(step.id, status="failed", error=error)

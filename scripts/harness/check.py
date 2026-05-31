@@ -1018,7 +1018,8 @@ def check_r7_product_launcher() -> None:
         "start_product",
         [
             "stocktrade_api.main:app",
-            "npm run dev",
+            "node node_modules/vite/bin/vite.js",
+            "requires Node.js 22.x",
             "STOCKTRADE_API_PORT:-8000",
             "STOCKTRADE_WEB_PORT:-5173",
             "PYTHONPATH=\"apps/api:src:${PYTHONPATH:-}\"",
@@ -1328,7 +1329,7 @@ def check_r7_browser_proof() -> None:
             "Managing issue: #152",
             "R7 Final Browser Proof",
             "PYTHONPATH=apps/api:src python3 scripts/harness/seed_ui_smoke.py --force",
-            "npm run dev -- --host 127.0.0.1 --port 5173",
+            "node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173",
             "scripts/harness/check.sh r7-browser-proof",
             "desktop `1440x1000` and mobile `430x932`",
             "Overview",

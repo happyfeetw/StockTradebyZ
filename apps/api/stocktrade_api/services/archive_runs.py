@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..schemas.archive import ArchiveRunCreateRequest
+from .cancellation import CancellationCheck, raise_if_cancelled
 from ..storage.archive_repository import ArchiveRepository, CreatedArchive, archive_review_key_for
 from ..storage.duckdb import DuckDBAnalyticsWriter
 from ..storage.sqlite_models import Artifact, Candidate, CandidateBatch, Recommendation, Review, ReviewRun
@@ -22,11 +23,18 @@ class ArchiveRunService:
         self.repository = repository
         self.analytics_writer = analytics_writer
 
-    def run(self, *, run_id: str, request: ArchiveRunCreateRequest) -> CreatedArchive:
+    def run(
+        self,
+        *,
+        run_id: str,
+        request: ArchiveRunCreateRequest,
+        should_cancel: CancellationCheck | None = None,
+    ) -> CreatedArchive:
         sources = self.repository.get_archive_sources(
             candidate_batch_id=request.candidate_batch_id,
             review_run_id=request.review_run_id,
         )
+        raise_if_cancelled(should_cancel)
         batch = sources.candidate_batch
         review_run = sources.review_run
         if review_run.candidate_batch_id != batch.id:
@@ -40,11 +48,13 @@ class ArchiveRunService:
             chart_artifacts_by_review_key=sources.chart_artifacts_by_review_key,
             chart_artifacts_by_code=sources.chart_artifacts_by_code,
         )
+        raise_if_cancelled(should_cancel)
         created = self.repository.create_archive_snapshot(
             run_id=run_id,
             snapshot=snapshot,
             rows=rows,
         )
+        raise_if_cancelled(should_cancel)
         if self.analytics_writer is not None:
             self.analytics_writer.record_archive_import(
                 run_id=run_id,

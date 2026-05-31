@@ -21,14 +21,14 @@ html[data-theme="dark"] .app-shell {
   --glass-y: 42vh;
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 0;
   pointer-events: none;
   opacity: 0;
   transition: opacity 180ms ease;
 }
 
 .liquid-glass-layer[data-active="true"] {
-  opacity: 1;
+  opacity: 0.82;
 }
 
 .liquid-glass-layer::before {
@@ -39,7 +39,7 @@ html[data-theme="dark"] .app-shell {
     radial-gradient(
       240px 180px at var(--glass-x) var(--glass-y),
       var(--glass-lens),
-      rgb(255 255 255 / 0.06) 42%,
+      rgb(113 136 232 / 0.08) 42%,
       transparent 72%
     );
   border: 1px solid transparent;

@@ -19,14 +19,14 @@
 
 ## 1. 项目流程
 
-默认产品流程在 `./start_product` 的 Run Center 中执行；历史完整流程由
+默认产品流程在 `./start_product` 的运行中心中执行；历史完整流程由
 [run_all.py](run_all.py) 串联，但 R7 后已默认退休：
 
 1. 下载 K 线数据（pipeline.fetch_kline）
-2. 量化初选（Run Center / `POST /api/runs/preselect`）
-3. 导出候选图表（Run Center / `POST /api/runs/chart-export`）
-4. Gemini CLI 复评（Run Center / `POST /api/runs/review/provider`）
-5. 归档与查看推荐结果（Run Center / `POST /api/runs/archive`）
+2. 量化初选（运行中心 / `POST /api/runs/preselect`）
+3. 导出候选图表（运行中心 / `POST /api/runs/chart-export`）
+4. Gemini CLI 复评（运行中心 / `POST /api/runs/review/provider`）
+5. 归档与查看推荐结果（运行中心 / `POST /api/runs/archive`）
 
 legacy 文件输出链路：
 
@@ -76,9 +76,10 @@ nvm use
 cd apps/web && npm install
 ~~~
 
-The frontend toolchain is validated on Node 23. The repository includes
-`.nvmrc` so local Vite/Rolldown behavior stays reproducible.
+前端工具链在 Node 23 上验证；仓库包含 `.nvmrc`，用于保持本地
+Vite/Rolldown 行为可复现。
 `./start_product` 会在启动前拒绝非 Node 23.x，并自动初始化 SQLite 产品 schema。
+React 前端默认使用中文界面，侧栏可切换中文/英文和跟随系统/浅色/深色主题。
 
 旧的 `start_workbench` 已默认退休；新工作流应使用 `./start_product`。
 仅在迁移、对照或回滚时可显式设置 `STOCKTRADE_ALLOW_LEGACY_WORKBENCH=1`
@@ -121,7 +122,7 @@ Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧�
 ./start_product
 ~~~
 
-然后在 Run Center 运行初选、图表导出、复评和归档。旧的 `run_all.py` 与
+然后在运行中心运行初选、图表导出、复评和归档。旧的 `run_all.py` 与
 legacy CLI 链路仅保留用于迁移、对照或回滚；一键脚本本身需要显式设置
 `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1`，子步骤还需要按需设置对应的 legacy
 flag。
@@ -163,7 +164,7 @@ python -m pipeline.fetch_kline
 
 ### 步骤 2：量化初选
 
-默认产品路径是在 React/FastAPI Run Center 运行初选，或调用
+默认产品路径是在 React/FastAPI 运行中心运行初选，或调用
 `POST /api/runs/preselect`。旧 CLI 仅用于迁移、对照或回滚：
 
 ~~~bash
@@ -181,7 +182,7 @@ STOCKTRADE_ALLOW_LEGACY_PRESELECT_CLI=1 python -m pipeline.cli preselect --confi
 
 ### 步骤 3：导出候选图表
 
-默认产品路径是在 Run Center 运行图表导出，或调用
+默认产品路径是在运行中心运行图表导出，或调用
 `POST /api/runs/chart-export`。旧脚本仅用于迁移、对照或回滚：
 
 ~~~bash
@@ -192,7 +193,7 @@ STOCKTRADE_ALLOW_LEGACY_CHART_EXPORT=1 python dashboard/export_kline_charts.py
 
 ### 步骤 4：Gemini CLI 图表复评
 
-默认产品路径是在 Run Center 运行复评，或调用
+默认产品路径是在运行中心运行复评，或调用
 `POST /api/runs/review/provider` 并使用 `provider=gemini-cli`。旧脚本仅用于
 迁移、对照或回滚：
 

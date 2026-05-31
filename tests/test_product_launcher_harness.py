@@ -46,7 +46,23 @@ class ProductLauncherHarnessTests(unittest.TestCase):
 
         self.assertIn("./start_product", text)
         self.assertIn("simulated trading", text)
-        self.assertIn("remains out of scope", text)
+        self.assertIn("仍不在本轮产品化范围内", text)
+
+    def test_frontend_display_preferences_are_documented_and_wired(self) -> None:
+        app_shell = (ROOT / "apps" / "web" / "src" / "features" / "app" / "AppShell.tsx").read_text(encoding="utf-8")
+        preferences = (ROOT / "apps" / "web" / "src" / "features" / "app" / "uiPreferences.tsx").read_text(encoding="utf-8")
+        css = (ROOT / "apps" / "web" / "src" / "index.css").read_text(encoding="utf-8")
+        manual = (ROOT / "docs" / "product-usage-manual.md").read_text(encoding="utf-8")
+
+        self.assertIn("UiPreferenceProvider", app_shell)
+        self.assertIn("sidebar-controls", app_shell)
+        self.assertIn("stocktrade.ui.language", preferences)
+        self.assertIn("stocktrade.ui.theme", preferences)
+        self.assertIn("document.documentElement.lang", preferences)
+        self.assertIn("document.documentElement.dataset.theme", preferences)
+        self.assertIn("html[data-theme=\"dark\"]", css)
+        self.assertIn("语言：中文 / English", manual)
+        self.assertIn("主题模式：跟随系统 / 浅色 / 深色", manual)
 
 
 if __name__ == "__main__":

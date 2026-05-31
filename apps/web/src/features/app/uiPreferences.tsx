@@ -1,0 +1,449 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+
+export type AppLanguage = 'zh' | 'en'
+export type AppThemePreference = 'system' | 'light' | 'dark'
+type ResolvedTheme = 'light' | 'dark'
+
+interface UiPreferenceContextValue {
+  language: AppLanguage
+  theme: AppThemePreference
+  resolvedTheme: ResolvedTheme
+  setLanguage: (language: AppLanguage) => void
+  setTheme: (theme: AppThemePreference) => void
+  t: (text: string) => string
+}
+
+const LANGUAGE_STORAGE_KEY = 'stocktrade.ui.language'
+const THEME_STORAGE_KEY = 'stocktrade.ui.theme'
+
+const UiPreferenceContext = createContext<UiPreferenceContextValue | null>(null)
+
+const zhTranslations: Record<string, string> = {
+  'Product navigation': '产品导航',
+  'Product refactor': '产品化重构',
+  'Display preferences': '显示偏好',
+  Language: '语言',
+  English: '英文',
+  Chinese: '中文',
+  'Theme mode': '主题模式',
+  Theme: '主题',
+  System: '跟随系统',
+  Light: '浅色',
+  Dark: '深色',
+  Overview: '总览',
+  'Run Center': '运行中心',
+  Candidates: '候选',
+  Reviews: '复评',
+  Archive: '归档',
+  Analytics: '分析',
+  Migrations: '迁移',
+  Settings: '设置',
+  Soon: '即将推出',
+  Queued: '排队中',
+  Running: '运行中',
+  Succeeded: '成功',
+  Failed: '失败',
+  Cancelling: '取消中',
+  Cancelled: '已取消',
+  'Research workstation': '研究工作台',
+  'Refresh overview': '刷新总览',
+  'Workstation summary': '工作台摘要',
+  API: 'API',
+  Online: '在线',
+  Offline: '离线',
+  Checking: '检查中',
+  Saved: '已保存',
+  Defaults: '默认值',
+  Strategies: '策略',
+  'Analytics rows': '分析行数',
+  'System state': '系统状态',
+  'Loading product settings': '正在加载产品设置',
+  'integrations configured': '项集成已配置',
+  Preferences: '偏好',
+  'Stored in SQLite': '已存入 SQLite',
+  'Using defaults': '使用默认值',
+  'Simulated trading': '模拟交易',
+  'In scope': '范围内',
+  'Out of scope': '不在范围内',
+  'Strategy readiness': '策略就绪度',
+  'Recent runs': '最近运行',
+  'Run center': '运行中心',
+  'No runs yet': '暂无运行记录',
+  'Strategy summary': '策略摘要',
+  'No strategy metrics yet': '暂无策略指标',
+  Default: '默认',
+  'Config default': '配置默认',
+  Available: '可用',
+  'Product configuration': '产品配置',
+  'Refresh settings': '刷新设置',
+  'Product preferences saved to SQLite.': '产品偏好已保存到 SQLite。',
+  'Product preferences': '产品偏好',
+  'Loading preferences': '正在加载偏好',
+  'SQLite saved': 'SQLite 已保存',
+  'Default values': '默认值',
+  Timezone: '时区',
+  'Table density': '表格密度',
+  Comfortable: '舒适',
+  Compact: '紧凑',
+  'Analytics limit': '分析默认限制',
+  'Candidate page size': '候选分页大小',
+  'Review page size': '复评分页大小',
+  'Archive page size': '归档分页大小',
+  'Default strategies': '默认策略',
+  'Chart export enabled': '启用图表导出',
+  'Auto archive after review': '复评后自动归档',
+  'Save preferences': '保存偏好',
+  'Local state': '本地状态',
+  'Local state and integrations': '本地状态和集成',
+  'SQLite owns product state; DuckDB owns analytics.': 'SQLite 管理产品状态；DuckDB 管理分析数据。',
+  Disabled: '已禁用',
+  Artifacts: '产物',
+  Backups: '备份',
+  'Safe config files': '安全配置文件',
+  Found: '已找到',
+  Missing: '缺失',
+  'External integrations': '外部集成',
+  Configured: '已配置',
+  'Not configured': '未配置',
+  'DuckDB analysis': 'DuckDB 分析',
+  'Strategy analytics': '策略分析',
+  'Strategy analytics filters': '策略分析筛选',
+  'Pick date': '选股日期',
+  'Run id': '运行 ID',
+  Strategy: '策略',
+  Limit: '限制',
+  Clear: '清除',
+  'Analytics totals': '分析汇总',
+  Total: '总数',
+  Reviewed: '已复评',
+  Recommended: '推荐',
+  'Recommended rate': '推荐率',
+  'Strategy summary table': '策略摘要表',
+  'Strategy/date/run comparison': '策略/日期/运行对比',
+  'No strategy metrics match the filters': '没有匹配筛选条件的策略指标',
+  Unreviewed: '未复评',
+  Rate: '比率',
+  Run: '运行',
+  'Selection evidence': '选股证据',
+  'Refresh candidates': '刷新候选',
+  'Historical candidate batches': '历史候选批次',
+  'Candidate batches': '候选批次',
+  'Loading historical batches': '正在加载历史批次',
+  'Export charts': '导出图表',
+  'Gemini review': 'Gemini 复评',
+  'Archive selected': '归档所选',
+  'Clear batch': '清除批次',
+  'Open first chart artifact': '打开第一张图表产物',
+  'Open first chart': '打开第一张图表',
+  'Open reviews': '打开复评',
+  'No batches match the filters': '没有匹配筛选条件的批次',
+  'No candidate batches yet': '暂无候选批次',
+  'Candidate filters': '候选筛选',
+  Batch: '批次',
+  Code: '代码',
+  'Candidate list': '候选列表',
+  'Candidate rows': '候选行',
+  'Loading candidate rows': '正在加载候选行',
+  records: '条记录',
+  'No candidates match the filters': '没有匹配筛选条件的候选',
+  'No candidate rows yet': '暂无候选行',
+  'Code / strategy': '代码 / 策略',
+  Close: '收盘价',
+  Turnover: '成交额',
+  'Brick growth': '砖块增长',
+  Extra: '扩展',
+  'Candidate detail': '候选详情',
+  'Select a candidate': '选择一个候选',
+  'Review evidence': '复评证据',
+  'Refresh reviews': '刷新复评',
+  'Review filters': '复评筛选',
+  'Review run': '复评批次',
+  'Review key': '复评键',
+  Reviewer: '复评人',
+  Status: '状态',
+  'Review list': '复评列表',
+  'Review rows': '复评行',
+  'Loading review rows': '正在加载复评行',
+  'No reviews match the filters': '没有匹配筛选条件的复评',
+  'No review rows yet': '暂无复评行',
+  Verdict: '结论',
+  Score: '分数',
+  Rank: '排名',
+  'Review detail': '复评详情',
+  'Select a review': '选择一条复评',
+  'No verdict': '无结论',
+  'History evidence': '历史证据',
+  'Refresh archive': '刷新归档',
+  'Archive summary': '归档摘要',
+  'Archive dates': '归档日期',
+  'Archive filters': '归档筛选',
+  'Archive rows': '归档行',
+  'Loading snapshots': '正在加载快照',
+  'No archive snapshots yet': '暂无归档快照',
+  rows: '行',
+  rec: '推荐',
+  'Loading archive rows': '正在加载归档行',
+  'Select an archive date': '选择归档日期',
+  'No archive rows match the filters': '没有匹配筛选条件的归档行',
+  'No rows for this archive date': '此归档日期暂无行',
+  'Archive row detail': '归档行详情',
+  'Select an archive row': '选择归档行',
+  'Migration workbench': '迁移工作台',
+  'Candidates / Reviews / History': '候选 / 复评 / 历史',
+  'Migration dry-run summary': '迁移预检摘要',
+  Files: '文件',
+  Records: '记录',
+  Warnings: '警告',
+  Quarantine: '隔离',
+  'Not run': '未运行',
+  'Legacy import dry-run control': 'Legacy 导入预检控制',
+  'Data root': '数据根目录',
+  'Dry run': '预检',
+  Import: '导入',
+  'Writes one legacy scope into product storage': '将一个 legacy 范围写入产品存储',
+  'Import scope': '导入范围',
+  Verify: '校验',
+  'Compares legacy files with SQLite and DuckDB records': '对比 legacy 文件、SQLite 和 DuckDB 记录',
+  'Verify scope': '校验范围',
+  Optional: '可选',
+  Sections: '分区',
+  Issues: '问题',
+  'Workflow control': '工作流控制',
+  'Runtime summary': '运行时摘要',
+  Runs: '运行',
+  Active: '活跃',
+  Backend: '后端',
+  Storage: '存储',
+  'Refresh runs': '刷新运行',
+  Diagnostic: '诊断',
+  'Preselect run setup': '预选运行设置',
+  'Config path': '配置路径',
+  'Data dir': '数据目录',
+  'End date': '结束日期',
+  'Run preselect': '运行预选',
+  'Preselect result': '预选结果',
+  'No product runs yet': '暂无产品运行',
+  'Run detail': '运行详情',
+  'Select a run': '选择一个运行',
+  'Selected run': '所选运行',
+  Cancel: '取消',
+  Created: '创建时间',
+  Started: '开始时间',
+  Finished: '结束时间',
+  Steps: '步骤',
+  Events: '事件',
+  'No steps recorded.': '暂无步骤记录。',
+  'No events recorded.': '暂无事件记录。',
+  'No artifacts linked.': '暂无关联产物。',
+  Open: '打开',
+  'Legacy path': 'Legacy 路径',
+  'Loading runs': '正在加载运行',
+  'Loading run detail': '正在加载运行详情',
+  'Not set': '未设置',
+  'No rank': '无排名',
+  'Not linked': '未关联',
+  'Artifact linked': '产物已关联',
+  'Product artifact only': '仅产品产物',
+  'Unable to reach the API': '无法连接 API',
+  loaded: '已加载',
+  Selected: '已选择',
+  Filtered: '已筛选',
+  'All reviews': '全部复评',
+  'Reviewed only': '仅已复评',
+  'All rows': '全部行',
+  'Candidate id': '候选 ID',
+  'Batch id': '批次 ID',
+  Source: '来源',
+  'Batch date': '批次日期',
+  'Strategy counts': '策略计数',
+  Lineage: '血缘',
+  'Evidence route': '证据路径',
+  'Selected candidate': '所选候选',
+  'Selected review': '所选复评',
+  'Review id': '复评 ID',
+  'Candidate batch': '候选批次',
+  'Review payload': '复评载荷',
+  'Review run summary': '复评运行摘要',
+  'Recommendation payload': '推荐载荷',
+  'Selected archive row': '所选归档行',
+  Snapshot: '快照',
+  'Archive row': '归档行',
+  'Recommendation id': '推荐 ID',
+  'Chart artifact': '图表产物',
+  Archived: '归档时间',
+  Chart: '图表',
+  Threshold: '阈值',
+  'Snapshot summary': '快照摘要',
+  'Chart evidence': '图表证据',
+  'No chart linked': '未关联图表',
+  'Missing chart': '缺失图表',
+  'Legacy chart reference': 'Legacy 图表引用',
+  'Product chart evidence': '产品图表证据',
+  Linked: '已关联',
+  'Artifact id': '产物 ID',
+  'Chart path': '图表路径',
+  'Source file': '源文件',
+  'Backup id': '备份 ID',
+  'Backup path': '备份路径',
+  'Archive snapshot': '归档快照',
+  Imported: '已导入',
+  Verified: '已校验',
+  Mismatch: '不匹配',
+  Legacy: 'Legacy',
+  Mismatches: '不匹配项',
+  'Missing in SQLite': 'SQLite 缺失',
+  'Extra in SQLite': 'SQLite 多余',
+  'Missing in DuckDB': 'DuckDB 缺失',
+  'Extra in DuckDB': 'DuckDB 多余',
+  Checked: '已检查',
+  Skipped: '已跳过',
+  'DuckDB check': 'DuckDB 检查',
+  'Source path': '源路径',
+  'Batch files and strategy counts': '批次文件和策略计数',
+  'Review runs and recommendations': '复评批次和推荐记录',
+  'Archive snapshots and rows': '归档快照和行记录',
+  'Loading strategies': '正在加载策略',
+  none: '无',
+  'Loading run history': '正在加载运行历史',
+  'latest runs': '条最近运行',
+  'No pick date': '无选股日期',
+  'Loading DuckDB summary': '正在加载 DuckDB 摘要',
+  'Loading summary rows': '正在加载摘要行',
+  'run id': '运行 ID',
+  'candidate batch': '候选批次',
+  'review batch': '复评批次',
+  'archive run': '归档运行',
+  total: '总数',
+  batches: '批次',
+  selected: '已选择',
+  candidates: '候选',
+  reviewed: '已复评',
+  archives: '归档',
+  snapshots: '快照',
+  reviews: '复评',
+  artifacts: '产物',
+  artifact: '产物',
+  'Archive run': '归档运行',
+  'Chart run': '图表运行',
+  exported: '已导出',
+  recorded: '已记录',
+  'created from': '创建自',
+  'no review run': '无复评运行',
+  'records for': '条记录，日期',
+  'API online': 'API 在线',
+  'API offline': 'API 离线',
+  'Checking API': '正在检查 API',
+  'Loading runtime state': '正在加载运行时状态',
+  'Run Gemini review for': '为以下日期发起 Gemini 复评',
+  'This will call Gemini CLI and may consume quota. Continue?': '该操作会调用 Gemini CLI，可能消耗额度。是否继续？',
+  'Selected batch has no review run to archive': '所选批次没有可归档的复评运行',
+  'Candidate row': '候选行',
+  'Review row': '复评行',
+  'No batch link': '无批次关联',
+  Provider: '提供方',
+  'This review is not in the recommendation list.': '该复评不在推荐列表中。',
+  'Archive row is stored, but no chart artifact or legacy chart path is linked.': '归档行已保存，但没有关联图表产物或 legacy 图表路径。',
+  'This path is legacy source material and is not served by the product artifact API.': '该路径是 legacy 源材料，不由产品产物 API 提供服务。',
+  'Served by the product artifact API and linked to this archive row.': '由产品产物 API 提供服务，并已关联到该归档行。',
+  'Open chart artifact': '打开图表产物',
+  'Migration section reports': '迁移分区报告',
+  'Migration warnings and quarantine': '迁移警告与隔离',
+  findings: '项发现',
+  'Legacy migration actions': 'Legacy 迁移动作',
+  'Legacy import execution': 'Legacy 导入执行',
+  'Legacy import verification': 'Legacy 导入校验',
+  'Dry-run scans candidates, reviews, and history before a write operation. Trading account and simulated trading data stay out of this migration flow.':
+    '预检会在写入前扫描候选、复评和历史数据。交易账户和模拟交易数据不进入本迁移流程。',
+  'Run a dry-run scan before importing legacy files': '导入 legacy 文件前先运行一次预检扫描',
+  'Imported record counts': '导入记录计数',
+  'Verification record counts': '校验记录计数',
+  'No warnings found.': '未发现警告。',
+  'No quarantine found.': '未发现隔离项。',
+  'No mismatches found.': '未发现不匹配项。',
+  'Not created': '未创建',
+  'Not filtered': '未筛选',
+  Recommendations: '推荐',
+  ready: '就绪',
+  blocked: '阻塞',
+  Charts: '图表',
+  Review: '复评',
+  'Batch evidence workflow': '批次证据工作流',
+  'List summary': '列表摘要',
+}
+
+export function UiPreferenceProvider({ children }: { children: ReactNode }) {
+  const [language, setLanguageState] = useState<AppLanguage>(() => loadLanguage())
+  const [theme, setThemeState] = useState<AppThemePreference>(() => loadTheme())
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => resolveSystemTheme())
+  const resolvedTheme = theme === 'system' ? systemTheme : theme
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => setSystemTheme(media.matches ? 'dark' : 'light')
+    onChange()
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
+    document.documentElement.dataset.theme = resolvedTheme
+    document.documentElement.dataset.themePreference = theme
+  }, [language, resolvedTheme, theme])
+
+  const setLanguage = useCallback((nextLanguage: AppLanguage) => {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage)
+    setLanguageState(nextLanguage)
+  }, [])
+
+  const setTheme = useCallback((nextTheme: AppThemePreference) => {
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme)
+    setThemeState(nextTheme)
+  }, [])
+
+  const t = useCallback((text: string) => {
+    if (language === 'en') return text
+    return zhTranslations[text] ?? text
+  }, [language])
+
+  const value = useMemo(
+    () => ({ language, theme, resolvedTheme, setLanguage, setTheme, t }),
+    [language, resolvedTheme, setLanguage, setTheme, theme, t],
+  )
+
+  return <UiPreferenceContext.Provider value={value}>{children}</UiPreferenceContext.Provider>
+}
+
+// Context and its hook intentionally live together so all consumers share one provider contract.
+// eslint-disable-next-line react-refresh/only-export-components
+export function useUiPreferences() {
+  const context = useContext(UiPreferenceContext)
+  if (!context) {
+    throw new Error('useUiPreferences must be used within UiPreferenceProvider')
+  }
+  return context
+}
+
+function loadLanguage(): AppLanguage {
+  const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY)
+  if (stored === 'zh' || stored === 'en') return stored
+  return 'zh'
+}
+
+function loadTheme(): AppThemePreference {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY)
+  if (stored === 'system' || stored === 'light' || stored === 'dark') return stored
+  return 'system'
+}
+
+function resolveSystemTheme(): ResolvedTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}

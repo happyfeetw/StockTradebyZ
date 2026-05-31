@@ -144,6 +144,7 @@ evidence:
   SQLite product schema through Alembic with documented idempotency boundaries,
   and points `start_workbench` users to the product path while preserving the
   legacy workbench as compatibility-only.
+  本地产品前端默认中文显示，并提供中文/英文语言切换和跟随系统/浅色/深色主题切换。
 - R7 run_all retirement now stops `run_all.py` by default before it invokes
   legacy subprocesses or reads `candidates_latest.json`/`suggestion.json`;
   rollback requires `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1` plus any child legacy

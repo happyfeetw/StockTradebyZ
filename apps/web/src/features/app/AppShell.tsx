@@ -15,7 +15,10 @@ import {
   Gauge,
   GitBranch,
   Image as ImageIcon,
+  Languages,
   Loader2,
+  Monitor,
+  Moon,
   Play,
   RefreshCw,
   Search,
@@ -24,10 +27,12 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Sun,
   Upload,
   XCircle,
 } from 'lucide-react'
 import '../../App.css'
+import { UiPreferenceProvider, useUiPreferences, type AppLanguage, type AppThemePreference } from './uiPreferences'
 import {
   artifactFileUrl,
   cancelRun,
@@ -114,15 +119,26 @@ const legacyMigrationScopes: { value: LegacyImportVerifyScope; label: string; de
 
 function App() {
   return (
+    <UiPreferenceProvider>
+      <ProductShell />
+    </UiPreferenceProvider>
+  )
+}
+
+function ProductShell() {
+  const { language, theme, setLanguage, setTheme, t } = useUiPreferences()
+  const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor
+
+  return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="Product navigation">
+      <aside className="sidebar" aria-label={t('Product navigation')}>
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true">
             <Gauge size={22} />
           </div>
           <div>
             <p className="brand-name">StockTradebyZ</p>
-            <p className="brand-meta">Product refactor</p>
+            <p className="brand-meta">{t('Product refactor')}</p>
           </div>
         </div>
 
@@ -130,11 +146,35 @@ function App() {
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}>
               <item.icon size={18} aria-hidden="true" />
-              <span>{item.label}</span>
-              {item.state === 'pending' ? <span className="nav-pill">Soon</span> : null}
+              <span>{t(item.label)}</span>
+              {item.state === 'pending' ? <span className="nav-pill">{t('Soon')}</span> : null}
             </NavLink>
           ))}
         </nav>
+
+        <div className="sidebar-controls" aria-label={t('Display preferences')}>
+          <label className="preference-select">
+            <span>
+              <Languages size={15} aria-hidden="true" />
+              {t('Language')}
+            </span>
+            <select value={language} onChange={(event) => setLanguage(event.target.value as AppLanguage)}>
+              <option value="zh">{t('Chinese')}</option>
+              <option value="en">{t('English')}</option>
+            </select>
+          </label>
+          <label className="preference-select">
+            <span>
+              <ThemeIcon size={15} aria-hidden="true" />
+              {t('Theme mode')}
+            </span>
+            <select value={theme} onChange={(event) => setTheme(event.target.value as AppThemePreference)}>
+              <option value="system">{t('System')}</option>
+              <option value="light">{t('Light')}</option>
+              <option value="dark">{t('Dark')}</option>
+            </select>
+          </label>
+        </div>
       </aside>
 
       <main className="main-surface">
@@ -155,6 +195,7 @@ function App() {
 }
 
 function OverviewView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
   const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings })
@@ -174,13 +215,13 @@ function OverviewView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Research workstation</p>
-          <h1>Overview</h1>
+          <p className="eyebrow">{t('Research workstation')}</p>
+          <h1>{t('Overview')}</h1>
         </div>
         <button
           type="button"
           className="icon-button secondary"
-          aria-label="Refresh overview"
+          aria-label={t('Refresh overview')}
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['health'] })
             queryClient.invalidateQueries({ queryKey: ['settings'] })
@@ -193,7 +234,7 @@ function OverviewView() {
         </button>
       </header>
 
-      <section className="summary-strip" aria-label="Workstation summary">
+      <section className="summary-strip" aria-label={t('Workstation summary')}>
         <Metric label="API" value={healthState === 'online' ? 'Online' : healthState === 'offline' ? 'Offline' : 'Checking'} />
         <Metric label="Settings" value={settingsQuery.data?.product_preferences.source === 'sqlite' ? 'Saved' : 'Defaults'} />
         <Metric label="Strategies" value={(strategiesQuery.data?.strategies.length ?? 0).toString()} />
@@ -208,15 +249,15 @@ function OverviewView() {
       ) : null}
 
       <div className="overview-grid">
-        <section className="overview-panel" aria-label="System state">
+        <section className="overview-panel" aria-label={t('System state')}>
           <div className="panel-heading">
             <div>
-              <h2>System state</h2>
-              <p>{settingsQuery.isLoading ? 'Loading product settings' : `${configuredIntegrations} integrations configured`}</p>
+              <h2>{t('System state')}</h2>
+              <p>{settingsQuery.isLoading ? t('Loading product settings') : `${configuredIntegrations} ${t('integrations configured')}`}</p>
             </div>
             <Link className="artifact-open-link" to="/settings">
               <SettingsIcon size={15} aria-hidden="true" />
-              <span>Settings</span>
+              <span>{t('Settings')}</span>
             </Link>
           </div>
           {settingsQuery.isLoading ? <RunSkeleton /> : null}
@@ -230,15 +271,15 @@ function OverviewView() {
           ) : null}
         </section>
 
-        <section className="overview-panel" aria-label="Strategy readiness">
+        <section className="overview-panel" aria-label={t('Strategy readiness')}>
           <div className="panel-heading">
             <div>
-              <h2>Strategy readiness</h2>
-              <p>{strategiesQuery.isLoading ? 'Loading strategies' : `Default: ${defaultStrategies.join(', ') || 'none'}`}</p>
+              <h2>{t('Strategy readiness')}</h2>
+              <p>{strategiesQuery.isLoading ? t('Loading strategies') : `${t('Default')}: ${defaultStrategies.join(', ') || t('none')}`}</p>
             </div>
             <Link className="artifact-open-link" to="/analytics">
               <BarChart3 size={15} aria-hidden="true" />
-              <span>Analytics</span>
+              <span>{t('Analytics')}</span>
             </Link>
           </div>
           {strategiesQuery.isLoading ? <RunSkeleton /> : null}
@@ -249,15 +290,15 @@ function OverviewView() {
           </div>
         </section>
 
-        <section className="overview-panel" aria-label="Recent runs">
+        <section className="overview-panel" aria-label={t('Recent runs')}>
           <div className="panel-heading">
             <div>
-              <h2>Recent runs</h2>
-              <p>{runsQuery.isLoading ? 'Loading run history' : `${recentRuns.length} latest runs`}</p>
+              <h2>{t('Recent runs')}</h2>
+              <p>{runsQuery.isLoading ? t('Loading run history') : `${recentRuns.length} ${t('latest runs')}`}</p>
             </div>
             <Link className="artifact-open-link" to="/runs">
               <Activity size={15} aria-hidden="true" />
-              <span>Run center</span>
+              <span>{t('Run center')}</span>
             </Link>
           </div>
           {runsQuery.isLoading ? <RunSkeleton /> : null}
@@ -270,7 +311,7 @@ function OverviewView() {
           {!runsQuery.isLoading && !runsQuery.isError && recentRuns.length === 0 ? (
             <div className="empty-state compact-empty">
               <Activity size={24} aria-hidden="true" />
-              <h3>No runs yet</h3>
+              <h3>{t('No runs yet')}</h3>
             </div>
           ) : null}
           <div className="overview-run-list">
@@ -279,7 +320,7 @@ function OverviewView() {
                 <StatusBadge status={run.status} />
                 <span>
                   <strong>{run.kind}</strong>
-                  <small>{run.pick_date ?? 'No pick date'} / {formatDateTime(run.created_at)}</small>
+                  <small>{run.pick_date ?? t('No pick date')} / {formatDateTime(run.created_at)}</small>
                 </span>
                 <code>{run.id}</code>
               </Link>
@@ -287,11 +328,11 @@ function OverviewView() {
           </div>
         </section>
 
-        <section className="overview-panel" aria-label="Strategy analytics">
+        <section className="overview-panel" aria-label={t('Strategy analytics')}>
           <div className="panel-heading">
             <div>
-              <h2>Strategy summary</h2>
-              <p>{analyticsQuery.isLoading ? 'Loading DuckDB summary' : `${analyticsQuery.data?.rows.length ?? 0} rows`}</p>
+              <h2>{t('Strategy summary')}</h2>
+              <p>{analyticsQuery.isLoading ? t('Loading DuckDB summary') : `${analyticsQuery.data?.rows.length ?? 0} ${t('rows')}`}</p>
             </div>
           </div>
           {analyticsQuery.isLoading ? <RunSkeleton /> : null}
@@ -304,7 +345,7 @@ function OverviewView() {
           {!analyticsQuery.isLoading && !analyticsQuery.isError && (analyticsQuery.data?.rows.length ?? 0) === 0 ? (
             <div className="empty-state compact-empty">
               <BarChart3 size={24} aria-hidden="true" />
-              <h3>No strategy metrics yet</h3>
+              <h3>{t('No strategy metrics yet')}</h3>
             </div>
           ) : null}
           <StrategySummaryList rows={analyticsQuery.data?.rows ?? []} />
@@ -315,6 +356,7 @@ function OverviewView() {
 }
 
 function AnalyticsView() {
+  const { t } = useUiPreferences()
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = strategySummaryFiltersFromParams(searchParams)
   const normalizedFilters = {
@@ -342,12 +384,12 @@ function AnalyticsView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">DuckDB analysis</p>
-          <h1>Strategy analytics</h1>
+          <p className="eyebrow">{t('DuckDB analysis')}</p>
+          <h1>{t('Strategy analytics')}</h1>
         </div>
       </header>
 
-      <form className="filter-bar analytics-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Strategy analytics filters">
+      <form className="filter-bar analytics-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Strategy analytics filters')}>
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
@@ -360,7 +402,7 @@ function AnalyticsView() {
         <FilterInput label="Limit" placeholder="100" value={filters.limit} onChange={(value) => updateFilter('limit', value)} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <XCircle size={17} aria-hidden="true" />
-          <span>Clear</span>
+          <span>{t('Clear')}</span>
         </button>
       </form>
 
@@ -371,25 +413,25 @@ function AnalyticsView() {
         </div>
       ) : null}
 
-      <section className="summary-strip" aria-label="Analytics totals">
+      <section className="summary-strip" aria-label={t('Analytics totals')}>
         <Metric label="Total" value={(summaryQuery.data?.totals.total ?? 0).toString()} />
         <Metric label="Reviewed" value={(summaryQuery.data?.totals.reviewed ?? 0).toString()} />
         <Metric label="Recommended" value={(summaryQuery.data?.totals.recommended ?? 0).toString()} />
         <Metric label="Recommended rate" value={formatPercent(summaryQuery.data?.totals.recommended_rate ?? 0)} />
       </section>
 
-      <section className="analytics-panel" aria-label="Strategy summary table">
+      <section className="analytics-panel" aria-label={t('Strategy summary table')}>
         <div className="panel-heading">
           <div>
-            <h2>Strategy/date/run comparison</h2>
-            <p>{summaryQuery.isLoading ? 'Loading summary rows' : `${summaryQuery.data?.rows.length ?? 0} rows`}</p>
+            <h2>{t('Strategy/date/run comparison')}</h2>
+            <p>{summaryQuery.isLoading ? t('Loading summary rows') : `${summaryQuery.data?.rows.length ?? 0} ${t('rows')}`}</p>
           </div>
         </div>
         {summaryQuery.isLoading ? <RunSkeleton /> : null}
         {!summaryQuery.isLoading && (summaryQuery.data?.rows.length ?? 0) === 0 ? (
           <div className="empty-state">
             <BarChart3 size={24} aria-hidden="true" />
-            <h3>{hasFilters ? 'No strategy metrics match the filters' : 'No strategy metrics yet'}</h3>
+            <h3>{hasFilters ? t('No strategy metrics match the filters') : t('No strategy metrics yet')}</h3>
           </div>
         ) : null}
         {(summaryQuery.data?.rows.length ?? 0) > 0 ? (
@@ -397,14 +439,14 @@ function AnalyticsView() {
             <table className="data-table strategy-summary-table">
               <thead>
                 <tr>
-                  <th>Pick date</th>
-                  <th>Strategy</th>
-                  <th>Total</th>
-                  <th>Reviewed</th>
-                  <th>Recommended</th>
-                  <th>Unreviewed</th>
-                  <th>Rate</th>
-                  <th>Run</th>
+                  <th>{t('Pick date')}</th>
+                  <th>{t('Strategy')}</th>
+                  <th>{t('Total')}</th>
+                  <th>{t('Reviewed')}</th>
+                  <th>{t('Recommended')}</th>
+                  <th>{t('Unreviewed')}</th>
+                  <th>{t('Rate')}</th>
+                  <th>{t('Run')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -430,6 +472,7 @@ function AnalyticsView() {
 }
 
 function SettingsView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: getStrategies })
@@ -473,13 +516,13 @@ function SettingsView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Product configuration</p>
-          <h1>Settings</h1>
+          <p className="eyebrow">{t('Product configuration')}</p>
+          <h1>{t('Settings')}</h1>
         </div>
         <button
           type="button"
           className="icon-button secondary"
-          aria-label="Refresh settings"
+          aria-label={t('Refresh settings')}
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['settings'] })
             queryClient.invalidateQueries({ queryKey: ['strategies'] })
@@ -498,19 +541,19 @@ function SettingsView() {
       {settingsMutation.isSuccess ? (
         <div className="alert success-alert" role="status">
           <CheckCircle2 size={18} aria-hidden="true" />
-          <span>Product preferences saved to SQLite.</span>
+          <span>{t('Product preferences saved to SQLite.')}</span>
         </div>
       ) : null}
 
       <div className="settings-grid">
-        <section className="settings-panel" aria-label="Product preferences">
+        <section className="settings-panel" aria-label={t('Product preferences')}>
           <div className="panel-heading">
             <div>
-              <h2>Product preferences</h2>
+              <h2>{t('Product preferences')}</h2>
               <p>
                 {settingsQuery.isLoading
-                  ? 'Loading preferences'
-                  : `${settingsQuery.data?.product_preferences.source === 'sqlite' ? 'SQLite saved' : 'Default values'} / ${formatDateTime(settingsQuery.data?.product_preferences.updated_at ?? null)}`}
+                  ? t('Loading preferences')
+                  : `${settingsQuery.data?.product_preferences.source === 'sqlite' ? t('SQLite saved') : t('Default values')} / ${formatDateTime(settingsQuery.data?.product_preferences.updated_at ?? null)}`}
               </p>
             </div>
           </div>
@@ -519,25 +562,25 @@ function SettingsView() {
             <form className="settings-form" onSubmit={submitSettings}>
               <div className="settings-form-grid">
                 <label className="filter-field">
-                  <span>Timezone</span>
+                  <span>{t('Timezone')}</span>
                   <input value={form.timezone} onChange={(event) => updateForm('timezone', event.target.value)} />
                 </label>
                 <label className="filter-field">
-                  <span>Theme</span>
+                  <span>{t('Theme')}</span>
                   <select value={form.theme} onChange={(event) => updateForm('theme', event.target.value as ProductPreferenceSettings['theme'])}>
-                    <option value="system">System</option>
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
+                    <option value="system">{t('System')}</option>
+                    <option value="light">{t('Light')}</option>
+                    <option value="dark">{t('Dark')}</option>
                   </select>
                 </label>
                 <label className="filter-field">
-                  <span>Table density</span>
+                  <span>{t('Table density')}</span>
                   <select
                     value={form.table_density}
                     onChange={(event) => updateForm('table_density', event.target.value as ProductPreferenceSettings['table_density'])}
                   >
-                    <option value="comfortable">Comfortable</option>
-                    <option value="compact">Compact</option>
+                    <option value="comfortable">{t('Comfortable')}</option>
+                    <option value="compact">{t('Compact')}</option>
                   </select>
                 </label>
                 <NumberPreference
@@ -571,7 +614,7 @@ function SettingsView() {
               </div>
 
               <fieldset className="strategy-selector">
-                <legend>Default strategies</legend>
+                <legend>{t('Default strategies')}</legend>
                 <div className="strategy-toggle-grid">
                   {(strategiesQuery.data?.strategies ?? []).map((strategy) => (
                     <label key={strategy.id} className="strategy-toggle">
@@ -596,7 +639,7 @@ function SettingsView() {
                     checked={form.chart_export_enabled}
                     onChange={(event) => updateForm('chart_export_enabled', event.target.checked)}
                   />
-                  <span>Chart export enabled</span>
+                  <span>{t('Chart export enabled')}</span>
                 </label>
                 <label className="binary-toggle">
                   <input
@@ -604,25 +647,25 @@ function SettingsView() {
                     checked={form.auto_archive_after_review}
                     onChange={(event) => updateForm('auto_archive_after_review', event.target.checked)}
                   />
-                  <span>Auto archive after review</span>
+                  <span>{t('Auto archive after review')}</span>
                 </label>
               </div>
 
               <div className="button-row settings-actions">
                 <button type="submit" className="action-button" disabled={settingsMutation.isPending || form.default_strategy_ids.length === 0}>
                   {settingsMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <SlidersHorizontal size={17} aria-hidden="true" />}
-                  <span>Save preferences</span>
+                  <span>{t('Save preferences')}</span>
                 </button>
               </div>
             </form>
           ) : null}
         </section>
 
-        <section className="settings-panel" aria-label="Local state and integrations">
+        <section className="settings-panel" aria-label={t('Local state and integrations')}>
           <div className="panel-heading">
             <div>
-              <h2>Local state</h2>
-              <p>SQLite owns product state; DuckDB owns analytics.</p>
+              <h2>{t('Local state')}</h2>
+              <p>{t('SQLite owns product state; DuckDB owns analytics.')}</p>
             </div>
           </div>
           {settingsQuery.isLoading ? <RunSkeleton /> : null}
@@ -634,6 +677,7 @@ function SettingsView() {
 }
 
 function CandidatesView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = candidateFiltersFromParams(searchParams)
@@ -675,7 +719,7 @@ function CandidatesView() {
   const archiveBatchMutation = useMutation({
     mutationFn: (batch: CandidateBatchSummary) => {
       if (!batch.latest_review_run_id) {
-        throw new Error('Selected batch has no review run to archive')
+        throw new Error(t('Selected batch has no review run to archive'))
       }
       return createArchiveRun({
         candidate_batch_id: batch.id,
@@ -753,7 +797,7 @@ function CandidatesView() {
 
   function runGeminiReview(batch: CandidateBatchSummary) {
     const confirmed = window.confirm(
-      `Run Gemini CLI review for ${batch.pick_date} (${batch.candidate_count} candidates)? This may consume Gemini quota.`
+      languageConfirmText(t, batch.pick_date, batch.candidate_count)
     )
     if (!confirmed) return
     reviewBatchMutation.mutate(batch)
@@ -763,13 +807,13 @@ function CandidatesView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Selection evidence</p>
-          <h1>Candidates</h1>
+          <p className="eyebrow">{t('Selection evidence')}</p>
+          <h1>{t('Candidates')}</h1>
         </div>
         <button
           type="button"
           className="icon-button secondary"
-          aria-label="Refresh candidates"
+          aria-label={t('Refresh candidates')}
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['candidates'] })
             queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
@@ -780,14 +824,14 @@ function CandidatesView() {
         </button>
       </header>
 
-      <section className="candidate-batch-panel" aria-label="Historical candidate batches">
+      <section className="candidate-batch-panel" aria-label={t('Historical candidate batches')}>
         <div className="panel-heading">
           <div>
-            <h2>Candidate batches</h2>
+            <h2>{t('Candidate batches')}</h2>
             <p>
               {candidateBatchesQuery.isLoading
-                ? 'Loading historical batches'
-                : `${candidateBatchesQuery.data?.total ?? 0} batches${activeBatch ? `, selected ${activeBatch.pick_date}` : ''}`}
+                ? t('Loading historical batches')
+                : `${candidateBatchesQuery.data?.total ?? 0} ${t('batches')}${activeBatch ? `, ${t('selected')} ${activeBatch.pick_date}` : ''}`}
             </p>
           </div>
           <div className="button-row">
@@ -800,7 +844,7 @@ function CandidatesView() {
                   disabled={activeBatch.candidate_count === 0 || chartExportMutation.isPending}
                 >
                   {chartExportMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <ImageIcon size={17} aria-hidden="true" />}
-                  <span>Export charts</span>
+                  <span>{t('Export charts')}</span>
                 </button>
                 <button
                   type="button"
@@ -809,7 +853,7 @@ function CandidatesView() {
                   disabled={activeBatch.candidate_count === 0 || reviewBatchMutation.isPending}
                 >
                   {reviewBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-                  <span>Gemini review</span>
+                  <span>{t('Gemini review')}</span>
                 </button>
                 <button
                   type="button"
@@ -818,14 +862,14 @@ function CandidatesView() {
                   disabled={!activeBatch.latest_review_run_id || archiveBatchMutation.isPending}
                 >
                   {archiveBatchMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Archive size={17} aria-hidden="true" />}
-                  <span>Archive selected</span>
+                  <span>{t('Archive selected')}</span>
                 </button>
               </>
             ) : null}
             {activeBatchId ? (
               <button type="button" className="action-button secondary" onClick={() => updateFilter('batch_id', '')}>
                 <XCircle size={17} aria-hidden="true" />
-                <span>Clear batch</span>
+                <span>{t('Clear batch')}</span>
               </button>
             ) : null}
           </div>
@@ -858,14 +902,16 @@ function CandidatesView() {
         {archiveBatchMutation.isSuccess ? (
           <div className="alert success-alert compact-alert" role="status">
             <CheckCircle2 size={18} aria-hidden="true" />
-            <span>Archive run {archiveBatchMutation.data.run.id} created from {archiveBatchMutation.data.snapshot.review_run_id}.</span>
+            <span>
+              {t('Archive run')} {archiveBatchMutation.data.run.id} {t('created from')} {archiveBatchMutation.data.snapshot.review_run_id}.
+            </span>
           </div>
         ) : null}
         {chartExportMutation.isSuccess ? (
           <div className="alert success-alert compact-alert chart-export-alert" role="status">
             <CheckCircle2 size={18} aria-hidden="true" />
             <span>
-              Chart run {chartExportMutation.data.run.id} exported {chartExportMutation.data.artifacts.length} artifacts.
+              {t('Chart run')} {chartExportMutation.data.run.id} {t('exported')} {chartExportMutation.data.artifacts.length} {t('artifacts')}.
             </span>
             {chartExportMutation.data.artifacts[0] ? (
               <a
@@ -873,10 +919,10 @@ function CandidatesView() {
                 href={artifactFileUrl(chartExportMutation.data.artifacts[0].id)}
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Open first chart artifact"
+                aria-label={t('Open first chart artifact')}
               >
                 <ExternalLink size={15} aria-hidden="true" />
-                <span>Open first chart</span>
+                <span>{t('Open first chart')}</span>
               </a>
             ) : null}
           </div>
@@ -885,14 +931,14 @@ function CandidatesView() {
           <div className="alert success-alert compact-alert chart-export-alert" role="status">
             <CheckCircle2 size={18} aria-hidden="true" />
             <span>
-              Review run {reviewBatchMutation.data.review_run.id} recorded {reviewBatchMutation.data.reviews.length} reviews.
+              {t('Review run')} {reviewBatchMutation.data.review_run.id} {t('recorded')} {reviewBatchMutation.data.reviews.length} {t('reviews')}.
             </span>
             <Link
               className="artifact-open-link"
               to={`/reviews?candidate_batch_id=${encodeURIComponent(reviewBatchMutation.data.review_run.candidate_batch_id ?? activeBatchId)}`}
             >
               <FileSearch size={15} aria-hidden="true" />
-              <span>Open reviews</span>
+              <span>{t('Open reviews')}</span>
             </Link>
           </div>
         ) : null}
@@ -901,7 +947,7 @@ function CandidatesView() {
         {!candidateBatchesQuery.isLoading && candidateBatches.length === 0 ? (
           <div className="empty-state batch-empty">
             <Database size={24} aria-hidden="true" />
-            <h3>{normalizedFilters.pick_date || normalizedFilters.run_id ? 'No batches match the filters' : 'No candidate batches yet'}</h3>
+            <h3>{normalizedFilters.pick_date || normalizedFilters.run_id ? t('No batches match the filters') : t('No candidate batches yet')}</h3>
           </div>
         ) : null}
 
@@ -923,25 +969,25 @@ function CandidatesView() {
                 </span>
                 <span className="batch-id-line">{batch.id}</span>
                 <span className="batch-metrics">
-                  <span>{batch.candidate_count} candidates</span>
-                  <span>{batch.latest_reviewed_count} reviewed</span>
-                  <span>{batch.latest_recommended_count} rec</span>
-                  <span>{batch.archive_snapshot_count} archives</span>
+                  <span>{batch.candidate_count} {t('candidates')}</span>
+                  <span>{batch.latest_reviewed_count} {t('reviewed')}</span>
+                  <span>{batch.latest_recommended_count} {t('rec')}</span>
+                  <span>{batch.archive_snapshot_count} {t('archives')}</span>
                 </span>
                 <BatchEvidenceFlow batch={batch} />
                 <span className="batch-lineage">
                   <code>{batch.run_id}</code>
-                  <code>{batch.latest_review_run_id ?? 'no review run'}</code>
+                  <code>{batch.latest_review_run_id ?? t('no review run')}</code>
                 </span>
               </button>
               <span className="batch-actions">
                 <Link className="artifact-open-link" to={`/reviews?candidate_batch_id=${encodeURIComponent(batch.id)}`}>
                   <FileSearch size={15} aria-hidden="true" />
-                  <span>Reviews</span>
+                  <span>{t('Reviews')}</span>
                 </Link>
                 <Link className="artifact-open-link" to={`/archive?pick_date=${encodeURIComponent(batch.pick_date)}`}>
                   <Archive size={15} aria-hidden="true" />
-                  <span>Archive</span>
+                  <span>{t('Archive')}</span>
                 </Link>
               </span>
             </article>
@@ -949,7 +995,7 @@ function CandidatesView() {
         </div>
       </section>
 
-      <form className="filter-bar candidate-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Candidate filters">
+      <form className="filter-bar candidate-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Candidate filters')}>
         <FilterInput
           label="Batch"
           placeholder="candidate batch"
@@ -973,7 +1019,7 @@ function CandidatesView() {
         <FilterInput label="Code" placeholder="000001" value={filters.code} onChange={(value) => updateFilter('code', value)} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <XCircle size={17} aria-hidden="true" />
-          <span>Clear</span>
+          <span>{t('Clear')}</span>
         </button>
       </form>
 
@@ -985,11 +1031,11 @@ function CandidatesView() {
       ) : null}
 
       <div className="candidate-grid">
-        <section className="candidate-list-panel" aria-label="Candidate list">
+        <section className="candidate-list-panel" aria-label={t('Candidate list')}>
           <div className="panel-heading">
             <div>
-              <h2>Candidate rows</h2>
-              <p>{candidatesQuery.isLoading ? 'Loading candidate rows' : `${candidatesQuery.data?.total ?? 0} records`}</p>
+              <h2>{t('Candidate rows')}</h2>
+              <p>{candidatesQuery.isLoading ? t('Loading candidate rows') : `${candidatesQuery.data?.total ?? 0} ${t('records')}`}</p>
             </div>
             <ListSummaryChips
               loaded={candidates.length}
@@ -1003,7 +1049,7 @@ function CandidatesView() {
           {!candidatesQuery.isLoading && candidates.length === 0 ? (
             <div className="empty-state">
               <Search size={24} aria-hidden="true" />
-              <h3>{hasFilters ? 'No candidates match the filters' : 'No candidate rows yet'}</h3>
+              <h3>{hasFilters ? t('No candidates match the filters') : t('No candidate rows yet')}</h3>
             </div>
           ) : null}
 
@@ -1040,7 +1086,7 @@ function CandidatesView() {
           </div>
         </section>
 
-        <section className="detail-panel" aria-label="Candidate detail">
+        <section className="detail-panel" aria-label={t('Candidate detail')}>
           {detailQuery.isError ? (
             <div className="alert detail-alert" role="alert">
               <ShieldAlert size={18} aria-hidden="true" />
@@ -1051,7 +1097,7 @@ function CandidatesView() {
           {!activeCandidateId && !candidatesQuery.isLoading ? (
             <div className="empty-state detail-empty">
               <Database size={24} aria-hidden="true" />
-              <h3>Select a candidate</h3>
+              <h3>{t('Select a candidate')}</h3>
             </div>
           ) : null}
           {detailQuery.data ? <CandidateDetailPanel candidate={detailQuery.data.candidate} /> : null}
@@ -1062,6 +1108,7 @@ function CandidatesView() {
 }
 
 function ReviewsView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = reviewFiltersFromParams(searchParams)
@@ -1121,13 +1168,13 @@ function ReviewsView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Review evidence</p>
-          <h1>Reviews</h1>
+          <p className="eyebrow">{t('Review evidence')}</p>
+          <h1>{t('Reviews')}</h1>
         </div>
         <button
           type="button"
           className="icon-button secondary"
-          aria-label="Refresh reviews"
+          aria-label={t('Refresh reviews')}
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['reviews'] })
             queryClient.invalidateQueries({ queryKey: ['review'] })
@@ -1137,7 +1184,7 @@ function ReviewsView() {
         </button>
       </header>
 
-      <form className="filter-bar review-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Review filters">
+      <form className="filter-bar review-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Review filters')}>
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
@@ -1180,7 +1227,7 @@ function ReviewsView() {
         <FilterSelect label="Status" value={filters.recommendation_status} onChange={updateRecommendationStatus} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <XCircle size={17} aria-hidden="true" />
-          <span>Clear</span>
+          <span>{t('Clear')}</span>
         </button>
       </form>
 
@@ -1192,11 +1239,11 @@ function ReviewsView() {
       ) : null}
 
       <div className="review-grid">
-        <section className="review-list-panel" aria-label="Review list">
+        <section className="review-list-panel" aria-label={t('Review list')}>
           <div className="panel-heading">
             <div>
-              <h2>Review rows</h2>
-              <p>{reviewsQuery.isLoading ? 'Loading review rows' : `${reviewsQuery.data?.total ?? 0} records`}</p>
+              <h2>{t('Review rows')}</h2>
+              <p>{reviewsQuery.isLoading ? t('Loading review rows') : `${reviewsQuery.data?.total ?? 0} ${t('records')}`}</p>
             </div>
             <ListSummaryChips
               loaded={reviews.length}
@@ -1210,7 +1257,7 @@ function ReviewsView() {
           {!reviewsQuery.isLoading && reviews.length === 0 ? (
             <div className="empty-state">
               <FileSearch size={24} aria-hidden="true" />
-              <h3>{hasFilters ? 'No reviews match the filters' : 'No review rows yet'}</h3>
+              <h3>{hasFilters ? t('No reviews match the filters') : t('No review rows yet')}</h3>
             </div>
           ) : null}
 
@@ -1231,7 +1278,7 @@ function ReviewsView() {
                   <span className="candidate-code">{review.code}</span>
                   <span className="strategy-chip">{review.strategy}</span>
                 </span>
-                <span className={`verdict-chip ${verdictClass(review.verdict)}`}>{review.verdict ?? 'No verdict'}</span>
+                <span className={`verdict-chip ${verdictClass(review.verdict)}`}>{review.verdict ?? t('No verdict')}</span>
                 <CandidateCell label="Score" value={formatNumber(review.total_score)} strong />
                 <CandidateCell label="Rank" value={formatRank(review)} />
                 <CandidateCell label="Pick date" value={review.pick_date} />
@@ -1247,7 +1294,7 @@ function ReviewsView() {
           </div>
         </section>
 
-        <section className="detail-panel" aria-label="Review detail">
+        <section className="detail-panel" aria-label={t('Review detail')}>
           {detailQuery.isError ? (
             <div className="alert detail-alert" role="alert">
               <ShieldAlert size={18} aria-hidden="true" />
@@ -1258,7 +1305,7 @@ function ReviewsView() {
           {!activeReviewId && !reviewsQuery.isLoading ? (
             <div className="empty-state detail-empty">
               <FileSearch size={24} aria-hidden="true" />
-              <h3>Select a review</h3>
+              <h3>{t('Select a review')}</h3>
             </div>
           ) : null}
           {detailQuery.data ? <ReviewDetailPanel review={detailQuery.data.review} /> : null}
@@ -1269,6 +1316,7 @@ function ReviewsView() {
 }
 
 function ArchiveView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = archiveFiltersFromParams(searchParams)
@@ -1346,13 +1394,13 @@ function ArchiveView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">History evidence</p>
-          <h1>Archive</h1>
+          <p className="eyebrow">{t('History evidence')}</p>
+          <h1>{t('Archive')}</h1>
         </div>
         <button
           type="button"
           className="icon-button secondary"
-          aria-label="Refresh archive"
+          aria-label={t('Refresh archive')}
           onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
             queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
@@ -1363,14 +1411,14 @@ function ArchiveView() {
         </button>
       </header>
 
-      <section className="summary-strip archive-summary-strip" aria-label="Archive summary">
+      <section className="summary-strip archive-summary-strip" aria-label={t('Archive summary')}>
         <Metric label="Archive dates" value={(snapshotsQuery.data?.total ?? 0).toString()} />
         <Metric label="Candidates" value={formatNumber(activeSnapshot?.candidate_count ?? null)} />
         <Metric label="Recommended" value={formatNumber(activeSnapshot?.recommended_count ?? null)} />
         <Metric label="Reviewed" value={formatNumber(activeSnapshot?.reviewed_count ?? null)} />
       </section>
 
-      <form className="filter-bar archive-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label="Archive filters">
+      <form className="filter-bar archive-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Archive filters')}>
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
@@ -1396,7 +1444,7 @@ function ArchiveView() {
         <FilterInput label="Rank" placeholder="1" value={filters.rank} onChange={(value) => updateFilter('rank', value)} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <XCircle size={17} aria-hidden="true" />
-          <span>Clear</span>
+          <span>{t('Clear')}</span>
         </button>
       </form>
 
@@ -1408,11 +1456,11 @@ function ArchiveView() {
       ) : null}
 
       <div className="archive-grid">
-        <section className="archive-snapshot-panel" aria-label="Archive dates">
+        <section className="archive-snapshot-panel" aria-label={t('Archive dates')}>
           <div className="panel-heading">
             <div>
-              <h2>Archive dates</h2>
-              <p>{snapshotsQuery.isLoading ? 'Loading snapshots' : `${snapshotsQuery.data?.total ?? 0} snapshots`}</p>
+              <h2>{t('Archive dates')}</h2>
+              <p>{snapshotsQuery.isLoading ? t('Loading snapshots') : `${snapshotsQuery.data?.total ?? 0} ${t('snapshots')}`}</p>
             </div>
           </div>
 
@@ -1420,7 +1468,7 @@ function ArchiveView() {
           {!snapshotsQuery.isLoading && snapshots.length === 0 ? (
             <div className="empty-state">
               <Archive size={24} aria-hidden="true" />
-              <h3>No archive snapshots yet</h3>
+              <h3>{t('No archive snapshots yet')}</h3>
             </div>
           ) : null}
 
@@ -1440,8 +1488,8 @@ function ArchiveView() {
                     <small>{formatDateTime(snapshot.archived_at ?? snapshot.created_at)}</small>
                   </span>
                   <span className="snapshot-counts">
-                    <span>{snapshot.candidate_count} rows</span>
-                    <span>{snapshot.recommended_count} rec</span>
+                    <span>{snapshot.candidate_count} {t('rows')}</span>
+                    <span>{snapshot.recommended_count} {t('rec')}</span>
                   </span>
                   <code>{snapshot.run_id}</code>
                 </button>
@@ -1450,16 +1498,16 @@ function ArchiveView() {
           </div>
         </section>
 
-        <section className="archive-list-panel" aria-label="Archive rows">
+        <section className="archive-list-panel" aria-label={t('Archive rows')}>
           <div className="panel-heading">
             <div>
-              <h2>Archive rows</h2>
+              <h2>{t('Archive rows')}</h2>
               <p>
                 {rowsQuery.isLoading
-                  ? 'Loading archive rows'
+                  ? t('Loading archive rows')
                   : activePickDate
-                    ? `${rowsQuery.data?.total ?? 0} records for ${activePickDate}`
-                    : 'Select an archive date'}
+                    ? `${rowsQuery.data?.total ?? 0} ${t('records for')} ${activePickDate}`
+                    : t('Select an archive date')}
               </p>
             </div>
             <ListSummaryChips
@@ -1474,13 +1522,13 @@ function ArchiveView() {
           {!rowsQuery.isLoading && activePickDate && rows.length === 0 ? (
             <div className="empty-state">
               <Search size={24} aria-hidden="true" />
-              <h3>{hasFilters ? 'No archive rows match the filters' : 'No rows for this archive date'}</h3>
+              <h3>{hasFilters ? t('No archive rows match the filters') : t('No rows for this archive date')}</h3>
             </div>
           ) : null}
           {!activePickDate && !snapshotsQuery.isLoading ? (
             <div className="empty-state">
               <Archive size={24} aria-hidden="true" />
-              <h3>Select an archive date</h3>
+              <h3>{t('Select an archive date')}</h3>
             </div>
           ) : null}
 
@@ -1499,7 +1547,7 @@ function ArchiveView() {
                   <span className="candidate-code">{row.code}</span>
                   <span className="strategy-chip">{row.strategy}</span>
                 </span>
-                <span className={`archive-status-chip ${archiveStatusClass(row.status)}`}>{archiveStatusLabel(row.status)}</span>
+                <span className={`archive-status-chip ${archiveStatusClass(row.status)}`}>{t(archiveStatusLabel(row.status))}</span>
                 <CandidateCell label="Rank" value={formatArchiveRank(row)} />
                 <CandidateCell label="Close" value={formatNumber(row.close)} strong />
                 <RowLineageStrip
@@ -1515,7 +1563,7 @@ function ArchiveView() {
           </div>
         </section>
 
-        <section className="detail-panel" aria-label="Archive row detail">
+        <section className="detail-panel" aria-label={t('Archive row detail')}>
           {detailQuery.isError ? (
             <div className="alert detail-alert" role="alert">
               <ShieldAlert size={18} aria-hidden="true" />
@@ -1526,7 +1574,7 @@ function ArchiveView() {
           {!activeRowId && !rowsQuery.isLoading ? (
             <div className="empty-state detail-empty">
               <Archive size={24} aria-hidden="true" />
-              <h3>Select an archive row</h3>
+              <h3>{t('Select an archive row')}</h3>
             </div>
           ) : null}
           {detailQuery.data ? <ArchiveDetailPanel row={detailQuery.data.row} /> : null}
@@ -1537,6 +1585,7 @@ function ArchiveView() {
 }
 
 function MigrationsView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const [dataRoot, setDataRoot] = useState('data')
   const [importScope, setImportScope] = useState<LegacyImportVerifyScope>('candidates')
@@ -1595,20 +1644,20 @@ function MigrationsView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Migration workbench</p>
-          <h1>Migrations</h1>
+          <p className="eyebrow">{t('Migration workbench')}</p>
+          <h1>{t('Migrations')}</h1>
         </div>
-        <span className="pending-chip">Candidates / Reviews / History</span>
+        <span className="pending-chip">{t('Candidates / Reviews / History')}</span>
       </header>
 
-      <section className="summary-strip migration-summary-strip" aria-label="Migration dry-run summary">
+      <section className="summary-strip migration-summary-strip" aria-label={t('Migration dry-run summary')}>
         <Metric label="Files" value={totals ? `${totals.files_valid}/${totals.files_seen}` : 'Not run'} />
         <Metric label="Records" value={totals ? `${totals.records_valid}/${totals.records_seen}` : 'Not run'} />
         <Metric label="Warnings" value={totals ? totals.warning_count.toString() : 'Not run'} />
         <Metric label="Quarantine" value={totals ? totals.quarantine_count.toString() : 'Not run'} />
       </section>
 
-      <section className="migration-control-panel" aria-label="Legacy import dry-run control">
+      <section className="migration-control-panel" aria-label={t('Legacy import dry-run control')}>
         <form
           className="migration-form"
           onSubmit={(event) => {
@@ -1619,12 +1668,11 @@ function MigrationsView() {
           <FilterInput label="Data root" placeholder="data" value={dataRoot} onChange={setDataRoot} />
           <button type="submit" className="action-button" disabled={dryRunMutation.isPending}>
             {dryRunMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-            <span>Dry run</span>
+            <span>{t('Dry run')}</span>
           </button>
         </form>
         <p className="muted migration-note">
-          Dry-run scans candidates, reviews, and history before a write operation. Trading account and simulated trading data stay out of this
-          migration flow.
+          {t('Dry-run scans candidates, reviews, and history before a write operation. Trading account and simulated trading data stay out of this migration flow.')}
         </p>
       </section>
 
@@ -1635,12 +1683,12 @@ function MigrationsView() {
         </div>
       ) : null}
 
-      <div className="migration-action-grid" aria-label="Legacy migration actions">
-        <section className="migration-action-panel" aria-label="Legacy import execution">
+      <div className="migration-action-grid" aria-label={t('Legacy migration actions')}>
+        <section className="migration-action-panel" aria-label={t('Legacy import execution')}>
           <div className="panel-heading">
             <div>
-              <h2>Import</h2>
-              <p>Writes one legacy scope into product storage</p>
+              <h2>{t('Import')}</h2>
+              <p>{t('Writes one legacy scope into product storage')}</p>
             </div>
             <Upload size={19} aria-hidden="true" />
           </div>
@@ -1659,7 +1707,7 @@ function MigrationsView() {
               ) : (
                 <Upload size={17} aria-hidden="true" />
               )}
-              <span>Import scope</span>
+              <span>{t('Import scope')}</span>
             </button>
           </form>
           {importMutation.isError ? (
@@ -1671,11 +1719,11 @@ function MigrationsView() {
           {importSummary ? <ImportSummaryPanel summary={importSummary} /> : null}
         </section>
 
-        <section className="migration-action-panel" aria-label="Legacy import verification">
+        <section className="migration-action-panel" aria-label={t('Legacy import verification')}>
           <div className="panel-heading">
             <div>
-              <h2>Verify</h2>
-              <p>Compares legacy files with SQLite and DuckDB records</p>
+              <h2>{t('Verify')}</h2>
+              <p>{t('Compares legacy files with SQLite and DuckDB records')}</p>
             </div>
             <ShieldCheck size={19} aria-hidden="true" />
           </div>
@@ -1695,7 +1743,7 @@ function MigrationsView() {
               ) : (
                 <ShieldCheck size={17} aria-hidden="true" />
               )}
-              <span>Verify</span>
+              <span>{t('Verify')}</span>
             </button>
           </form>
           {verifyMutation.isError ? (
@@ -1711,7 +1759,7 @@ function MigrationsView() {
       {!report && !dryRunMutation.isPending ? (
         <div className="empty-state migration-empty">
           <Database size={24} aria-hidden="true" />
-          <h3>Run a dry-run scan before importing legacy files</h3>
+          <h3>{t('Run a dry-run scan before importing legacy files')}</h3>
         </div>
       ) : null}
 
@@ -1719,15 +1767,15 @@ function MigrationsView() {
 
       {report ? (
         <div className="migration-grid">
-          <section className="migration-section-panel" aria-label="Migration section reports">
+          <section className="migration-section-panel" aria-label={t('Migration section reports')}>
             <div className="panel-heading">
               <div>
-                <h2>Sections</h2>
+                <h2>{t('Sections')}</h2>
                 <p>{report.data_root}</p>
               </div>
               <span className="status-badge succeeded">
                 <CheckCircle2 size={15} aria-hidden="true" />
-                Dry run
+                {t('Dry run')}
               </span>
             </div>
             <div className="migration-section-grid">
@@ -1737,11 +1785,11 @@ function MigrationsView() {
             </div>
           </section>
 
-          <section className="migration-issues-panel" aria-label="Migration warnings and quarantine">
+          <section className="migration-issues-panel" aria-label={t('Migration warnings and quarantine')}>
             <div className="panel-heading">
               <div>
-                <h2>Issues</h2>
-                <p>{report.warnings.length + report.quarantine.length} findings</p>
+                <h2>{t('Issues')}</h2>
+                <p>{report.warnings.length + report.quarantine.length} {t('findings')}</p>
               </div>
             </div>
             <MigrationIssueList title="Warnings" kind="warning" issues={report.warnings} />
@@ -1754,6 +1802,7 @@ function MigrationsView() {
 }
 
 function RunsView() {
+  const { t } = useUiPreferences()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedRunId = paramValue(searchParams, 'run_id')
@@ -1831,16 +1880,16 @@ function RunsView() {
     <div className="run-center">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Workflow control</p>
-          <h1>Run Center</h1>
+          <p className="eyebrow">{t('Workflow control')}</p>
+          <h1>{t('Run Center')}</h1>
         </div>
         <div className={`health-chip ${healthState}`}>
           <Server size={17} aria-hidden="true" />
-          <span>{healthState === 'online' ? 'API online' : healthState === 'offline' ? 'API offline' : 'Checking API'}</span>
+          <span>{healthState === 'online' ? t('API online') : healthState === 'offline' ? t('API offline') : t('Checking API')}</span>
         </div>
       </header>
 
-      <section className="summary-strip" aria-label="Runtime summary">
+      <section className="summary-strip" aria-label={t('Runtime summary')}>
         <Metric label="Runs" value={runs.length.toString()} />
         <Metric label="Active" value={runs.filter((run) => run.status === 'queued' || run.status === 'running').length.toString()} />
         <Metric label="Backend" value={healthQuery.data?.stack.backend ?? 'FastAPI'} />
@@ -1855,17 +1904,17 @@ function RunsView() {
       ) : null}
 
       <div className="workspace-grid">
-        <section className="run-list-panel" aria-label="Runs">
+        <section className="run-list-panel" aria-label={t('Runs')}>
           <div className="panel-heading">
             <div>
-              <h2>Runs</h2>
-              <p>{runsQuery.isLoading ? 'Loading runtime state' : `${runs.length} records`}</p>
+              <h2>{t('Runs')}</h2>
+              <p>{runsQuery.isLoading ? t('Loading runtime state') : `${runs.length} ${t('records')}`}</p>
             </div>
             <div className="button-row">
               <button
                 type="button"
                 className="icon-button secondary"
-                aria-label="Refresh runs"
+                aria-label={t('Refresh runs')}
                 onClick={() => queryClient.invalidateQueries({ queryKey: ['runs'] })}
               >
                 <RefreshCw size={17} aria-hidden="true" />
@@ -1877,14 +1926,14 @@ function RunsView() {
                 disabled={createMutation.isPending}
               >
                 {createMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-                <span>Diagnostic</span>
+                <span>{t('Diagnostic')}</span>
               </button>
             </div>
           </div>
 
           <form
             className="run-setup-form"
-            aria-label="Preselect run setup"
+            aria-label={t('Preselect run setup')}
             onSubmit={(event) => {
               event.preventDefault()
               preselectMutation.mutate()
@@ -1918,7 +1967,7 @@ function RunsView() {
             />
             <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending}>
               {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-              <span>Run preselect</span>
+              <span>{t('Run preselect')}</span>
             </button>
           </form>
 
@@ -1930,7 +1979,7 @@ function RunsView() {
           ) : null}
 
           {preselectResult ? (
-            <div className="run-setup-result" aria-label="Preselect result">
+            <div className="run-setup-result" aria-label={t('Preselect result')}>
               <StatusBadge status={preselectResult.run.status} />
               <DataPair label="Batch" value={preselectResult.batch.id} />
               <DataPair label="Pick date" value={preselectResult.batch.pick_date} />
@@ -1942,10 +1991,10 @@ function RunsView() {
           {!runsQuery.isLoading && runs.length === 0 ? (
             <div className="empty-state">
               <Activity size={24} aria-hidden="true" />
-              <h3>No product runs yet</h3>
+              <h3>{t('No product runs yet')}</h3>
               <button type="button" className="action-button" onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
                 <Play size={17} aria-hidden="true" />
-                <span>Diagnostic</span>
+                <span>{t('Diagnostic')}</span>
               </button>
             </div>
           ) : null}
@@ -1969,12 +2018,12 @@ function RunsView() {
           </div>
         </section>
 
-        <section className="detail-panel" aria-label="Run detail">
+        <section className="detail-panel" aria-label={t('Run detail')}>
           {detailQuery.isLoading && activeRunId ? <RunDetailSkeleton /> : null}
           {!activeRunId && !runsQuery.isLoading ? (
             <div className="empty-state detail-empty">
               <Clock3 size={24} aria-hidden="true" />
-              <h3>Select a run</h3>
+              <h3>{t('Select a run')}</h3>
             </div>
           ) : null}
           {detailQuery.data ? (
@@ -2005,13 +2054,14 @@ function RunDetailPanel({
   onCancel: () => void
   cancelling: boolean
 }) {
+  const { t } = useUiPreferences()
   const canCancel = run.status === 'queued' || run.status === 'running'
 
   return (
     <div className="detail-content">
       <div className="detail-header">
         <div>
-          <p className="eyebrow">Selected run</p>
+          <p className="eyebrow">{t('Selected run')}</p>
           <h2>{run.kind}</h2>
           <p className="muted run-id-wrap">{run.id}</p>
         </div>
@@ -2019,7 +2069,7 @@ function RunDetailPanel({
           <StatusBadge status={run.status} />
           <button type="button" className="action-button danger" onClick={onCancel} disabled={!canCancel || cancelling}>
             {cancelling ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Ban size={17} aria-hidden="true" />}
-            <span>Cancel</span>
+            <span>{t('Cancel')}</span>
           </button>
         </div>
       </div>
@@ -2031,9 +2081,9 @@ function RunDetailPanel({
       </div>
 
       <section className="subsection">
-        <h3>Steps</h3>
+        <h3>{t('Steps')}</h3>
         <div className="step-list">
-          {(run.steps ?? []).length === 0 ? <p className="muted">No steps recorded.</p> : null}
+          {(run.steps ?? []).length === 0 ? <p className="muted">{t('No steps recorded.')}</p> : null}
           {(run.steps ?? []).map((step) => (
             <div className="step-row" key={step.id}>
               <GitBranch size={16} aria-hidden="true" />
@@ -2045,9 +2095,9 @@ function RunDetailPanel({
       </section>
 
       <section className="subsection">
-        <h3>Events</h3>
+        <h3>{t('Events')}</h3>
         <div className="event-list">
-          {events.length === 0 ? <p className="muted">No events recorded.</p> : null}
+          {events.length === 0 ? <p className="muted">{t('No events recorded.')}</p> : null}
           {events.map((event) => (
             <div className="event-row" key={event.id}>
               <span className={`event-level ${event.level}`}>{event.level}</span>
@@ -2059,8 +2109,8 @@ function RunDetailPanel({
       </section>
 
       <section className="subsection">
-        <h3>Artifacts</h3>
-        {artifacts.length === 0 ? <p className="muted">No artifacts linked.</p> : null}
+        <h3>{t('Artifacts')}</h3>
+        {artifacts.length === 0 ? <p className="muted">{t('No artifacts linked.')}</p> : null}
         {artifacts.map((artifact) => (
           <div className="artifact-row" key={artifact.id}>
             <Database size={16} aria-hidden="true" />
@@ -2072,13 +2122,13 @@ function RunDetailPanel({
                 href={artifactFileUrl(artifact.id)}
                 target="_blank"
                 rel="noreferrer"
-                aria-label={`Open ${artifact.kind} artifact`}
+                aria-label={`${t('Open')} ${artifact.kind} ${t('artifact')}`}
               >
                 <ExternalLink size={15} aria-hidden="true" />
-                <span>Open</span>
+                <span>{t('Open')}</span>
               </a>
             ) : (
-              <span className="artifact-source-chip">Legacy path</span>
+              <span className="artifact-source-chip">{t('Legacy path')}</span>
             )}
           </div>
         ))}
@@ -2088,11 +2138,12 @@ function RunDetailPanel({
 }
 
 function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
+  const { t } = useUiPreferences()
   return (
     <div className="detail-content">
       <div className="detail-header">
         <div>
-          <p className="eyebrow">Selected candidate</p>
+          <p className="eyebrow">{t('Selected candidate')}</p>
           <h2>{candidate.code}</h2>
           <p className="muted run-id-wrap">{candidate.batch_id}</p>
         </div>
@@ -2107,7 +2158,7 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
       </div>
 
       <section className="subsection">
-        <h3>Evidence route</h3>
+        <h3>{t('Evidence route')}</h3>
         <div className="evidence-link-grid">
           <EvidenceLinkCard
             icon="runs"
@@ -2139,7 +2190,7 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
       </section>
 
       <section className="subsection">
-        <h3>Lineage</h3>
+        <h3>{t('Lineage')}</h3>
         <div className="lineage-grid">
           <DataPair label="Candidate id" value={candidate.id.toString()} />
           <DataPair label="Batch id" value={candidate.batch_id} />
@@ -2151,12 +2202,12 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
       </section>
 
       <section className="subsection">
-        <h3>Strategy counts</h3>
+        <h3>{t('Strategy counts')}</h3>
         <pre className="json-block">{jsonPreview(candidate.batch.strategy_counts)}</pre>
       </section>
 
       <section className="subsection">
-        <h3>Extra</h3>
+        <h3>{t('Extra')}</h3>
         <pre className="json-block">{jsonPreview(candidate.extra)}</pre>
       </section>
     </div>
@@ -2164,17 +2215,18 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
 }
 
 function ReviewDetailPanel({ review }: { review: Review }) {
+  const { t } = useUiPreferences()
   return (
     <div className="detail-content">
       <div className="detail-header">
         <div>
-          <p className="eyebrow">Selected review</p>
+          <p className="eyebrow">{t('Selected review')}</p>
           <h2>{review.code}</h2>
           <p className="muted run-id-wrap">{review.review_key}</p>
         </div>
         <div className="review-detail-actions">
           <span className="strategy-chip large">{review.strategy}</span>
-          <span className={`verdict-chip large ${verdictClass(review.verdict)}`}>{review.verdict ?? 'No verdict'}</span>
+          <span className={`verdict-chip large ${verdictClass(review.verdict)}`}>{review.verdict ?? t('No verdict')}</span>
         </div>
       </div>
 
@@ -2186,7 +2238,7 @@ function ReviewDetailPanel({ review }: { review: Review }) {
       </div>
 
       <section className="subsection">
-        <h3>Evidence route</h3>
+        <h3>{t('Evidence route')}</h3>
         <div className="evidence-link-grid">
           <EvidenceLinkCard
             icon="candidates"
@@ -2221,7 +2273,7 @@ function ReviewDetailPanel({ review }: { review: Review }) {
       </section>
 
       <section className="subsection">
-        <h3>Lineage</h3>
+        <h3>{t('Lineage')}</h3>
         <div className="lineage-grid">
           <DataPair label="Review id" value={review.id.toString()} />
           <DataPair label="Review run" value={review.review_run_id} />
@@ -2233,21 +2285,21 @@ function ReviewDetailPanel({ review }: { review: Review }) {
       </section>
 
       <section className="subsection">
-        <h3>Review payload</h3>
+        <h3>{t('Review payload')}</h3>
         <pre className="json-block">{jsonPreview(review.payload)}</pre>
       </section>
 
       <section className="subsection">
-        <h3>Review run summary</h3>
+        <h3>{t('Review run summary')}</h3>
         <pre className="json-block">{jsonPreview(review.review_run.summary)}</pre>
       </section>
 
       <section className="subsection">
-        <h3>Recommendation payload</h3>
+        <h3>{t('Recommendation payload')}</h3>
         {review.recommendation ? (
           <pre className="json-block">{jsonPreview(review.recommendation.payload)}</pre>
         ) : (
-          <p className="muted">This review is not in the recommendation list.</p>
+          <p className="muted">{t('This review is not in the recommendation list.')}</p>
         )}
       </section>
     </div>
@@ -2255,17 +2307,18 @@ function ReviewDetailPanel({ review }: { review: Review }) {
 }
 
 function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
+  const { t } = useUiPreferences()
   return (
     <div className="detail-content">
       <div className="detail-header">
         <div>
-          <p className="eyebrow">Selected archive row</p>
+          <p className="eyebrow">{t('Selected archive row')}</p>
           <h2>{row.code}</h2>
           <p className="muted run-id-wrap">{row.review_key}</p>
         </div>
         <div className="review-detail-actions">
           <span className="strategy-chip large">{row.strategy}</span>
-          <span className={`archive-status-chip large ${archiveStatusClass(row.status)}`}>{archiveStatusLabel(row.status)}</span>
+          <span className={`archive-status-chip large ${archiveStatusClass(row.status)}`}>{t(archiveStatusLabel(row.status))}</span>
         </div>
       </div>
 
@@ -2279,7 +2332,7 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
       <ArchiveChartEvidence row={row} />
 
       <section className="subsection">
-        <h3>Evidence route</h3>
+        <h3>{t('Evidence route')}</h3>
         <div className="evidence-link-grid">
           <EvidenceLinkCard
             icon="candidates"
@@ -2316,7 +2369,7 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
       </section>
 
       <section className="subsection">
-        <h3>Lineage</h3>
+        <h3>{t('Lineage')}</h3>
         <div className="lineage-grid">
           <DataPair label="Archive row" value={row.id.toString()} />
           <DataPair label="Snapshot" value={row.snapshot_id} />
@@ -2333,7 +2386,7 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
       </section>
 
       <section className="subsection">
-        <h3>Snapshot summary</h3>
+        <h3>{t('Snapshot summary')}</h3>
         <div className="lineage-grid">
           <DataPair label="Candidates" value={row.snapshot.candidate_count.toString()} />
           <DataPair label="Recommended" value={row.snapshot.recommended_count.toString()} />
@@ -2344,17 +2397,17 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
       </section>
 
       <section className="subsection">
-        <h3>Extra</h3>
+        <h3>{t('Extra')}</h3>
         <pre className="json-block">{jsonPreview(row.extra)}</pre>
       </section>
 
       <section className="subsection">
-        <h3>Review payload</h3>
+        <h3>{t('Review payload')}</h3>
         <pre className="json-block">{jsonPreview(row.review_payload)}</pre>
       </section>
 
       <section className="subsection">
-        <h3>Strategy counts</h3>
+        <h3>{t('Strategy counts')}</h3>
         <pre className="json-block">{jsonPreview(row.snapshot.strategy_counts)}</pre>
       </section>
     </div>
@@ -2362,22 +2415,23 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
 }
 
 function ArchiveChartEvidence({ row }: { row: ArchiveRow }) {
+  const { t } = useUiPreferences()
   const artifactId = row.chart_artifact_id
   const hasProductArtifact = artifactId !== null
 
   if (!hasProductArtifact) {
     if (!row.chart) {
       return (
-        <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+        <section className="subsection evidence-asset-section" aria-label={t('Chart evidence')}>
           <div className="evidence-asset-panel missing">
             <div className="evidence-asset-head">
               <ImageIcon size={18} aria-hidden="true" />
               <div>
-                <h3>No chart linked</h3>
-                <p>Archive row is stored, but no chart artifact or legacy chart path is linked.</p>
+                <h3>{t('No chart linked')}</h3>
+                <p>{t('Archive row is stored, but no chart artifact or legacy chart path is linked.')}</p>
               </div>
               <div className="evidence-asset-actions">
-                <span className="artifact-source-chip">Missing chart</span>
+                <span className="artifact-source-chip">{t('Missing chart')}</span>
               </div>
             </div>
           </div>
@@ -2386,16 +2440,16 @@ function ArchiveChartEvidence({ row }: { row: ArchiveRow }) {
     }
 
     return (
-      <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+      <section className="subsection evidence-asset-section" aria-label={t('Chart evidence')}>
         <div className="evidence-asset-panel legacy">
           <div className="evidence-asset-head">
             <ImageIcon size={18} aria-hidden="true" />
             <div>
-              <h3>Legacy chart reference</h3>
-              <p>This path is legacy source material and is not served by the product artifact API.</p>
+              <h3>{t('Legacy chart reference')}</h3>
+              <p>{t('This path is legacy source material and is not served by the product artifact API.')}</p>
             </div>
             <div className="evidence-asset-actions">
-              <span className="artifact-source-chip">Legacy path</span>
+              <span className="artifact-source-chip">{t('Legacy path')}</span>
             </div>
           </div>
           <code className="evidence-asset-path">{row.chart}</code>
@@ -2407,22 +2461,22 @@ function ArchiveChartEvidence({ row }: { row: ArchiveRow }) {
   const artifactUrl = artifactFileUrl(artifactId)
 
   return (
-    <section className="subsection evidence-asset-section" aria-label="Chart evidence">
+    <section className="subsection evidence-asset-section" aria-label={t('Chart evidence')}>
       <div className="evidence-asset-panel product">
         <div className="evidence-asset-head">
           <ImageIcon size={18} aria-hidden="true" />
           <div>
-            <h3>Product chart evidence</h3>
-            <p>Served by the product artifact API and linked to this archive row.</p>
+            <h3>{t('Product chart evidence')}</h3>
+            <p>{t('Served by the product artifact API and linked to this archive row.')}</p>
           </div>
           <div className="evidence-asset-actions">
             <span className="status-badge succeeded">
               <CheckCircle2 size={15} aria-hidden="true" />
-              Linked
+              {t('Linked')}
             </span>
-            <a className="artifact-open-link" href={artifactUrl} target="_blank" rel="noreferrer" aria-label="Open chart artifact">
+            <a className="artifact-open-link" href={artifactUrl} target="_blank" rel="noreferrer" aria-label={t('Open chart artifact')}>
               <ExternalLink size={15} aria-hidden="true" />
-              <span>Open</span>
+              <span>{t('Open')}</span>
             </a>
           </div>
         </div>
@@ -2437,11 +2491,12 @@ function ArchiveChartEvidence({ row }: { row: ArchiveRow }) {
 }
 
 function MigrationSectionCard({ name, report }: { name: string; report?: LegacyImportSectionReport }) {
+  const { t } = useUiPreferences()
   return (
     <div className="migration-section-card">
       <div className="migration-section-head">
         <Database size={17} aria-hidden="true" />
-        <h3>{sectionLabel(name)}</h3>
+        <h3>{t(sectionLabel(name))}</h3>
       </div>
       <div className="section-count-grid">
         <DataPair label="Files" value={report ? `${report.files_valid}/${report.files_seen}` : '0/0'} />
@@ -2461,19 +2516,20 @@ function MigrationIssueList({
   kind: 'warning' | 'quarantine'
   issues: LegacyImportIssue[]
 }) {
+  const { t } = useUiPreferences()
   return (
     <section className="migration-issue-section">
       <div className="migration-issue-heading">
-        <h3>{title}</h3>
+        <h3>{t(title)}</h3>
         <span className={`issue-kind ${kind}`}>{issues.length}</span>
       </div>
       {issues.length === 0 ? (
-        <p className="muted migration-issue-empty">No {title.toLowerCase()} found.</p>
+        <p className="muted migration-issue-empty">{t(title === 'Warnings' ? 'No warnings found.' : 'No quarantine found.')}</p>
       ) : (
         <div className="migration-issue-list">
           {issues.map((issue, index) => (
             <div className="migration-issue-row" key={`${issue.section}-${issue.source_path}-${issue.reason}-${issue.record_key ?? index}`}>
-              <span className={`issue-kind ${kind}`}>{issue.section}</span>
+              <span className={`issue-kind ${kind}`}>{t(sectionLabel(issue.section))}</span>
               <div>
                 <strong>{issue.reason}</strong>
                 <p>{issue.message}</p>
@@ -2497,9 +2553,10 @@ function ScopeSelector({
   value: LegacyImportVerifyScope
   onChange: (value: LegacyImportVerifyScope) => void
 }) {
+  const { t } = useUiPreferences()
   return (
     <fieldset className="scope-selector">
-      <legend>{label}</legend>
+      <legend>{t(label)}</legend>
       <div className="scope-button-grid">
         {legacyMigrationScopes.map((scope) => (
           <button
@@ -2509,8 +2566,8 @@ function ScopeSelector({
             aria-pressed={scope.value === value}
             onClick={() => onChange(scope.value)}
           >
-            <strong>{scope.label}</strong>
-            <span>{scope.description}</span>
+            <strong>{t(scope.label)}</strong>
+            <span>{t(scope.description)}</span>
           </button>
         ))}
       </div>
@@ -2519,12 +2576,13 @@ function ScopeSelector({
 }
 
 function ImportSummaryPanel({ summary }: { summary: LegacyImportSummary }) {
+  const { t } = useUiPreferences()
   return (
     <div className="migration-result-panel">
       <div className="migration-result-head">
         <span className="status-badge succeeded">
           <CheckCircle2 size={15} aria-hidden="true" />
-          Imported
+          {t('Imported')}
         </span>
         <span className="muted">{summary.pick_date}</span>
       </div>
@@ -2537,7 +2595,7 @@ function ImportSummaryPanel({ summary }: { summary: LegacyImportSummary }) {
         <DataPair label="Review run" value={summary.review_run_id ?? 'Not linked'} />
         <DataPair label="Archive snapshot" value={summary.archive_snapshot_id ?? 'Not linked'} />
       </div>
-      <div className="migration-count-grid" aria-label="Imported record counts">
+      <div className="migration-count-grid" aria-label={t('Imported record counts')}>
         <Metric label="Candidates" value={summary.candidates_imported.toString()} />
         <Metric label="Reviews" value={summary.reviews_imported.toString()} />
         <Metric label="Recommendations" value={summary.recommendations_imported.toString()} />
@@ -2549,6 +2607,7 @@ function ImportSummaryPanel({ summary }: { summary: LegacyImportSummary }) {
 }
 
 function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
+  const { t } = useUiPreferences()
   const mismatchEntries = [
     { label: 'Missing in SQLite', values: report.mismatches.missing_in_sqlite },
     { label: 'Extra in SQLite', values: report.mismatches.extra_in_sqlite },
@@ -2562,30 +2621,30 @@ function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
       <div className="migration-result-head">
         <span className={report.passed ? 'status-badge succeeded' : 'status-badge failed'}>
           {report.passed ? <CheckCircle2 size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}
-          {report.passed ? 'Verified' : 'Mismatch'}
+          {report.passed ? t('Verified') : t('Mismatch')}
         </span>
-        <span className="muted">{sectionLabel(report.scope)} / {report.pick_date}</span>
+        <span className="muted">{t(sectionLabel(report.scope))} / {report.pick_date}</span>
       </div>
       <div className="migration-result-grid">
         <DataPair label="Source path" value={report.source_path} />
         <DataPair label="Run id" value={report.run_id ?? 'Not filtered'} />
         <DataPair label="DuckDB check" value={report.duckdb_checked ? 'Checked' : 'Skipped'} />
       </div>
-      <div className="migration-count-grid" aria-label="Verification record counts">
+      <div className="migration-count-grid" aria-label={t('Verification record counts')}>
         <Metric label="Legacy" value={report.counts.legacy.toString()} />
         <Metric label="SQLite" value={report.counts.sqlite.toString()} />
         <Metric label="DuckDB" value={report.counts.duckdb === null ? 'Skipped' : report.counts.duckdb.toString()} />
         <Metric label="Mismatches" value={mismatchCount.toString()} />
       </div>
       {mismatchCount === 0 ? (
-        <p className="muted migration-issue-empty">No mismatches found.</p>
+        <p className="muted migration-issue-empty">{t('No mismatches found.')}</p>
       ) : (
         <div className="migration-mismatch-list">
           {mismatchEntries
             .filter((entry) => entry.values.length > 0)
             .map((entry) => (
               <div className="migration-mismatch-row" key={entry.label}>
-                <strong>{entry.label}</strong>
+                <strong>{t(entry.label)}</strong>
                 <code>{entry.values.join(', ')}</code>
               </div>
             ))}
@@ -2596,11 +2655,12 @@ function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
 }
 
 function StrategyCard({ strategy, selected }: { strategy: StrategyDefinition; selected: boolean }) {
+  const { t } = useUiPreferences()
   return (
     <article className={selected ? 'strategy-card selected' : 'strategy-card'}>
       <span className="strategy-card-head">
         <strong>{strategy.label}</strong>
-        <span className="strategy-chip">{selected ? 'Default' : strategy.enabled_by_default ? 'Config default' : 'Available'}</span>
+        <span className="strategy-chip">{selected ? t('Default') : strategy.enabled_by_default ? t('Config default') : t('Available')}</span>
       </span>
       <p>{strategy.description}</p>
       <small>{strategy.config_provenance.path} / {strategy.config_provenance.section}</small>
@@ -2609,6 +2669,7 @@ function StrategyCard({ strategy, selected }: { strategy: StrategyDefinition; se
 }
 
 function StrategySummaryList({ rows }: { rows: StrategySummaryRow[] }) {
+  const { t } = useUiPreferences()
   if (rows.length === 0) return null
   return (
     <div className="strategy-summary-list">
@@ -2619,8 +2680,8 @@ function StrategySummaryList({ rows }: { rows: StrategySummaryRow[] }) {
             <small>{row.run_id}</small>
           </span>
           <span className="strategy-chip">{row.strategy}</span>
-          <span>{row.total} total</span>
-          <span>{formatPercent(row.recommended_rate)} rec</span>
+          <span>{row.total} {t('total')}</span>
+          <span>{formatPercent(row.recommended_rate)} {t('rec')}</span>
         </div>
       ))}
     </div>
@@ -2640,9 +2701,10 @@ function NumberPreference({
   max: number
   onChange: (value: number) => void
 }) {
+  const { t } = useUiPreferences()
   return (
     <label className="filter-field">
-      <span>{label}</span>
+      <span>{t(label)}</span>
       <input
         type="number"
         min={min}
@@ -2655,6 +2717,7 @@ function NumberPreference({
 }
 
 function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) {
+  const { t } = useUiPreferences()
   return (
     <div className="settings-inventory">
       <div className="overview-state-list">
@@ -2665,7 +2728,7 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
       </div>
 
       <div className="settings-subsection">
-        <h3>Safe config files</h3>
+        <h3>{t('Safe config files')}</h3>
         <div className="settings-list">
           {settings.config_files.map((config) => (
             <div key={config.key} className="settings-list-row">
@@ -2676,7 +2739,7 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
               </span>
               <span className={config.exists ? 'status-badge succeeded' : 'status-badge failed'}>
                 {config.exists ? <CheckCircle2 size={15} aria-hidden="true" /> : <XCircle size={15} aria-hidden="true" />}
-                {config.exists ? 'Found' : 'Missing'}
+                {config.exists ? t('Found') : t('Missing')}
               </span>
             </div>
           ))}
@@ -2684,7 +2747,7 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
       </div>
 
       <div className="settings-subsection">
-        <h3>External integrations</h3>
+        <h3>{t('External integrations')}</h3>
         <div className="settings-list">
           {settings.external_integrations.map((integration) => (
             <div key={integration.key} className="settings-list-row">
@@ -2695,7 +2758,7 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
               </span>
               <span className={integration.configured ? 'status-badge succeeded' : 'status-badge queued'}>
                 {integration.configured ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldAlert size={15} aria-hidden="true" />}
-                {integration.configured ? 'Configured' : 'Not configured'}
+                {integration.configured ? t('Configured') : t('Not configured')}
               </span>
             </div>
           ))}
@@ -2718,10 +2781,11 @@ function FilterInput({
   type?: 'text' | 'date'
   onChange: (value: string) => void
 }) {
+  const { t } = useUiPreferences()
   return (
     <label className="filter-field">
-      <span>{label}</span>
-      <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <span>{t(label)}</span>
+      <input type={type} value={value} placeholder={t(placeholder)} onChange={(event) => onChange(event.target.value)} />
     </label>
   )
 }
@@ -2735,13 +2799,14 @@ function FilterSelect({
   value: RecommendationStatus
   onChange: (value: RecommendationStatus) => void
 }) {
+  const { t } = useUiPreferences()
   return (
     <label className="filter-field">
-      <span>{label}</span>
+      <span>{t(label)}</span>
       <select value={value} onChange={(event) => onChange(event.target.value as RecommendationStatus)}>
-        <option value="all">All reviews</option>
-        <option value="recommended">Recommended</option>
-        <option value="reviewed">Reviewed only</option>
+        <option value="all">{t('All reviews')}</option>
+        <option value="recommended">{t('Recommended')}</option>
+        <option value="reviewed">{t('Reviewed only')}</option>
       </select>
     </label>
   )
@@ -2756,24 +2821,26 @@ function ArchiveStatusSelect({
   value: ArchiveStatus
   onChange: (value: ArchiveStatus) => void
 }) {
+  const { t } = useUiPreferences()
   return (
     <label className="filter-field">
-      <span>{label}</span>
+      <span>{t(label)}</span>
       <select value={value} onChange={(event) => onChange(event.target.value as ArchiveStatus)}>
-        <option value="all">All rows</option>
-        <option value="recommended">Recommended</option>
-        <option value="reviewed">Reviewed</option>
-        <option value="unreviewed">Unreviewed</option>
+        <option value="all">{t('All rows')}</option>
+        <option value="recommended">{t('Recommended')}</option>
+        <option value="reviewed">{t('Reviewed')}</option>
+        <option value="unreviewed">{t('Unreviewed')}</option>
       </select>
     </label>
   )
 }
 
 function DataPair({ label, value }: { label: string; value: string }) {
+  const { t } = useUiPreferences()
   return (
     <div className="data-pair">
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span>{t(label)}</span>
+      <strong>{t(value)}</strong>
     </div>
   )
 }
@@ -2781,6 +2848,7 @@ function DataPair({ label, value }: { label: string; value: string }) {
 type EvidenceStepState = 'done' | 'ready' | 'waiting'
 
 function BatchEvidenceFlow({ batch }: { batch: CandidateBatchSummary }) {
+  const { t } = useUiPreferences()
   const hasCandidates = batch.candidate_count > 0
   const hasReview = Boolean(batch.latest_review_run_id)
   const hasArchive = batch.archive_snapshot_count > 0
@@ -2808,12 +2876,12 @@ function BatchEvidenceFlow({ batch }: { batch: CandidateBatchSummary }) {
   ]
 
   return (
-    <span className="evidence-flow" aria-label="Batch evidence workflow">
+    <span className="evidence-flow" aria-label={t('Batch evidence workflow')}>
       {steps.map((step) => (
         <span key={step.label} className={`evidence-step ${step.state}`}>
           {step.state === 'done' ? <CheckCircle2 size={14} aria-hidden="true" /> : <Clock3 size={14} aria-hidden="true" />}
-          <span>{step.label}</span>
-          <strong>{step.value}</strong>
+          <span>{t(step.label)}</span>
+          <strong>{t(step.value)}</strong>
         </span>
       ))}
     </span>
@@ -2831,13 +2899,14 @@ function EvidenceLinkCard({
   detail: string
   to?: string
 }) {
+  const { t } = useUiPreferences()
   const Icon = icon === 'archive' ? Archive : icon === 'reviews' ? FileSearch : icon === 'runs' ? Activity : Search
   const content = (
     <>
       <Icon size={17} aria-hidden="true" />
       <span>
-        <strong>{title}</strong>
-        <small>{detail}</small>
+        <strong>{t(title)}</strong>
+        <small>{t(detail)}</small>
       </span>
     </>
   )
@@ -2872,20 +2941,22 @@ function CandidateCell({
   wide?: boolean
   extra?: boolean
 }) {
+  const { t } = useUiPreferences()
   const className = ['candidate-cell', mono ? 'mono' : '', wide ? 'wide' : '', extra ? 'extra' : ''].filter(Boolean).join(' ')
   return (
     <span className={className} title={value}>
-      <span>{label}</span>
-      <strong className={strong ? 'numeric' : undefined}>{value}</strong>
+      <span>{t(label)}</span>
+      <strong className={strong ? 'numeric' : undefined}>{t(value)}</strong>
     </span>
   )
 }
 
 function DenseListHeader({ className, columns }: { className: string; columns: string[] }) {
+  const { t } = useUiPreferences()
   return (
     <div className={`dense-list-header ${className}`} aria-hidden="true">
       {columns.map((column) => (
-        <span key={column}>{column}</span>
+        <span key={column}>{t(column)}</span>
       ))}
     </div>
   )
@@ -2902,11 +2973,12 @@ function ListSummaryChips({
   selected: string | null
   filtered: boolean
 }) {
+  const { t } = useUiPreferences()
   return (
-    <div className="list-summary-chips" aria-label="List summary">
-      <span className="list-summary-chip">{loaded}/{total} loaded</span>
-      {selected ? <span className="list-summary-chip selected">Selected {selected}</span> : null}
-      {filtered ? <span className="list-summary-chip filtered">Filtered</span> : null}
+    <div className="list-summary-chips" aria-label={t('List summary')}>
+      <span className="list-summary-chip">{loaded}/{total} {t('loaded')}</span>
+      {selected ? <span className="list-summary-chip selected">{t('Selected')} {selected}</span> : null}
+      {filtered ? <span className="list-summary-chip filtered">{t('Filtered')}</span> : null}
     </div>
   )
 }
@@ -2920,12 +2992,13 @@ function RowLineageStrip({
     mono?: boolean
   }>
 }) {
+  const { t } = useUiPreferences()
   return (
     <span className="row-lineage-strip">
       {items.map((item) => (
         <span key={item.label} className="row-lineage-item" title={item.value}>
-          <span>{item.label}</span>
-          <strong className={item.mono ? 'mono' : undefined}>{item.value}</strong>
+          <span>{t(item.label)}</span>
+          <strong className={item.mono ? 'mono' : undefined}>{t(item.value)}</strong>
         </span>
       ))}
     </span>
@@ -2933,27 +3006,30 @@ function RowLineageStrip({
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
+  const { t } = useUiPreferences()
   return (
     <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span>{t(label)}</span>
+      <strong>{t(value)}</strong>
     </div>
   )
 }
 
 function StatusBadge({ status }: { status: RunStatus }) {
+  const { t } = useUiPreferences()
   const Icon = status === 'succeeded' ? CheckCircle2 : status === 'failed' || status === 'cancelled' ? XCircle : Clock3
   return (
     <span className={`status-badge ${status}`}>
       <Icon size={15} aria-hidden="true" />
-      {statusLabels[status]}
+      {t(statusLabels[status])}
     </span>
   )
 }
 
 function RunSkeleton() {
+  const { t } = useUiPreferences()
   return (
-    <div className="skeleton-stack" aria-label="Loading runs">
+    <div className="skeleton-stack" aria-label={t('Loading runs')}>
       <span />
       <span />
       <span />
@@ -2962,8 +3038,9 @@ function RunSkeleton() {
 }
 
 function RunDetailSkeleton() {
+  const { t } = useUiPreferences()
   return (
-    <div className="detail-content" aria-label="Loading run detail">
+    <div className="detail-content" aria-label={t('Loading run detail')}>
       <div className="skeleton-title" />
       <div className="skeleton-grid">
         <span />
@@ -3224,6 +3301,10 @@ function archiveStatusValue(value: string | null): ArchiveStatus {
 
 function compactPreselectRequest(form: Record<keyof PreselectRunRequest, string>): PreselectRunRequest {
   return Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]))
+}
+
+function languageConfirmText(t: (text: string) => string, pickDate: string, candidateCount: number) {
+  return `${t('Run Gemini review for')} ${pickDate} (${candidateCount} ${t('candidates')})?\n${t('This will call Gemini CLI and may consume quota. Continue?')}`
 }
 
 function isProductOwnedArtifactPath(path: string | null) {

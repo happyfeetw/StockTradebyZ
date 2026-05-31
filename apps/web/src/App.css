@@ -43,8 +43,8 @@ html[data-theme="dark"] .app-shell {
       transparent 86%
     );
   border: 1px solid transparent;
-  -webkit-backdrop-filter: blur(12px) saturate(150%) contrast(108%);
-  backdrop-filter: blur(12px) saturate(150%) contrast(108%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%) contrast(108%);
+  backdrop-filter: blur(18px) saturate(150%) contrast(108%);
   -webkit-mask-image: radial-gradient(340px 260px at var(--glass-x) var(--glass-y), rgb(0 0 0 / 0.78) 0%, rgb(0 0 0 / 0.42) 54%, transparent 88%);
   mask-image: radial-gradient(340px 260px at var(--glass-x) var(--glass-y), rgb(0 0 0 / 0.78) 0%, rgb(0 0 0 / 0.42) 54%, transparent 88%);
 }

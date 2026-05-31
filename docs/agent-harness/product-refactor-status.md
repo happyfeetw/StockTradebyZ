@@ -140,9 +140,10 @@ evidence:
   terminal protection, and serializes product workflow jobs inside the local
   API process.
 - R7 product launcher now provides `./start_product` as the local React/FastAPI
-  entrypoint, enforces Node.js 22.x before Vite starts, initializes clean
-  SQLite product schema through Alembic, and points `start_workbench` users to
-  the product path while preserving the legacy workbench as compatibility-only.
+  entrypoint, enforces Node.js 23.x before Vite starts, initializes clean
+  SQLite product schema through Alembic with documented idempotency boundaries,
+  and points `start_workbench` users to the product path while preserving the
+  legacy workbench as compatibility-only.
 - R7 run_all retirement now stops `run_all.py` by default before it invokes
   legacy subprocesses or reads `candidates_latest.json`/`suggestion.json`;
   rollback requires `STOCKTRADE_ALLOW_LEGACY_RUN_ALL=1` plus any child legacy

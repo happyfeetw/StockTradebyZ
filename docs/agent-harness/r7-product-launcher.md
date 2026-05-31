@@ -24,12 +24,15 @@ The launcher starts:
   `/api` follows launcher API port overrides instead of hard-coding `8000`;
 - `PYTHONPATH=apps/api:src` so the API imports product modules without relying
   on legacy CLI paths.
-- Node.js 22.x is enforced before Vite starts. Run `nvm use` when the launcher
+- Node.js 23.x is enforced before Vite starts. Run `nvm use` when the launcher
   reports an unsupported Node.js version. Runtime launch does not depend on
   `npm run`; `npm install` is still required once to populate `node_modules`.
 - SQLite Alembic migrations run during FastAPI app creation for file-backed
   product databases, so a clean `var/db/app.sqlite` starts with the product
-  schema in place.
+  schema in place. This is idempotent for Alembic-managed databases via
+  `alembic_version`, but the migration bodies are not designed for manual
+  repeated execution and concurrent first migration of the same SQLite file is
+  outside the R7 single-process launcher contract.
 
 Optional local overrides:
 

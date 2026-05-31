@@ -151,7 +151,7 @@ class SettingsStrategyAnalyticsApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_put_settings_requires_migrated_sqlite_storage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
-            app = create_app(sqlite_path=tmp / "app.sqlite", duckdb_path=None)
+            app = create_app(sqlite_path=tmp / "app.sqlite", duckdb_path=None, auto_migrate=False)
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.put(

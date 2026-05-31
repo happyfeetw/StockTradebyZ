@@ -6,6 +6,7 @@ short: it is a map, not the full manual. Deeper rules live in versioned docs.
 ## Read First
 
 - Product and CLI overview: [README.md](README.md)
+- Product usage manual: [docs/product-usage-manual.md](docs/product-usage-manual.md)
 - Architecture map: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Agent harness index: [docs/agent-harness/index.md](docs/agent-harness/index.md)
 - Issue/PR governance:

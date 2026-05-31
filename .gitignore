@@ -11,6 +11,8 @@ var/
 data/
 .gemini_cli_tmp/
 .antigravitycli/
+.codex/
+.claude/
 
 # Virtual environments
 .venv/

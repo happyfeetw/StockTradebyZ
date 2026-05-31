@@ -27,7 +27,7 @@ Start the React workstation:
 
 ```bash
 cd apps/web
-npm run dev -- --host 127.0.0.1 --port 5173
+node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173
 ```
 
 Mechanical preflight:

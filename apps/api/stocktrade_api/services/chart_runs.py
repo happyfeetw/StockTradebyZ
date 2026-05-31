@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from ..schemas.charts import ChartExportRunCreateRequest
+from .cancellation import CancellationCheck, raise_if_cancelled
 from ..storage.candidate_repository import CandidateRepository
 from ..storage.run_repository import RunRepository
 from ..storage.sqlite import ROOT
@@ -36,8 +37,15 @@ class ChartExportRunService:
         self.run_repository = run_repository
         self.artifact_root = _resolve_root(artifact_root)
 
-    def run(self, *, run_id: str, request: ChartExportRunCreateRequest) -> CreatedChartExport:
+    def run(
+        self,
+        *,
+        run_id: str,
+        request: ChartExportRunCreateRequest,
+        should_cancel: CancellationCheck | None = None,
+    ) -> CreatedChartExport:
         detail = self.candidate_repository.get_candidate_batch(request.candidate_batch_id)
+        raise_if_cancelled(should_cancel)
         batch = detail.summary.batch
         raw_dir = _resolve_repo_path(request.raw_dir, ROOT / "data" / "raw")
         candidates_by_code = _candidates_by_code(detail.candidates, limit=request.limit)
@@ -46,6 +54,7 @@ class ChartExportRunService:
         artifacts: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
         for code, candidates in candidates_by_code.items():
+            raise_if_cancelled(should_cancel)
             raw_path = raw_dir / f"{code}.csv"
             if not raw_path.is_file():
                 skipped.append({"code": code, "reason": "raw csv missing", "path": _display_path(raw_path)})
@@ -78,6 +87,7 @@ class ChartExportRunService:
 
                 seen_review_keys: set[str] = set()
                 for candidate in candidates:
+                    raise_if_cancelled(should_cancel)
                     review_key = _review_key(code, candidate.strategy)
                     if review_key in seen_review_keys:
                         continue
@@ -119,6 +129,7 @@ class ChartExportRunService:
         if detail.candidates and not artifacts:
             raise ChartExportValidationError("no charts were exported for the selected candidate batch")
 
+        raise_if_cancelled(should_cancel)
         created_artifacts = self.run_repository.create_artifacts(artifacts)
         summary = {
             "mode": "chart_export",

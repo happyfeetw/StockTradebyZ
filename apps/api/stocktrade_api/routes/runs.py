@@ -39,6 +39,7 @@ from ..schemas.runs import (
     RunListResponse,
     RunSummary,
 )
+from ..services.cancellation import WorkflowCancellationRequested
 from ..storage.archive_repository import ArchiveRepository, ArchiveSourceNotFoundError
 from ..storage.candidate_repository import CandidateBatchNotFoundError as CandidateSelectionBatchNotFoundError
 from ..storage.candidate_repository import CandidateRepository
@@ -167,6 +168,8 @@ def create_preselect_run(
             service=service,
             analytics_writer=analytics_writer,
         )
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return PreselectRunResponse(run=run_summary(run), batch=candidate_batch_response(batch))
@@ -184,6 +187,8 @@ def create_review_run(
     service = ReviewRunService(review_repository, analytics_writer=analytics_writer)
     try:
         run, created = runtime.run_review_job(request, service=service)
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CandidateBatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail="candidate batch not found") from exc
     except ReviewRunValidationError as exc:
@@ -229,6 +234,8 @@ def create_review_provider_run(
     )
     try:
         run, created = runtime.run_review_job(request, service=service)
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CandidateBatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail="candidate batch not found") from exc
     except (ReviewProviderValidationError, ReviewRunValidationError) as exc:
@@ -256,6 +263,8 @@ def create_archive_run(
     service = ArchiveRunService(archive_repository, analytics_writer=analytics_writer)
     try:
         run, created = runtime.run_archive_job(request, service=service)
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArchiveSourceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="archive source not found") from exc
     except ArchiveRunValidationError as exc:
@@ -284,6 +293,8 @@ def create_chart_export_run(
     )
     try:
         run, created = runtime.run_chart_export_job(request, service=service)
+    except WorkflowCancellationRequested as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CandidateSelectionBatchNotFoundError as exc:
         raise HTTPException(status_code=404, detail="candidate batch not found") from exc
     except ChartExportValidationError as exc:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,29 @@ class ApiScaffoldTests(unittest.IsolatedAsyncioTestCase):
         modules = set(sys.modules)
         self.assertNotIn("pipeline.select_stock", modules)
         self.assertNotIn("agent.gemini_cli_review", modules)
+
+    async def test_create_app_auto_migrates_sqlite_for_product_state_apis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "nested" / "state"
+            app = create_app(
+                sqlite_path=state_dir / "app.sqlite",
+                duckdb_path=state_dir / "analytics.duckdb",
+                artifact_root=state_dir / "artifacts",
+                backup_root=state_dir / "backups",
+            )
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                responses = [
+                    await client.get("/api/runs"),
+                    await client.get("/api/candidate-batches"),
+                    await client.get("/api/reviews"),
+                    await client.get("/api/archive"),
+                ]
+            if app.state.sqlite_engine is not None:
+                app.state.sqlite_engine.dispose()
+
+        self.assertEqual([response.status_code for response in responses], [200, 200, 200, 200])
 
 
 if __name__ == "__main__":

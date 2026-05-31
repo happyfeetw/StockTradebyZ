@@ -1,0 +1,188 @@
+# StockTradebyZ 产品化使用手册
+
+本文档面向本地产品路径：React/Vite 前端 + FastAPI 后端。旧的
+`run_all.py`、Streamlit workbench、legacy CLI 写文件链路只保留给迁移、对照
+和回滚，不再是默认使用方式。
+
+## 1. 环境要求
+
+- Python 3.12 或兼容版本。
+- Node.js 22.x。仓库包含 `.nvmrc`，推荐使用 `nvm use`。
+- 本机已配置 Tushare token；Gemini CLI 复评需要先完成 `gemini` 登录。
+- 不要把 `TUSHARE_TOKEN`、`GEMINI_API_KEY`、Gemini OAuth 文件、`data/`、
+  `var/` 或 provider raw logs 提交到 Git。
+
+首次安装：
+
+```bash
+pip install -r requirements.txt
+nvm use
+cd apps/web && npm install
+```
+
+## 2. 启动产品
+
+在仓库根目录运行：
+
+```bash
+./start_product
+```
+
+默认地址：
+
+- Web: `http://127.0.0.1:5173`
+- API: `http://127.0.0.1:8000`
+
+`./start_product` 会在启动前检查 Node.js 22.x，并直接调用本地 Vite CLI；
+`npm install` 只用于首次安装前端依赖。FastAPI 默认启动时会自动执行 SQLite
+Alembic migrations；空的 `var/db/app.sqlite` 会被初始化为产品 schema。DuckDB
+analytics schema 会在读取或写入 analytics 数据时自动迁移。
+
+可选端口覆盖：
+
+```bash
+STOCKTRADE_API_PORT=8010 STOCKTRADE_WEB_PORT=5174 ./start_product
+```
+
+## 3. 本地状态目录
+
+产品路径使用这些本地生成目录：
+
+- `var/db/app.sqlite`: 产品事务状态，包括 runs、candidates、reviews、archive、
+  settings、migration audit。
+- `var/db/analytics.duckdb`: analytics facts 和 summary。
+- `var/artifacts/{run_id}/`: 图表、provider evidence、logs 等运行产物。
+- `var/backups/`: 产品备份。
+- `data/`: legacy 输入和迁移源，不是产品默认写入目标。
+
+这些目录默认被 gitignore。
+
+## 4. Run Center 工作流
+
+### 4.1 Preselect
+
+在 Run Center 填写：
+
+- Config path: 默认可留空，等价于 `config/rules_preselect.yaml`。
+- Data dir: 默认可留空，等价于 legacy raw 数据目录。
+- Pick date / End date: 按需要选择交易日期。
+
+运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
+候选 identity 始终是 `(code, strategy)`。
+
+### 4.2 Chart Export
+
+在候选批次页面选择批次后导出图表。产品图表产物写入 `var/artifacts/{run_id}/`
+并通过 artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
+
+### 4.3 Gemini CLI Review
+
+Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要求：
+
+- Gemini CLI 已安装并能在当前 shell 中运行。
+- 本机 Gemini CLI 已完成登录。
+- 若要求图表，先完成 chart export。
+
+provider raw prompt、stdout/stderr、checkpoint、usage、result cache 会作为 product
+artifact evidence 建索引；原始路径不会直接暴露给前端。
+
+### 4.4 Archive
+
+Archive 会把 candidate batch + review run 固化为日级归档快照，并把推荐状态、
+rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
+
+## 5. Migrations 页面
+
+Migrations 页面用于把 legacy `data/` 内容导入产品存储。
+
+推荐顺序：
+
+1. Dry run: 扫描 candidates、reviews、history，查看 warnings/quarantine。
+2. Import: 按 scope 和 pick date 单次导入。
+3. Verify: 对照 legacy 文件、SQLite 和 DuckDB 记录。
+
+交易账户和 simulated trading 数据不属于当前产品化迁移范围。
+
+## 6. Backup / Restore
+
+产品备份包含：
+
+- SQLite state
+- DuckDB analytics
+- artifact manifest 和 artifacts
+- migration version metadata
+
+Restore 会替换本地产品状态。执行 restore 前应停止其它写入同一 `var/` 根目录
+的 API 进程；R7 支持单本地 FastAPI 进程，不支持多进程同时写同一 SQLite/DuckDB。
+
+## 7. Settings
+
+Settings 页面展示：
+
+- 当前产品 stack。
+- 本地 state 路径。
+- 安全化后的 config inventory。
+- 外部集成是否配置，但不会显示 secret value。
+- 产品偏好，例如默认策略、分页大小、theme、timezone。
+
+## 8. 常见问题
+
+### Node 版本不对
+
+`./start_product` 会拒绝非 Node 22.x：
+
+```bash
+nvm use
+```
+
+然后重新运行 `./start_product`。
+
+### Run Center 报缺少 raw CSV
+
+先确认 `data/raw/{code}.csv` 或自定义 raw dir 中存在对应股票 CSV。Chart Export
+只读取 raw CSV，不会自动下载。
+
+### Gemini CLI 未配置
+
+确认：
+
+```bash
+which gemini
+gemini --version
+```
+
+并完成 Gemini CLI 登录。必要时在请求的 provider config 中覆盖 `gemini_bin`。
+
+### 需要使用 legacy 工具
+
+legacy 入口默认关闭，只用于迁移、对照或回滚。必须显式设置对应
+`STOCKTRADE_ALLOW_LEGACY_*` 环境变量。
+
+## 9. 验证命令
+
+窄验证：
+
+```bash
+scripts/harness/check.sh docs
+scripts/harness/check.sh python
+scripts/harness/check.sh r7-product-launcher
+```
+
+产品化验收建议：
+
+```bash
+scripts/harness/check.sh product-refactor-readiness
+scripts/harness/check.sh r7-browser-proof
+scripts/harness/check.sh r7-resource-envelope
+scripts/harness/check.sh r7-runtime-recovery
+scripts/harness/check.sh quick
+```
+
+前端：
+
+```bash
+nvm use
+cd apps/web
+npm run lint
+npm run build
+```

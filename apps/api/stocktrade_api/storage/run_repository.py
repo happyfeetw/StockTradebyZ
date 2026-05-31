@@ -260,6 +260,13 @@ class RunRepository:
             session.refresh(run)
             return run
 
+    def is_cancellation_requested(self, run_id: str) -> bool:
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                raise RunNotFoundError(run_id)
+            return run.status == "cancelling"
+
     def create_candidate_batch(
         self,
         *,

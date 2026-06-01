@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -124,6 +125,12 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
                 (out_path / "000001.csv").write_text("date,open,close,high,low,volume\n2026-05-31,1,2,3,1,100\n", encoding="utf-8")
                 Path(log_path).write_text("download log\n", encoding="utf-8")
 
+            fetch_module = types.ModuleType("pipeline.fetch_kline")
+            fetch_module.main = fake_fetch_main
+            fetch_module._latest_date_from_csv_dir = lambda _path: "2026-05-31"
+            pipeline_module = types.ModuleType("pipeline")
+            pipeline_module.fetch_kline = fetch_module
+
             service = MarketDataDownloadService(repository, artifact_root=tmp / "artifacts")
             request = MarketDataRunRequest(
                 config_path=str(source_config),
@@ -134,7 +141,10 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             )
 
             with mock.patch.dict(os.environ, {"TUSHARE_TOKEN": "fake-token"}, clear=False):
-                with mock.patch("pipeline.fetch_kline.main", side_effect=fake_fetch_main):
+                with mock.patch.dict(
+                    sys.modules,
+                    {"pipeline": pipeline_module, "pipeline.fetch_kline": fetch_module},
+                ):
                     created = service.run(run_id=run.id, request=request)
 
             self.assertEqual(captured["start"], "20260530")
@@ -144,6 +154,14 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             self.assertEqual(created.summary["csv_file_count"], 1)
             self.assertEqual(created.summary["local_latest_date"], "2026-05-31")
             self.assertEqual({artifact.kind for artifact in created.artifacts}, {"config", "log"})
+            event_messages = [event.message for event in repository.list_events(run.id)]
+            self.assertTrue(any("Market data config loaded from" in message for message in event_messages))
+            self.assertTrue(
+                any("Market data fetch starting for 20260530 to today" in message for message in event_messages)
+            )
+            self.assertTrue(
+                any("Market data fetch finished with 1 CSV files" in message for message in event_messages)
+            )
             engine.dispose()
 
 

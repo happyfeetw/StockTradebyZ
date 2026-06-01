@@ -605,7 +605,7 @@ html[data-theme="dark"] .action-button {
 .run-setup-form {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   align-items: end;
   padding: 12px;
@@ -632,6 +632,8 @@ html[data-theme="dark"] .action-button {
 }
 
 .run-setup-submit {
+  grid-column: 1 / -1;
+  width: fit-content;
   min-width: 140px;
   justify-content: center;
 }
@@ -1825,6 +1827,100 @@ code {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.runtime-console-panel {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.28), transparent 54%),
+    var(--glass-surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  overflow: hidden;
+}
+
+html[data-theme="dark"] .runtime-console-panel {
+  background:
+    linear-gradient(135deg, rgb(113 136 232 / 0.12), transparent 58%),
+    rgb(11 15 24 / 0.62);
+}
+
+.runtime-console-heading {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 14px;
+  color: var(--text-strong);
+}
+
+.runtime-console-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.runtime-console-lines {
+  display: grid;
+  gap: 7px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.runtime-console-line {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 96px 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.30);
+  padding: 9px 10px;
+}
+
+html[data-theme="dark"] .runtime-console-line {
+  background: rgb(255 255 255 / 0.045);
+}
+
+.runtime-console-line time,
+.runtime-console-line span,
+.runtime-console-line code {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runtime-console-line time {
+  color: var(--text-muted);
+}
+
+.runtime-console-line span {
+  color: var(--accent-strong);
+  font-weight: 750;
+}
+
+.runtime-console-line code {
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.runtime-console-line.warning span {
+  color: var(--accent);
+}
+
+.runtime-console-line.error {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+}
+
+.runtime-console-line.error span {
+  color: var(--danger);
+}
+
 .candidate-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -2409,6 +2505,10 @@ code {
   }
 
   .event-row {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-console-line {
     grid-template-columns: 1fr;
   }
 

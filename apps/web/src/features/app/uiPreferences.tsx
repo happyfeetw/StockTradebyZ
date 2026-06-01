@@ -251,6 +251,8 @@ const zhTranslations: Record<string, string> = {
   Created: '创建时间',
   Started: '开始时间',
   Finished: '结束时间',
+  'Runtime console': '运行控制台',
+  'Waiting for runtime events': '等待运行事件',
   Steps: '步骤',
   Events: '事件',
   'No steps recorded.': '暂无步骤记录。',

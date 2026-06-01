@@ -61,6 +61,21 @@ class MarketDataDownloadService:
             yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
+        self.run_repository.append_event(
+            run_id,
+            message=f"Market data config loaded from {_display_path(source_config_path)}",
+        )
+        self.run_repository.append_event(
+            run_id,
+            message=f"Market data output {_display_path(output_dir)}; log {_display_path(log_path)}",
+        )
+        self.run_repository.append_event(
+            run_id,
+            message=(
+                f"Market data fetch starting for {config.get('start') or 'not set'} "
+                f"to {config.get('end') or 'not set'}"
+            ),
+        )
 
         try:
             from pipeline import fetch_kline
@@ -77,6 +92,13 @@ class MarketDataDownloadService:
             raise MarketDataDownloadError(str(exc)) from exc
 
         csv_file_count = _count_csv_files(output_dir)
+        self.run_repository.append_event(
+            run_id,
+            message=(
+                f"Market data fetch finished with {csv_file_count} CSV files; "
+                f"latest local date {local_latest}"
+            ),
+        )
         artifact_payloads = [
             _artifact_payload(
                 run_id=run_id,

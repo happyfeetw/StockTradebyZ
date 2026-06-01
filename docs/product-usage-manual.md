@@ -99,8 +99,9 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 在运行中心填写：
 
 - Fetch config path: 默认可留空，等价于 `config/fetch_kline.yaml`。
-- Start date / End date: 可留空使用配置文件；页面日期会由 API 转为
-  `YYYYMMDD` 后传给抓取层。
+- Start date / End date: 新版页面默认填入旧 workbench 的常用范围：
+  `2019-01-01` 到当天。页面日期会由 API 转为 `YYYYMMDD` 后传给抓取层；
+  如需完全沿用配置文件，可手工清空日期输入框。
 - Output dir: 默认可留空，沿用配置文件中的 `out`，通常是 `data/raw`。
 - Workers: 默认可留空，沿用配置文件中的并发数。
 - Log path: 默认可留空，日志会写入本次运行的 product artifact 目录。
@@ -113,13 +114,18 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 单只股票任务之间检查取消信号；如果已经进入 Tushare 请求或冷却等待，取消会在
 当前抓取函数返回后落库为 cancelled。
 
+运行详情顶部的“运行控制台”会实时展示本次 run 的事件流，包括配置加载、输出目录、
+抓取开始、抓取完成或失败信息。完整抓取日志仍以 artifact 的形式保存，避免把
+大量下载明细直接塞进页面。
+
 ### 6.2 初选
 
 在运行中心填写：
 
 - Config path: 默认可留空，等价于 `config/rules_preselect.yaml`。
 - Data dir: 默认可留空，等价于 legacy raw 数据目录。
-- Pick date / End date: 按需要选择交易日期。
+- Pick date: 选择本次初选交易日。正常产品流程只需要单日选股日期；API
+  兼容字段中仍保留 `end_date`，用于后续需要显式范围时扩展，但页面默认不暴露。
 
 运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
 候选 identity 始终是 `(code, strategy)`。

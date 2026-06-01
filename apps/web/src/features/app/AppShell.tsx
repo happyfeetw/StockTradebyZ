@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sun,
+  Terminal,
   Upload,
   XCircle,
 } from 'lucide-react'
@@ -112,6 +113,8 @@ const statusLabels: Record<RunStatus, string> = {
   cancelling: 'Cancelling',
   cancelled: 'Cancelled',
 }
+
+const MARKET_DATA_DEFAULT_START_DATE = '2019-01-01'
 
 const legacyMigrationScopes: { value: LegacyImportVerifyScope; label: string; description: string }[] = [
   { value: 'candidates', label: 'Candidates', description: 'Batch files and strategy counts' },
@@ -1855,8 +1858,8 @@ function RunsView() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(requestedRunId || null)
   const [marketDataForm, setMarketDataForm] = useState<Record<keyof MarketDataRunRequest, string>>({
     config_path: '',
-    start: '',
-    end: '',
+    start: MARKET_DATA_DEFAULT_START_DATE,
+    end: todayInputDate(),
     out_dir: '',
     log_path: '',
     workers: '',
@@ -1872,17 +1875,23 @@ function RunsView() {
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 10_000 })
   const runs = runsQuery.data?.runs ?? []
   const activeRunId = selectedRunId ?? (requestedRunId || runs[0]?.id || '')
+  const activeRunSummary = runs.find((run) => run.id === activeRunId)
+  const activeRunIsLive = Boolean(
+    activeRunId
+    && (!activeRunSummary || activeRunSummary.status === 'queued' || activeRunSummary.status === 'running' || activeRunSummary.status === 'cancelling'),
+  )
 
   const detailQuery = useQuery({
     queryKey: ['run', activeRunId],
     queryFn: () => getRun(activeRunId),
     enabled: Boolean(activeRunId),
+    refetchInterval: activeRunIsLive ? 4_000 : false,
   })
   const eventsQuery = useQuery({
     queryKey: ['run-events', activeRunId],
     queryFn: () => getRunEvents(activeRunId),
     enabled: Boolean(activeRunId),
-    refetchInterval: activeRunId ? 8_000 : false,
+    refetchInterval: activeRunIsLive ? 2_000 : false,
   })
   const artifactsQuery = useQuery({
     queryKey: ['run-artifacts', activeRunId],
@@ -2104,13 +2113,6 @@ function RunsView() {
               value={preselectForm.pick_date}
               onChange={(value) => updatePreselectField('pick_date', value)}
             />
-            <FilterInput
-              label="End date"
-              type="date"
-              placeholder="YYYY-MM-DD"
-              value={preselectForm.end_date}
-              onChange={(value) => updatePreselectField('end_date', value)}
-            />
             <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending}>
               {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
               <span>{t('Run preselect')}</span>
@@ -2226,6 +2228,23 @@ function RunDetailPanel({
         <Metric label="Finished" value={formatDateTime(run.finished_at)} />
       </div>
 
+      <section className="runtime-console-panel" aria-label={t('Runtime console')}>
+        <div className="runtime-console-heading">
+          <Terminal size={17} aria-hidden="true" />
+          <h3>{t('Runtime console')}</h3>
+        </div>
+        <div className="runtime-console-lines" role="log" aria-live={canCancel ? 'polite' : 'off'}>
+          {events.length === 0 ? <p className="muted">{t('Waiting for runtime events')}</p> : null}
+          {events.map((event) => (
+            <div className={`runtime-console-line ${event.level}`} key={event.id}>
+              <time>{formatDateTime(event.created_at)}</time>
+              <span>{event.level.toUpperCase()}</span>
+              <code>{event.message}</code>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="subsection">
         <h3>{t('Steps')}</h3>
         <div className="step-list">
@@ -2235,20 +2254,6 @@ function RunDetailPanel({
               <GitBranch size={16} aria-hidden="true" />
               <span>{step.name}</span>
               <StatusBadge status={step.status} />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="subsection">
-        <h3>{t('Events')}</h3>
-        <div className="event-list">
-          {events.length === 0 ? <p className="muted">{t('No events recorded.')}</p> : null}
-          {events.map((event) => (
-            <div className="event-row" key={event.id}>
-              <span className={`event-level ${event.level}`}>{event.level}</span>
-              <span>{event.message}</span>
-              <time>{formatDateTime(event.created_at)}</time>
             </div>
           ))}
         </div>
@@ -3206,6 +3211,12 @@ function formatDateTime(value: string | null) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function todayInputDate() {
+  const now = new Date()
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+  return localDate.toISOString().slice(0, 10)
 }
 
 function formatNumber(value: number | null) {

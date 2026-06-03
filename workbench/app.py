@@ -1930,6 +1930,31 @@ def stock_view_option_label(row: dict[str, Any], index: int) -> str:
     )
 
 
+def dataframe_selected_rows(state: Any) -> list[int]:
+    selection = getattr(state, "selection", None)
+    if selection is None and isinstance(state, dict):
+        selection = state.get("selection")
+    rows = getattr(selection, "rows", None)
+    if rows is None and isinstance(selection, dict):
+        rows = selection.get("rows")
+    if not rows:
+        return []
+    selected: list[int] = []
+    for row in rows:
+        try:
+            selected.append(int(row))
+        except (TypeError, ValueError):
+            continue
+    return selected
+
+
+def stock_view_selected_index(state: Any, row_count: int) -> int:
+    selected_rows = dataframe_selected_rows(state)
+    if selected_rows and 0 <= selected_rows[0] < row_count:
+        return selected_rows[0]
+    return 0
+
+
 def render_stock_view() -> None:
     st.title("单票复盘")
     dates = result_center_dates()
@@ -1985,15 +2010,18 @@ def render_stock_view() -> None:
         st.info("当前筛选条件下没有股票。")
         return
 
-    st.dataframe(pd.DataFrame(stock_view_table_rows(filtered_rows)), width="stretch", hide_index=True)
-    selected_index = st.selectbox(
-        "选择股票",
-        list(range(len(filtered_rows))),
-        format_func=lambda idx: stock_view_option_label(filtered_rows[idx], idx),
-        key=f"stock_select_{pick_date}_{selected_strategy}_{recommendation_filter}_{score_range}_{include_unscored}",
+    table_state = st.dataframe(
+        pd.DataFrame(stock_view_table_rows(filtered_rows)),
+        width="stretch",
+        hide_index=True,
+        key=f"stock_table_{pick_date}_{selected_strategy}_{recommendation_filter}_{score_range}_{include_unscored}",
+        on_select="rerun",
+        selection_mode="single-row",
     )
+    selected_index = stock_view_selected_index(table_state, len(filtered_rows))
 
     selected_row = filtered_rows[int(selected_index)]
+    st.caption(f"当前复盘：{stock_view_option_label(selected_row, int(selected_index))}")
     selected_code = str(selected_row.get("code") or "")
     review = selected_row.get("review") or {}
     df = _load_raw(selected_code)

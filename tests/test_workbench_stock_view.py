@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,13 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual([row["code"] for row in recommended], ["600000"])
         self.assertEqual([row["code"] for row in reviewed_not_recommended], ["000001"])
         self.assertEqual([row["code"] for row in unreviewed], ["300001"])
+
+    def test_stock_view_selected_index_uses_dataframe_selection(self) -> None:
+        self.assertEqual(workbench_app.stock_view_selected_index({"selection": {"rows": [2]}}, 5), 2)
+        state = SimpleNamespace(selection=SimpleNamespace(rows=[1]))
+        self.assertEqual(workbench_app.stock_view_selected_index(state, 5), 1)
+        self.assertEqual(workbench_app.stock_view_selected_index({"selection": {"rows": [9]}}, 5), 0)
+        self.assertEqual(workbench_app.stock_view_selected_index({"selection": {"rows": []}}, 5), 0)
 
 
 if __name__ == "__main__":

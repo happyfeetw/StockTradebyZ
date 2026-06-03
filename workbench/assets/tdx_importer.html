@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #fff;
+  color: #20252b;
+  padding: 16px;
+  font-size: 14px;
+}
+.setup-box {
+  background: #f0f5ff;
+  border: 1px solid #b3d4ff;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+}
+.setup-box p { margin: 8px 0; color: #445566; font-size: 13px; }
+.setup-box .hint { font-size: 12px; color: #8899aa; margin-top: 12px; line-height: 1.6; }
+.dir-status {
+  display: flex; align-items: center; gap: 8px;
+  background: #f6f8fa; border: 1px solid #d0d7de;
+  border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+}
+.dir-status .path { font-weight: 600; flex: 1; word-break: break-all; font-size: 13px; }
+.dir-status .change { font-size: 12px; color: #1f6feb; cursor: pointer; text-decoration: underline; white-space: nowrap; }
+.summary { text-align: center; margin: 0 0 12px; color: #667788; font-size: 13px; }
+.preview-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.preview-table th, .preview-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e8ecf0; }
+.preview-table th { font-weight: 600; color: #667788; font-size: 12px; }
+.preview-table td { font-size: 13px; }
+.preview-table .samples { color: #8899aa; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.result-ok { color: #1a7f37; }
+.result-fail { color: #cf222e; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 20px; border: none; border-radius: 6px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.btn-primary { background: #1f6feb; color: #fff; }
+.btn-primary:hover { background: #1559c2; }
+.btn-primary:disabled { background: #8cb4f0; cursor: not-allowed; }
+.actions { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+.error-box { background: #fff0f0; border: 1px solid #ffcccc; border-radius: 6px; padding: 12px; margin: 8px 0; color: #cf222e; font-size: 13px; }
+.fallback-box { background: #fff8e8; border: 1px solid #ffe0a0; border-radius: 6px; padding: 16px; }
+.fallback-box .dl-btn {
+  display: inline-block; margin: 4px; padding: 6px 14px;
+  background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;
+  cursor: pointer; font-size: 13px; text-decoration: none; color: #20252b;
+}
+.fallback-box .dl-btn:hover { background: #e0e0e0; }
+.warn-box { margin-top: 12px; padding: 12px; background: #fff8e8; border: 1px solid #ffe0a0; border-radius: 6px; font-size: 12px; color: #886600; line-height: 1.6; }
+.fallback-hint { font-size: 12px; color: #886600; margin-top: 12px; }
+.footer-hint { margin-top: 16px; font-size: 13px; color: #667788; text-align: center; }
+</style>
+</head>
+<body>
+<div id="app"><p style="text-align:center;color:#8899aa;">加载中...</p></div>
+<script>
+// ── Data from Python ──────────────────────────────────────────────────
+const BLOCKS = __BLOCKS_JSON__;
+const PICK_DATE = __PICK_DATE_JSON__;
+const MODE_LABEL = __MODE_LABEL_JSON__;
+
+// ── IndexedDB helpers ─────────────────────────────────────────────────
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("agentrader-tdx", 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore("handles"); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getStoredHandle() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction("handles", "readonly");
+      const r = tx.objectStore("handles").get("blocknew");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+
+async function storeHandle(handle) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction("handles", "readwrite");
+      tx.objectStore("handles").put(handle, "blocknew");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+const hasFSA = typeof window.showDirectoryPicker === "function";
+
+async function ensurePermission(handle) {
+  if (!handle || typeof handle.queryPermission !== "function") return true;
+  const opts = { mode: "readwrite" };
+  if (await handle.queryPermission(opts) === "granted") return true;
+  if (typeof handle.requestPermission !== "function") return false;
+  return await handle.requestPermission(opts) === "granted";
+}
+
+function b64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function esc(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+async function verifyWritable(handle) {
+  try {
+    if (!await ensurePermission(handle)) return false;
+    const testName = "agentrader_write_test.txt";
+    const f = await handle.getFileHandle(testName, { create: true });
+    const w = await f.createWritable();
+    await w.write(new Uint8Array([0]));
+    await w.close();
+    await handle.removeEntry(testName);
+    return true;
+  } catch { return false; }
+}
+
+function sendToStreamlit(value) {
+  window.parent.postMessage({
+    isStreamlitMessage: true,
+    type: "streamlit:setComponentValue",
+    value: value
+  }, "*");
+}
+
+function downloadBlkFile(name, b64) {
+  const blob = new Blob([b64ToBytes(b64)], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name + ".blk";
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function writeFileBytes(handle, name, bytes) {
+  const fh = await handle.getFileHandle(name, { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(bytes);
+  await writable.close();
+}
+
+// ── Renderers ─────────────────────────────────────────────────────────
+const app = document.getElementById("app");
+
+function renderSetup() {
+  app.innerHTML = `<div class="setup-box">
+    <p style="font-size:16px;font-weight:600;">首次使用需要指定通达信板块目录</p>
+    <p>点击下方按钮，浏览器会弹出目录选择器。</p>
+    <p>请选择通达信安装目录下的 <b>T0002\\blocknew</b> 文件夹：</p>
+    <p style="font-weight:600;color:#20252b;">C:\\zd_ths\\T0002\\blocknew\\</p>
+    <button class="btn btn-primary" id="btn-dir">选择通达信板块目录</button>
+    <div class="hint">不是 T0002 本身，是其下的 blocknew 子目录。</div>
+  </div>`;
+  document.getElementById("btn-dir").addEventListener("click", selectDirectory);
+}
+
+function renderDirStatus() {
+  return `<div class="dir-status">
+    <span>OK</span><span class="path">blocknew 目录已配置</span>
+    <span class="change" id="btn-change">更换目录</span>
+  </div>`;
+}
+
+function renderBlocksTable() {
+  let h = `<table class="preview-table">
+    <thead><tr><th>板块名称</th><th>数量</th><th>前5只</th></tr></thead><tbody>`;
+  for (const b of BLOCKS) {
+    let samples = "—";
+    try {
+      const text = new TextDecoder("gbk").decode(b64ToBytes(b.content_b64));
+      samples = (b.samples || text.trim().split("\n").slice(0, 5).map(l => l.substring(1))).join(" ");
+    } catch {}
+    h += `<tr><td>${esc(b.name)}</td><td>${b.count}只</td><td class="samples">${esc(samples)}</td></tr>`;
+  }
+  h += `</tbody></table>`;
+  return h;
+}
+
+function renderReady(handle) {
+  const total = BLOCKS.reduce((s, b) => s + b.count, 0);
+  app.innerHTML = `<div class="summary">选股日期：${PICK_DATE} &nbsp;|&nbsp; 导入范围：${MODE_LABEL} &nbsp;|&nbsp; 共 ${BLOCKS.length} 个板块，${total} 只股票</div>`
+    + renderDirStatus() + renderBlocksTable()
+    + `<div class="warn-box">浏览器会尝试写入 .blk 文件，但 Chrome/Edge 可能限制 blocknew.cfg。通达信显示板块仍以 workbench 下载的 .bat 脚本为准。</div>`
+    + `<div class="actions"><button class="btn btn-primary" id="btn-import">写入 .blk 文件</button></div>`;
+  document.getElementById("btn-import").addEventListener("click", () => doImport(handle));
+  const ch = document.getElementById("btn-change");
+  if (ch) ch.addEventListener("click", selectDirectory);
+}
+
+function renderFallback() {
+  let h = `<div class="fallback-box">
+    <p style="font-weight:600;margin-bottom:8px;">下载 .blk 板块文件</p>
+    <p style="font-size:13px;color:#667788;margin-bottom:12px;">
+      当前页面无法调用目录写入能力（需 Windows Chrome/Edge 且 HTTPS 访问）。<br>
+      请返回 workbench 使用脚本备用方案，或逐个下载 .blk 文件后手工处理 blocknew.cfg。
+    </p>`;
+  for (const b of BLOCKS) {
+    h += `<button class="dl-btn" id="dl-${esc(b.name)}">${esc(b.name)}.blk (${b.count}只)</button>`;
+  }
+  h += `<p class="fallback-hint">建议用 Windows Chrome 或 Edge 访问 https://mac-ip:8601。</p></div>`;
+  app.innerHTML = h;
+  for (const b of BLOCKS) {
+    document.getElementById("dl-" + esc(b.name)).addEventListener("click", () => downloadBlkFile(b.name, b.content_b64));
+  }
+}
+
+// ── Actions ───────────────────────────────────────────────────────────
+async function selectDirectory() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    if (handle.name && handle.name.toLowerCase() !== "blocknew") {
+      const ok = confirm("当前选择的文件夹名称不是 blocknew。请确认它确实是通达信 T0002\\\\blocknew 目录。是否继续？");
+      if (!ok) return;
+    }
+    const ok = await verifyWritable(handle);
+    if (!ok) {
+      app.innerHTML = `<div class="error-box">所选目录不可写入，请检查权限后重试。</div>
+        <div class="actions"><button class="btn btn-primary" id="btn-retry">重新选择</button></div>`;
+      document.getElementById("btn-retry").addEventListener("click", selectDirectory);
+      return;
+    }
+    await storeHandle(handle);
+    renderReady(handle);
+    sendToStreamlit({ event: "dir_selected" });
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      app.innerHTML = `<div class="error-box">目录选择失败：${esc(e.message)}</div>
+        <div class="actions"><button class="btn btn-primary" id="btn-retry">重试</button></div>`;
+      document.getElementById("btn-retry").addEventListener("click", selectDirectory);
+    }
+  }
+}
+
+async function doImport(handle) {
+  const btn = document.getElementById("btn-import");
+  if (btn) { btn.disabled = true; btn.textContent = "导入中..."; }
+
+  const results = [];
+  for (const b of BLOCKS) {
+    try {
+      await writeFileBytes(handle, b.name + ".blk", b64ToBytes(b.content_b64));
+      results.push({ name: b.name, ok: true, count: b.count });
+    } catch (e) {
+      results.push({ name: b.name, ok: false, count: b.count, error: e.message });
+    }
+  }
+
+  const ok = results.filter(r => r.ok);
+  const fail = results.filter(r => !r.ok);
+
+  let h = "";
+  if (ok.length) {
+    h += `<p style="font-weight:600;margin-bottom:8px;">已写入 ${ok.length} 个板块文件</p>`;
+    for (const r of ok) h += `<div class="result-row"><span class="result-ok">OK</span> ${esc(r.name)}.blk (${r.count}只)</div>`;
+  }
+  if (fail.length) {
+    h += `<p style="font-weight:600;margin:12px 0 8px;color:#cf222e;">写入失败</p>`;
+    for (const r of fail) h += `<div class="result-row"><span class="result-fail">FAIL</span> ${esc(r.name)}.blk - ${esc(r.error)}</div>`;
+  }
+
+  h += `<div class="warn-box">.blk 文件写入不等于通达信已完成导入。请返回 workbench 下载并运行 .bat 脚本，由 Windows 本地 PowerShell 更新 blocknew.cfg 索引。</div>`;
+
+  h += `<p class="footer-hint">脚本运行完成后请重启通达信软件以加载新板块。</p>`;
+  app.innerHTML = h;
+  sendToStreamlit({ event: "blk_written", succeeded: ok.length, failed: fail.length, cfg_ok: false });
+}
+
+// ── Start ─────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    if (!BLOCKS || !BLOCKS.length) {
+      app.innerHTML = `<p style="text-align:center;color:#8899aa;padding:20px;">没有可导入的板块数据</p>`;
+      return;
+    }
+    if (!hasFSA) { renderFallback(); return; }
+    const handle = await getStoredHandle();
+    if (!handle) { renderSetup(); return; }
+    const ok = await verifyWritable(handle);
+    if (!ok) { renderSetup(); return; }
+    renderReady(handle);
+  } catch (e) {
+    app.innerHTML = `<div class="error-box">加载失败：${esc(e.message || "未知错误")}<br>请刷新页面重试。</div>`;
+  }
+})();
+</script>
+</body>
+</html>

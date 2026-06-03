@@ -6,9 +6,11 @@ or import dashboard/app.py.
 """
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import importlib
 import json
+import logging
 import os
 import re
 import signal
@@ -22,6 +24,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 import yaml
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
@@ -48,6 +52,7 @@ from paper_trading.core import (  # noqa: E402
     update_plan_status,
 )
 import paper_trading.core as paper_trading_core  # noqa: E402
+from pipeline import tdx_export  # noqa: E402
 
 
 def _read_text(path: Path) -> str:
@@ -1413,6 +1418,184 @@ def strategy_summary_rows_from_counts(strategy_counts: dict[str, Any]) -> list[d
     return rows
 
 
+def build_tdx_import_page(blocks: list[dict[str, Any]], pick_date: str, mode_label: str) -> str:
+    template_path = WORKBENCH_DIR / "assets" / "tdx_importer.html"
+    template = _read_text(template_path)
+    if not template:
+        return ""
+    return (
+        template
+        .replace("__BLOCKS_JSON__", json.dumps(blocks, ensure_ascii=False))
+        .replace("__PICK_DATE_JSON__", json.dumps(pick_date, ensure_ascii=False))
+        .replace("__MODE_LABEL_JSON__", json.dumps(mode_label, ensure_ascii=False))
+    )
+
+
+def render_tdx_browser_import(blocks: list[dict[str, Any]], pick_date: str, mode_label: str) -> None:
+    html = build_tdx_import_page(blocks, pick_date, mode_label)
+    if not html:
+        st.error("未找到浏览器导入页面模板：workbench/assets/tdx_importer.html")
+        return
+
+    filename = f"tdx_import_{pick_date.replace('-', '')}_{'recommended' if mode_label == '仅推荐' else 'all'}.html"
+    st.download_button(
+        label="下载独立导入页 (.html)",
+        data=html.encode("utf-8"),
+        file_name=filename,
+        mime="text/html",
+        width="stretch",
+    )
+
+    html_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    launcher = f"""
+    <style>
+      body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+      .wrap {{ padding: 10px 0; }}
+      button {{ padding: 8px 16px; border: none; border-radius: 6px; background: #1f6feb; color: #fff; font-weight: 600; cursor: pointer; }}
+      p {{ margin: 8px 0 0; color: #667788; font-size: 12px; }}
+    </style>
+    <div class="wrap">
+      <button id="open">在新窗口打开独立导入页</button>
+      <p>如果新窗口打不开，请使用上方下载按钮，把 HTML 文件保存到 Windows 后用 Chrome/Edge 打开。</p>
+    </div>
+    <script>
+      const htmlB64 = "{html_b64}";
+      function b64ToUtf8(b64) {{
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new TextDecoder("utf-8").decode(bytes);
+      }}
+      document.getElementById("open").addEventListener("click", () => {{
+        const blob = new Blob([b64ToUtf8(htmlB64)], {{ type: "text/html;charset=utf-8" }});
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+      }});
+    </script>
+    """
+    components.html(launcher, height=96)
+
+
+@st.dialog("导入通达信")
+def render_tdx_import_dialog(pick_date: str) -> None:
+    suggestion = load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
+    min_score = suggestion.get("min_score_threshold", 4.0) if suggestion else 4.0
+
+    st.caption(f"选股日期：**{pick_date}**")
+
+    mode = st.radio("导入范围", ["仅推荐", "全部候选"], horizontal=True)
+    mode_key = "recommended" if mode == "仅推荐" else "all"
+
+    blocks = tdx_export.build_blocks(pick_date, mode=mode_key, min_score=min_score)
+
+    if not blocks:
+        st.warning("没有可导入的板块数据")
+        return
+
+    total = sum(b["count"] for b in blocks)
+    st.caption(f"共 {len(blocks)} 个板块，{total} 只股票 — 板块名：{'、'.join(b['name'] for b in blocks)}")
+
+    # ── 预览板块 ──
+    preview_data = []
+    for b in blocks:
+        preview_data.append({
+            "板块名称": b["name"],
+            "股票数量": f"{b['count']}只",
+        })
+    st.table(preview_data)
+
+    # ── 使用 Tabs ──
+    tab_download, tab_browser, tab_local = st.tabs([
+        "下载一键导入脚本（推荐）",
+        "独立页面写入 .blk（诊断/备用）",
+        "直接写入本地路径（服务与软件在同台电脑）",
+    ])
+
+    with tab_download:
+        st.write("##### **使用说明：**")
+        st.markdown(
+            "1. 点击下方按钮下载 `.bat` 脚本文件。\n"
+            "2. 将文件保存到 Windows 电脑上的**任意位置**。\n"
+            "3. **双击运行**该脚本，它会自动检测通达信目录，写入 `.blk` 板块数据并更新 `blocknew.cfg` 索引。\n"
+            "4. 运行完成后**重启通达信**即可在自定义板块中看到新板块。\n\n"
+            "> 说明：Chrome/Edge 会限制网页创建或按名称访问 `.cfg` 文件，`blocknew.cfg` 注册必须优先使用 Windows 本地脚本完成。"
+        )
+
+        try:
+            bat_content = tdx_export.generate_import_bat(blocks)
+            # bat 文件本身是纯 ASCII（PowerShell 脚本通过 base64 编码嵌入）
+            bat_bytes = bat_content.encode("ascii", errors="ignore")
+            st.download_button(
+                label="下载一键导入脚本 (.bat)",
+                data=bat_bytes,
+                file_name=f"import_to_tdx_{pick_date.replace('-', '')}.bat",
+                mime="application/octet-stream",
+                width="stretch",
+            )
+        except Exception as e:
+            st.error(f"生成脚本失败: {e}")
+
+    with tab_browser:
+        st.markdown(
+            "这个页面只适合验证浏览器是否能写入 Windows 本机 `T0002\\blocknew` 目录下的 `.blk` 文件。"
+            "由于 Chrome/Edge 会限制 `.cfg` 文件访问，它不再作为完整导入路径。"
+        )
+        st.caption(
+            "如果这里写入成功但通达信不显示板块，仍需使用上方 `.bat` 脚本完成 blocknew.cfg 注册。"
+        )
+        render_tdx_browser_import(blocks, pick_date, mode)
+
+    with tab_local:
+        # ── 读取保存的通达信目录 ──
+        settings_path = ROOT / "config" / "tdx_settings.json"
+        settings = load_json(settings_path)
+        saved_path = settings.get("blocknew_dir", "")
+
+        # ── 输入通达信目录路径 ──
+        blocknew_dir = st.text_input(
+            "通达信 blocknew 目录绝对路径",
+            value=saved_path,
+            key="blocknew_dir_input",
+            help="请输入您通达信安装目录下的 T0002/blocknew 目录。例如：\n"
+                 "Windows: C:\\new_tdx\\T0002\\blocknew\n"
+                 "macOS (Wine/CrossOver): /Users/用户名/Library/Application Support/CrossOver/Bottles/.../drive_c/new_tdx/T0002/blocknew\n"
+                 "macOS (原生版): /Users/用户名/Library/Application Support/通达信/T0002/blocknew"
+        )
+
+        if not blocknew_dir:
+            st.info("💡 请先输入通达信 `blocknew` 目录的绝对路径。")
+
+        if st.button("🚀 一键写入", type="primary", disabled=not blocknew_dir, width="stretch"):
+            path_obj = Path(blocknew_dir.strip())
+            if not path_obj.exists():
+                st.error("❌ 输入的路径不存在，请检查是否输入正确。")
+            elif not path_obj.is_dir():
+                st.error("❌ 输入的路径不是一个文件夹，请输入 blocknew 目录本身。")
+            else:
+                # 保存有效路径
+                settings["blocknew_dir"] = str(path_obj.resolve())
+                try:
+                    settings_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(settings_path, "w", encoding="utf-8") as f:
+                        json.dump(settings, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.error("保存 tdx_settings.json 失败: %s", e)
+
+                # 开始写入
+                with st.spinner("正在写入文件..."):
+                    res = tdx_export.export_to_tdx(path_obj, blocks)
+
+                if res["succeeded"] > 0:
+                    st.success(f"✅ 成功导入 {res['succeeded']} 个板块的文件！")
+                    if res["cfg_ok"]:
+                        st.success("✅ 成功在 blocknew.cfg 索引文件中完成板块注册！")
+                    else:
+                        st.warning(f"⚠️ 板块文件已写入，但在 blocknew.cfg 注册失败: {res['error']}")
+
+                    st.info("📌 **重要提示**：如果您的通达信软件已经打开，请**重新启动通达信软件**，以便重新加载自定义板块列表。")
+                else:
+                    st.error(f"❌ 导入失败: {res.get('error', '未知错误')}")
+
 def render_result_center() -> None:
     st.title("结果中心")
     dates = result_center_dates()
@@ -1426,6 +1609,20 @@ def render_result_center() -> None:
         st.warning("当前日期没有候选结果。")
         return
     render_result_metrics(selected_date, rows)
+
+    # ── 导入通达信按钮 ────────────────────────────────────────────────
+    suggestion_for_date = load_json(ROOT / "data" / "review" / selected_date / "suggestion.json")
+    has_recommendations = bool(suggestion_for_date.get("recommendations"))
+    tdx_disabled = not has_recommendations
+    with st.columns([0.7, 0.3])[1]:
+        if st.button(
+            "📊 导入通达信",
+            width="stretch",
+            disabled=tdx_disabled,
+            help="没有可导入的推荐股票" if tdx_disabled else "将推荐股票导出为通达信自定义板块",
+        ):
+            render_tdx_import_dialog(selected_date)
+
     df = pd.DataFrame(rows)
     summary_rows = strategy_summary_rows_from_result_df(df)
     if summary_rows:

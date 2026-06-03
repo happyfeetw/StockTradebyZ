@@ -54,6 +54,25 @@ def _cfg_record_b64(name: str) -> str:
     return base64.b64encode(cfg_record_bytes(name)).decode("ascii")
 
 
+def date_suffix(pick_date: str) -> str:
+    """Return YYYYMMDD when possible, otherwise a digit-only fallback."""
+    text = str(pick_date or "").strip()
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if match:
+        return "".join(match.groups())
+    digits = re.sub(r"\D+", "", text)
+    return digits or "unknown"
+
+
+def import_bat_filename(pick_date: str) -> str:
+    return f"import_to_tdx_{date_suffix(pick_date)}.bat"
+
+
+def import_html_filename(pick_date: str, mode_label: str) -> str:
+    mode_suffix = "recommended" if mode_label == "仅推荐" else "all"
+    return f"tdx_import_{date_suffix(pick_date)}_{mode_suffix}.html"
+
+
 def merge_cfg_records(cfg_bytes: bytes, blocks: list[dict[str, Any]]) -> tuple[bytes, bool, int]:
     """Append missing block records while preserving existing 120-byte records."""
     record_size = 120

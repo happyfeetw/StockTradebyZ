@@ -1437,13 +1437,14 @@ def render_tdx_browser_import(blocks: list[dict[str, Any]], pick_date: str, mode
         st.error("未找到浏览器导入页面模板：workbench/assets/tdx_importer.html")
         return
 
-    filename = f"tdx_import_{pick_date.replace('-', '')}_{'recommended' if mode_label == '仅推荐' else 'all'}.html"
+    filename = tdx_export.import_html_filename(pick_date, mode_label)
     st.download_button(
         label="下载独立导入页 (.html)",
         data=html.encode("utf-8"),
         file_name=filename,
         mime="text/html",
         width="stretch",
+        key=f"tdx_html_download_{tdx_export.date_suffix(pick_date)}_{mode_label}",
     )
 
     html_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
@@ -1525,12 +1526,15 @@ def render_tdx_import_dialog(pick_date: str) -> None:
             bat_content = tdx_export.generate_import_bat(blocks)
             # bat 文件本身是纯 ASCII（PowerShell 脚本通过 base64 编码嵌入）
             bat_bytes = bat_content.encode("ascii", errors="ignore")
+            bat_filename = tdx_export.import_bat_filename(pick_date)
+            st.caption(f"将下载：`{bat_filename}`")
             st.download_button(
                 label="下载一键导入脚本 (.bat)",
                 data=bat_bytes,
-                file_name=f"import_to_tdx_{pick_date.replace('-', '')}.bat",
+                file_name=bat_filename,
                 mime="application/octet-stream",
                 width="stretch",
+                key=f"tdx_bat_download_{tdx_export.date_suffix(pick_date)}_{mode_key}",
             )
         except Exception as e:
             st.error(f"生成脚本失败: {e}")
@@ -1620,6 +1624,7 @@ def render_result_center() -> None:
             width="stretch",
             disabled=tdx_disabled,
             help="没有可导入的推荐股票" if tdx_disabled else "将推荐股票导出为通达信自定义板块",
+            key=f"tdx_import_open_{selected_date}",
         ):
             render_tdx_import_dialog(selected_date)
 

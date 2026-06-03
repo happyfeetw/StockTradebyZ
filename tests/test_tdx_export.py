@@ -21,6 +21,14 @@ class TdxExportTests(unittest.TestCase):
         self.assertEqual(tdx_export.to_tdx_code("830001"), "2830001")
         self.assertIsNone(tdx_export.to_tdx_code("ABC"))
 
+    def test_import_download_filenames_use_pick_date(self) -> None:
+        self.assertEqual(tdx_export.date_suffix("2026-06-03"), "20260603")
+        self.assertEqual(tdx_export.import_bat_filename("2026-06-03"), "import_to_tdx_20260603.bat")
+        self.assertEqual(
+            tdx_export.import_html_filename("2026-06-03", "仅推荐"),
+            "tdx_import_20260603_recommended.html",
+        )
+
     def test_cfg_record_merge_is_fixed_width_and_deduped(self) -> None:
         record = tdx_export.cfg_record_bytes("0602QB1")
 

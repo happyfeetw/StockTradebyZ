@@ -1797,46 +1797,227 @@ def _load_raw(code: str) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
+def load_candidates_for_date(pick_date: str) -> dict[str, Any]:
+    dated = load_json(ROOT / "data" / "candidates" / f"candidates_{pick_date}.json")
+    if dated:
+        return dated
+    latest = load_candidates()
+    if pick_date == str(latest.get("pick_date") or ""):
+        return latest
+    return {}
+
+
+def stock_row_score(row: dict[str, Any]) -> float | None:
+    review = row.get("review") or {}
+    value = review.get("total_score")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def stock_row_status(row: dict[str, Any]) -> str:
+    status = str(row.get("status") or "")
+    if status:
+        return status
+    return "reviewed" if row.get("review") else "unreviewed"
+
+
+def stock_row_status_label(row: dict[str, Any]) -> str:
+    labels = {"recommended": "推荐", "reviewed": "已复评未推荐", "unreviewed": "未复评"}
+    return labels.get(stock_row_status(row), stock_row_status(row) or "未知")
+
+
+def stock_view_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
+    payload = load_history_results(pick_date, "all")
+    if payload:
+        return [dict(row) for row in payload.get("results", []) if row.get("code")]
+
+    candidates_data = load_candidates_for_date(pick_date)
+    candidates = candidates_data.get("candidates", [])
+    if not candidates:
+        return []
+
+    suggestion = load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
+    recommendations = {
+        str(item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or ""))): item
+        for item in suggestion.get("recommendations", [])
+    }
+    review_dir = ROOT / "data" / "review" / pick_date
+    rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        code = str(candidate.get("code") or "")
+        strategy = str(candidate.get("strategy") or "")
+        if not code:
+            continue
+        item_key = review_key(code, strategy)
+        review = load_review_result(review_dir, code, strategy)
+        recommendation = recommendations.get(item_key)
+        row = dict(candidate)
+        row.update(
+            {
+                "date": pick_date,
+                "review_key": item_key,
+                "review": review,
+                "rank": recommendation.get("rank") if recommendation else None,
+                "status": "recommended" if recommendation else ("reviewed" if review else "unreviewed"),
+                "chart": str(ROOT / "data" / "kline" / pick_date / f"{code}_day.jpg"),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def filter_stock_view_rows(
+    rows: list[dict[str, Any]],
+    strategy: str,
+    recommendation_filter: str,
+    score_range: tuple[float, float],
+    include_unscored: bool,
+) -> list[dict[str, Any]]:
+    min_score, max_score = score_range
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if strategy != "全部" and str(row.get("strategy") or "") != strategy:
+            continue
+
+        status = stock_row_status(row)
+        if recommendation_filter == "仅推荐" and status != "recommended":
+            continue
+        if recommendation_filter == "未推荐" and status == "recommended":
+            continue
+        if recommendation_filter == "已复评未推荐" and status != "reviewed":
+            continue
+        if recommendation_filter == "未复评" and status != "unreviewed":
+            continue
+
+        score = stock_row_score(row)
+        if score is None:
+            if recommendation_filter != "未复评" and not include_unscored:
+                continue
+        elif score < min_score or score > max_score:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def stock_view_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    table: list[dict[str, Any]] = []
+    for row in rows:
+        rank = row.get("rank")
+        table.append(
+            {
+                "排名": str(rank) if rank else "",
+                "代码": row.get("code") or "",
+                "策略": row.get("strategy") or "",
+                "状态": stock_row_status_label(row),
+                "总分": stock_row_score(row),
+                "结论": (row.get("review") or {}).get("verdict") or "",
+                "收盘价": row.get("close"),
+            }
+        )
+    return table
+
+
+def stock_view_option_label(row: dict[str, Any], index: int) -> str:
+    score = stock_row_score(row)
+    score_text = f"{score:.1f}" if score is not None else "未评分"
+    rank = row.get("rank")
+    rank_text = f" · #{rank}" if rank else ""
+    return (
+        f"{index + 1}. {row.get('code')} · {row.get('strategy') or 'unknown'} · "
+        f"{stock_row_status_label(row)} · {score_text}{rank_text}"
+    )
+
+
 def render_stock_view() -> None:
     st.title("单票复盘")
-    candidates = load_candidates().get("candidates", [])
-    options = [
-        f"{item['code']} · {item.get('strategy') or 'unknown'}"
-        for item in candidates
-        if item.get("code")
-    ]
-    if not options:
+    dates = result_center_dates()
+    if not dates:
         st.warning("还没有候选股票。")
         return
-    selected = st.selectbox("选择股票", options)
-    candidate = next(
-        (
-            item
-            for item in candidates
-            if f"{item['code']} · {item.get('strategy') or 'unknown'}" == selected
-        ),
-        {},
-    )
-    selected_code = str(candidate.get("code") or "")
-    selected_strategy = str(candidate.get("strategy") or "")
-    pick_date = latest_pick_date()
-    review = load_review_result(ROOT / "data" / "review" / pick_date, selected_code, selected_strategy)
-    df = _load_raw(selected_code)
-    if df.empty:
-        st.error(f"未找到 data/raw/{selected_code}.csv")
+
+    f1, f2, f3 = st.columns([0.24, 0.22, 0.24])
+    with f1:
+        pick_date = st.selectbox("选股日期", dates, key="stock_pick_date")
+
+    all_rows = stock_view_rows_for_date(pick_date)
+    if not all_rows:
+        st.info("当前选股日期没有可复盘的候选股票。")
         return
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("策略", candidate.get("strategy", ""))
-    c2.metric("收盘价", candidate.get("close", ""))
-    c3.metric("Gemini 结论", review.get("verdict", "未复评"))
-    c4.metric("总分", review.get("total_score", ""))
-    c5.metric("经典图形", review.get("classic_pattern_type", "") or "-")
-    match_score = classic_pattern_match_score(review)
-    c6.metric("匹配分", match_score if match_score is not None else "-")
+    strategies = sorted({str(row.get("strategy") or "") for row in all_rows if row.get("strategy")})
+    with f2:
+        selected_strategy = st.selectbox("策略", ["全部"] + strategies, key=f"stock_strategy_{pick_date}")
+    with f3:
+        recommendation_filter = st.selectbox(
+            "推荐状态",
+            ["全部", "仅推荐", "未推荐", "已复评未推荐", "未复评"],
+            key=f"stock_recommendation_{pick_date}",
+        )
 
-    st.plotly_chart(make_daily_chart(df, selected_code, bars=120, height=620), width="stretch", config={"scrollZoom": True})
-    st.plotly_chart(make_weekly_chart(df, selected_code, height=460), width="stretch", config={"scrollZoom": True})
+    s1, s2 = st.columns([0.55, 0.2])
+    with s1:
+        score_range = st.slider(
+            "评分范围",
+            min_value=0.0,
+            max_value=5.0,
+            value=(0.0, 5.0),
+            step=0.1,
+            key=f"stock_score_range_{pick_date}",
+        )
+    with s2:
+        include_unscored = st.checkbox(
+            "包含未评分",
+            value=True,
+            key=f"stock_include_unscored_{pick_date}",
+        )
+
+    filtered_rows = filter_stock_view_rows(
+        all_rows,
+        selected_strategy,
+        recommendation_filter,
+        score_range,
+        include_unscored,
+    )
+    st.caption(f"当前筛选结果：{len(filtered_rows)} / {len(all_rows)} 条")
+    if not filtered_rows:
+        st.info("当前筛选条件下没有股票。")
+        return
+
+    st.dataframe(pd.DataFrame(stock_view_table_rows(filtered_rows)), width="stretch", hide_index=True)
+    selected_index = st.selectbox(
+        "选择股票",
+        list(range(len(filtered_rows))),
+        format_func=lambda idx: stock_view_option_label(filtered_rows[idx], idx),
+        key=f"stock_select_{pick_date}_{selected_strategy}_{recommendation_filter}_{score_range}_{include_unscored}",
+    )
+
+    selected_row = filtered_rows[int(selected_index)]
+    selected_code = str(selected_row.get("code") or "")
+    review = selected_row.get("review") or {}
+    df = _load_raw(selected_code)
+
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1.metric("选股日期", pick_date)
+    c2.metric("策略", selected_row.get("strategy", ""))
+    c3.metric("状态", stock_row_status_label(selected_row))
+    c4.metric("收盘价", selected_row.get("close", ""))
+    c5.metric("Gemini 结论", review.get("verdict", "未复评"))
+    c6.metric("总分", review.get("total_score", ""))
+    match_score = classic_pattern_match_score(review)
+    c7.metric("匹配分", match_score if match_score is not None else "-")
+
+    if df.empty:
+        st.warning(f"未找到 data/raw/{selected_code}.csv，尝试显示归档图表。")
+        chart_path = Path(str(selected_row.get("chart") or ""))
+        if chart_path.exists():
+            st.image(str(chart_path), caption=chart_path.name, width="stretch")
+        else:
+            st.info("未找到归档关联图表。")
+    else:
+        st.plotly_chart(make_daily_chart(df, selected_code, bars=120, height=620), width="stretch", config={"scrollZoom": True})
+        st.plotly_chart(make_weekly_chart(df, selected_code, height=460), width="stretch", config={"scrollZoom": True})
 
     if review:
         st.subheader("复评摘要")

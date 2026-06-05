@@ -225,6 +225,24 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertIn("agent/agy_cli_review.py", agy_steps[0][1])
         self.assertEqual(len(agy_steps), 1)
 
+    def test_reviewer_widget_sync_preserves_first_selection_change(self) -> None:
+        old_st = workbench_app.st
+        try:
+            session = SessionDict({"run_cfg": {"reviewer": "gemini-cli"}})
+            workbench_app.st = SimpleNamespace(session_state=session)
+
+            workbench_app.ensure_reviewer_widget_state()
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "gemini-cli")
+
+            session[workbench_app.REVIEWER_WIDGET_KEY] = "agy-cli-experimental"
+            workbench_app.sync_reviewer_from_widget()
+            workbench_app.ensure_reviewer_widget_state()
+
+            self.assertEqual(session["run_cfg"]["reviewer"], "agy-cli-experimental")
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "agy-cli-experimental")
+        finally:
+            workbench_app.st = old_st
+
 
 if __name__ == "__main__":
     unittest.main()

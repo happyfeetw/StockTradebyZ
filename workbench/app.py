@@ -39,6 +39,12 @@ REVIEW_SOURCE_LABELS = {
     FORMAL_REVIEW_SOURCE: "正式 Gemini",
     AGY_REVIEW_SOURCE: "AGY 实验",
 }
+REVIEWER_OPTIONS = {
+    "gemini-cli": "Gemini CLI（本机登录）",
+    "agy-cli-experimental": "AGY CLI（实验）",
+    "gemini-api": "Gemini API Key",
+}
+REVIEWER_WIDGET_KEY = "reviewer_choice"
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -408,6 +414,23 @@ def make_run_id() -> str:
 
 def clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def normalize_reviewer(value: Any) -> str:
+    reviewer = clean_text(value) or "gemini-cli"
+    return reviewer if reviewer in REVIEWER_OPTIONS else "gemini-cli"
+
+
+def ensure_reviewer_widget_state() -> None:
+    current = normalize_reviewer(st.session_state.run_cfg.get("reviewer"))
+    if st.session_state.get(REVIEWER_WIDGET_KEY) not in REVIEWER_OPTIONS:
+        st.session_state[REVIEWER_WIDGET_KEY] = current
+
+
+def sync_reviewer_from_widget() -> None:
+    run_cfg = st.session_state.get("run_cfg", default_run_cfg())
+    run_cfg["reviewer"] = normalize_reviewer(st.session_state.get(REVIEWER_WIDGET_KEY))
+    st.session_state.run_cfg = run_cfg
 
 
 def classic_pattern_switch_enabled(cfg: dict[str, Any]) -> bool:
@@ -1159,21 +1182,16 @@ def render_strategy_config() -> None:
 def render_review_config() -> None:
     st.title("复评配置")
     run_cfg = st.session_state.run_cfg
-    reviewer_options = {
-        "gemini-cli": "Gemini CLI（本机登录）",
-        "agy-cli-experimental": "AGY CLI（实验）",
-        "gemini-api": "Gemini API Key",
-    }
-    current_reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
-    if current_reviewer not in reviewer_options:
-        current_reviewer = "gemini-cli"
-    selected_reviewer_label = st.radio(
+    ensure_reviewer_widget_state()
+    reviewer = st.radio(
         "复评方式",
-        list(reviewer_options.values()),
-        index=list(reviewer_options).index(current_reviewer),
+        list(REVIEWER_OPTIONS),
+        format_func=lambda key: REVIEWER_OPTIONS[key],
         horizontal=True,
+        key=REVIEWER_WIDGET_KEY,
+        on_change=sync_reviewer_from_widget,
     )
-    reviewer = next(key for key, label in reviewer_options.items() if label == selected_reviewer_label)
+    reviewer = normalize_reviewer(reviewer)
     run_cfg["reviewer"] = reviewer
     st.session_state.run_cfg = run_cfg
 

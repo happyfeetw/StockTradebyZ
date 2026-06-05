@@ -116,6 +116,9 @@ python -m pipeline.fetch_kline
 - exclude_boards：排除板块/股票类型（gem、star、bj、st）
 - out：输出目录（默认 data/raw）
 - workers：并发线程数
+- tushare_requests_per_minute：Tushare 调用限速，避免 `adj_factor` 频率超限
+
+流程和底层机制见 [docs/fetch-kline-mechanism.md](docs/fetch-kline-mechanism.md)。
 
 ### 步骤 2：量化初选
 
@@ -167,8 +170,8 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 
 ### 5.1 抓取层
 
-- 首次全量抓取建议 workers 设小一些（如 4 到 8）
-- 若遇到频率限制，降低并发并重试
+- 首次全量抓取建议 workers 设为 2 到 4，并通过 `tushare_requests_per_minute` 控制真实接口频率
+- 若遇到 Tushare 频率限制，优先降低 `tushare_requests_per_minute` 或提高 `tushare_rate_cooldown_seconds`
 
 ### 5.2 初选层
 

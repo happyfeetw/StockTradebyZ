@@ -25,3 +25,7 @@ out: "./data/raw"
 
 # 并发下载线程数
 workers: 4
+
+# Tushare pro_bar(qfq) 调用限速。qfq 会隐式调用 adj_factor，默认低于 200次/分钟配额。
+tushare_requests_per_minute: 180
+tushare_rate_cooldown_seconds: 70

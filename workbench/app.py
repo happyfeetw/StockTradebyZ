@@ -876,13 +876,21 @@ def render_data_config() -> None:
     rules_cfg.setdefault("global", {})
 
     st.subheader("行情下载")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         fetch_cfg["start"] = st.text_input("下载开始日期", value=str(fetch_cfg.get("start", "20190101")), placeholder="YYYYMMDD 或 today")
     with c2:
         fetch_cfg["end"] = st.text_input("下载结束日期", value=str(fetch_cfg.get("end", "today")), placeholder="YYYYMMDD 或 today")
     with c3:
         fetch_cfg["workers"] = st.number_input("并发下载线程 workers", min_value=1, max_value=16, value=int(fetch_cfg.get("workers", 4)))
+    with c4:
+        fetch_cfg["tushare_requests_per_minute"] = st.number_input(
+            "Tushare 限速/分钟",
+            min_value=30,
+            max_value=200,
+            value=int(fetch_cfg.get("tushare_requests_per_minute", 180)),
+            help="qfq 抓取会隐式调用 adj_factor；建议低于 Tushare 200次/分钟配额。",
+        )
 
     c4, c5 = st.columns(2)
     with c4:
@@ -896,6 +904,12 @@ def render_data_config() -> None:
             help="gem=创业板，star=科创板，bj=北交所，st=ST/*ST 股票",
         )
         fetch_cfg["log"] = st.text_input("抓取日志文件", value=str(fetch_cfg.get("log", "")), placeholder="留空=按日期写入 data/logs")
+        fetch_cfg["tushare_rate_cooldown_seconds"] = st.number_input(
+            "限流冷却秒数",
+            min_value=30,
+            max_value=600,
+            value=int(fetch_cfg.get("tushare_rate_cooldown_seconds", 70)),
+        )
 
     st.divider()
     st.subheader("初选输入输出")

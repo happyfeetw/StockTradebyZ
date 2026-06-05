@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import io
 import logging
 import random
 import sys
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional, TypeVar
 import os
 
 import pandas as pd
@@ -86,16 +89,21 @@ logger = logging.getLogger("fetch_from_stocklist")
 
 # --------------------------- 限流/封禁处理配置 --------------------------- #
 COOLDOWN_SECS = 600
+DEFAULT_TUSHARE_REQUESTS_PER_MINUTE = 180
+DEFAULT_TUSHARE_RATE_COOLDOWN_SECS = 70
 BAN_PATTERNS = (
-    "访问频繁", "请稍后", "超过频率", "频繁访问",
+    "访问频繁", "请稍后", "超过频率", "频率超限", "频繁访问", "频次",
     "too many requests", "429",
     "forbidden", "403",
-    "max retries exceeded"
+    "max retries exceeded", "rate limit",
 )
 
-def _looks_like_ip_ban(exc: Exception) -> bool:
-    msg = (str(exc) or "").lower()
+def _looks_like_ip_ban_text(text: str) -> bool:
+    msg = (text or "").lower()
     return any(pat in msg for pat in BAN_PATTERNS)
+
+def _looks_like_ip_ban(exc: Exception) -> bool:
+    return _looks_like_ip_ban_text(str(exc))
 
 class RateLimitError(RuntimeError):
     """表示命中限流/封禁，需要长时间冷却后重试。"""
@@ -106,6 +114,97 @@ def _cool_sleep(base_seconds: int) -> None:
     sleep_s = max(1, int(base_seconds * jitter))
     logger.warning("疑似被限流/封禁，进入冷却期 %d 秒...", sleep_s)
     time.sleep(sleep_s)
+
+T = TypeVar("T")
+
+class TushareCallLimiter:
+    """线程共享的匀速调用器，避免 workers 并发突破 Tushare 分钟级配额。"""
+
+    def __init__(
+        self,
+        requests_per_minute: int = DEFAULT_TUSHARE_REQUESTS_PER_MINUTE,
+        cooldown_seconds: int = DEFAULT_TUSHARE_RATE_COOLDOWN_SECS,
+        *,
+        time_fn: Callable[[], float] = time.monotonic,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._time_fn = time_fn
+        self._sleep_fn = sleep_fn
+        self._next_allowed_at = 0.0
+        self._cooldown_until = 0.0
+        self.configure(requests_per_minute, cooldown_seconds)
+
+    @property
+    def requests_per_minute(self) -> int:
+        return self._requests_per_minute
+
+    @property
+    def cooldown_seconds(self) -> int:
+        return self._cooldown_seconds
+
+    def configure(self, requests_per_minute: int, cooldown_seconds: int) -> None:
+        self._requests_per_minute = max(0, int(requests_per_minute))
+        self._cooldown_seconds = max(1, int(cooldown_seconds))
+        self._interval_seconds = (
+            60.0 / self._requests_per_minute
+            if self._requests_per_minute > 0
+            else 0.0
+        )
+
+    def run(self, fn: Callable[[], T]) -> T:
+        # redirect_stdout 在进程内是全局状态；这里把 Tushare 调用也串行化。
+        with self._lock:
+            self._wait_locked()
+            return fn()
+
+    def cooldown(self, seconds: Optional[int] = None) -> None:
+        cooldown_seconds = self._cooldown_seconds if seconds is None else max(1, int(seconds))
+        with self._lock:
+            until = self._time_fn() + cooldown_seconds
+            self._cooldown_until = max(self._cooldown_until, until)
+            self._next_allowed_at = max(self._next_allowed_at, self._cooldown_until)
+
+    def _wait_locked(self) -> None:
+        if self._requests_per_minute <= 0:
+            return
+        wait_until = max(self._next_allowed_at, self._cooldown_until)
+        now = self._time_fn()
+        if wait_until > now:
+            self._sleep_fn(wait_until - now)
+            now = self._time_fn()
+        self._next_allowed_at = max(now, self._next_allowed_at) + self._interval_seconds
+
+_tushare_call_limiter = TushareCallLimiter()
+
+def configure_tushare_rate_limit(requests_per_minute: int, cooldown_seconds: int) -> None:
+    _tushare_call_limiter.configure(requests_per_minute, cooldown_seconds)
+
+def _compact_tushare_output(output: str) -> str:
+    return " | ".join(line.strip() for line in output.splitlines() if line.strip())
+
+def _call_tushare_with_capture(fn: Callable[[], T]) -> T:
+    captured = io.StringIO()
+
+    def wrapped() -> T:
+        with contextlib.redirect_stdout(captured):
+            return fn()
+
+    try:
+        result = _tushare_call_limiter.run(wrapped)
+    except Exception as exc:
+        output = _compact_tushare_output(captured.getvalue())
+        if output:
+            logger.warning("Tushare 输出：%s", output)
+        if _looks_like_ip_ban(exc) or _looks_like_ip_ban_text(output):
+            _tushare_call_limiter.cooldown()
+            raise RateLimitError(output or str(exc)) from exc
+        raise
+
+    output = _compact_tushare_output(captured.getvalue())
+    if output:
+        logger.debug("Tushare 输出：%s", output)
+    return result
 
 # --------------------------- 历史K线（Tushare 日线，固定qfq） --------------------------- #
 pro: Optional[ts.pro_api] = None  # 模块级会话
@@ -129,13 +228,16 @@ def _to_ts_code(code: str) -> str:
 def _get_kline_tushare(code: str, start: str, end: str) -> pd.DataFrame:
     ts_code = _to_ts_code(code)
     try:
-        df = ts.pro_bar(
-            ts_code=ts_code,
-            adj="qfq",
-            start_date=start,
-            end_date=end,
-            freq="D",
-            api=pro
+        df = _call_tushare_with_capture(
+            lambda: ts.pro_bar(
+                ts_code=ts_code,
+                adj="qfq",
+                start_date=start,
+                end_date=end,
+                freq="D",
+                api=pro,
+                retry_count=1,
+            )
         )
     except Exception as e:
         if _looks_like_ip_ban(e):
@@ -243,6 +345,13 @@ def fetch_one(
             latest_date = _latest_date_from_df(new_df)
             new_df.to_csv(csv_path, index=False)  # 直接覆盖保存
             return latest_date
+        except RateLimitError as e:
+            logger.error(
+                "%s 第 %d 次抓取命中 Tushare 限流，冷却后重试：%s",
+                code,
+                attempt,
+                e,
+            )
         except Exception as e:
             if _looks_like_ip_ban(e):
                 logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
@@ -317,6 +426,18 @@ def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
 
     # ---------- 多线程抓取（全量覆盖） ---------- #
     workers = int(cfg.get("workers", 8))
+    tushare_requests_per_minute = int(
+        cfg.get("tushare_requests_per_minute", DEFAULT_TUSHARE_REQUESTS_PER_MINUTE)
+    )
+    tushare_rate_cooldown_seconds = int(
+        cfg.get("tushare_rate_cooldown_seconds", DEFAULT_TUSHARE_RATE_COOLDOWN_SECS)
+    )
+    configure_tushare_rate_limit(tushare_requests_per_minute, tushare_rate_cooldown_seconds)
+    logger.info(
+        "Tushare 调用限速：pro_bar(qfq) ≤ %d 次/分钟；命中限流冷却 %d 秒",
+        tushare_requests_per_minute,
+        tushare_rate_cooldown_seconds,
+    )
     tushare_latest_dates: list[str] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [

@@ -25,6 +25,60 @@ class SessionDict(dict):
 
 
 class WorkbenchStockViewTests(unittest.TestCase):
+    def write_agy_review_fixture(self, project: Path, pick_date: str = "2026-06-04") -> None:
+        candidates_dir = project / "data" / "candidates"
+        candidates_dir.mkdir(parents=True)
+        candidates_payload = {
+            "pick_date": pick_date,
+            "candidates": [
+                {
+                    "code": "300001",
+                    "strategy": "brick",
+                    "close": 12.3,
+                    "brick_growth": 0.08,
+                }
+            ],
+        }
+        (candidates_dir / f"candidates_{pick_date}.json").write_text(
+            json.dumps(candidates_payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        review_dir = project / "data" / "review" / "agy_cli_experimental" / pick_date
+        review_dir.mkdir(parents=True)
+        (review_dir / "300001_brick.json").write_text(
+            json.dumps(
+                {
+                    "code": "300001",
+                    "strategy": "brick",
+                    "review_key": "300001_brick",
+                    "reviewer": "agy-cli-experimental",
+                    "total_score": 4.2,
+                    "verdict": "PASS",
+                    "signal_type": "breakout",
+                    "comment": "AGY result",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (review_dir / "suggestion.json").write_text(
+            json.dumps(
+                {
+                    "pick_date": pick_date,
+                    "recommendations": [
+                        {
+                            "code": "300001",
+                            "strategy": "brick",
+                            "review_key": "300001_brick",
+                            "rank": 1,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
     def test_stock_view_rows_read_selected_history_date(self) -> None:
         old_root = workbench_app.ROOT
         old_history = workbench_app.HISTORY_DIR
@@ -65,6 +119,61 @@ class WorkbenchStockViewTests(unittest.TestCase):
 
         self.assertEqual([row["code"] for row in rows], ["600000", "000001"])
         self.assertEqual(workbench_app.stock_row_status_label(rows[0]), "推荐")
+
+    def test_result_center_can_read_agy_experimental_review_source(self) -> None:
+        old_root = workbench_app.ROOT
+        old_history = workbench_app.HISTORY_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            self.write_agy_review_fixture(project)
+            try:
+                workbench_app.ROOT = project
+                workbench_app.HISTORY_DIR = project / "data" / "history"
+                workbench_app.st = SimpleNamespace(session_state=SessionDict())
+                dates = workbench_app.result_center_dates()
+                sources = workbench_app.review_sources_for_date("2026-06-04")
+                rows = workbench_app.result_rows_for_date(
+                    "2026-06-04",
+                    workbench_app.AGY_REVIEW_SOURCE,
+                )
+            finally:
+                workbench_app.ROOT = old_root
+                workbench_app.HISTORY_DIR = old_history
+                workbench_app.st = old_st
+
+        self.assertEqual(dates, ["2026-06-04"])
+        self.assertEqual(sources, [workbench_app.AGY_REVIEW_SOURCE])
+        self.assertEqual(rows[0]["代码"], "300001")
+        self.assertEqual(rows[0]["复评状态"], "推荐")
+        self.assertEqual(rows[0]["结论"], "PASS")
+        self.assertEqual(rows[0]["推荐"], "是")
+
+    def test_stock_view_can_read_agy_experimental_review_source(self) -> None:
+        old_root = workbench_app.ROOT
+        old_history = workbench_app.HISTORY_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            self.write_agy_review_fixture(project)
+            try:
+                workbench_app.ROOT = project
+                workbench_app.HISTORY_DIR = project / "data" / "history"
+                workbench_app.st = SimpleNamespace(session_state=SessionDict())
+                rows = workbench_app.stock_view_rows_for_date(
+                    "2026-06-04",
+                    workbench_app.AGY_REVIEW_SOURCE,
+                )
+            finally:
+                workbench_app.ROOT = old_root
+                workbench_app.HISTORY_DIR = old_history
+                workbench_app.st = old_st
+
+        self.assertEqual(rows[0]["code"], "300001")
+        self.assertEqual(rows[0]["review"]["reviewer"], "agy-cli-experimental")
+        self.assertEqual(rows[0]["review_source"], workbench_app.AGY_REVIEW_SOURCE)
+        self.assertEqual(rows[0]["status"], "recommended")
+        self.assertEqual(rows[0]["rank"], 1)
 
     def test_filter_stock_view_rows_by_strategy_recommendation_and_score(self) -> None:
         rows = [

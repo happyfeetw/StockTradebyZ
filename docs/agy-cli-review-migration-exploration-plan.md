@@ -48,11 +48,13 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 - 实验 reviewer 会写入 `reviewer: agy-cli-experimental`、`model` 和 `model_evidence`。
 - 实验 reviewer 会写入 `json_output_mode=prompt-json`、`json_schema_valid`、`json_repair_attempted`、`json_repair_used` 等字段，明确 AGY 输出不是 CLI 级结构化 JSON。
 - 每次 AGY 调用都会保存 `prompt.txt`、`stdout.txt`、`stderr.txt`、`meta.json`；JSON repair 调用以 `purpose=json_repair` 单独留痕。
+- Workbench 的“结果中心”和“单票复盘”已增加“复评结果源”选择器，可查看 `AGY 实验` 隔离结果；默认仍显示正式 Gemini 结果。
 
 ## 迁移设计原则
 
 - 不污染生产结果：AGY 实验结果必须写入独立目录或明确标记 `reviewer: agy-cli-experimental`，不能覆盖现有 `gemini-cli` 结果。
 - 明确模型来源：AGY 1.0.5 起通过 per-call `--model` 指定模型，settings 只作为辅助证据写入 `model_evidence`。
+- 页面展示可选择 AGY 实验结果，但正式导入通达信仍绑定正式 Gemini 推荐，避免实验结果进入生产板块导入链路。
 - 不修改用户全局设置：脚本默认只读 `~/.gemini/antigravity-cli/settings.json`，不自动改写 `/model`、权限、sandbox 或登录状态。
 - 不依赖自由文本：即使 `agy` 没有 JSON 输出参数，也必须通过现有 JSON schema 严格解析模型正文；首次失败时只允许追加一次 JSON repair，repair 后仍失败则视为实验失败。
 - 不扩大权限面：默认使用 `--sandbox` 或最小权限运行；只有探针明确需要并经过人工确认时，才允许 `--dangerously-skip-permissions`。

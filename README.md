@@ -160,6 +160,7 @@ python agent/agy_cli_review.py --config config/agy_cli_review.yaml --limit 1
 Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
 旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
 AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认输出到隔离目录 `data/review/agy_cli_experimental`。AGY 1.0.5 目前没有 `--output-format json/stream-json`，实验路径使用 prompt 级 JSON、本地 schema 校验和一次 JSON repair，不作为默认生产复评入口。
+在 workbench 的“结果中心”和“单票复盘”页面，可以通过“复评结果源”选择“AGY 实验”查看该隔离目录下的结果；通达信导入仍只使用正式 Gemini 推荐。
 
 读取候选与图表后，输出：
 

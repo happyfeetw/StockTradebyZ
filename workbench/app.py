@@ -33,6 +33,12 @@ RUNS_DIR = ROOT / "data" / "runs"
 HISTORY_DIR = ROOT / "data" / "history"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
+FORMAL_REVIEW_SOURCE = "formal"
+AGY_REVIEW_SOURCE = "agy-cli-experimental"
+REVIEW_SOURCE_LABELS = {
+    FORMAL_REVIEW_SOURCE: "正式 Gemini",
+    AGY_REVIEW_SOURCE: "AGY 实验",
+}
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -156,11 +162,73 @@ def latest_pick_date() -> str:
     return str(load_candidates().get("pick_date", "") or "")
 
 
-def latest_suggestion() -> dict[str, Any]:
+def project_path(value: Any, fallback: str) -> Path:
+    text = str(value or "").strip()
+    path = Path(os.path.expanduser(text or fallback))
+    return path if path.is_absolute() else ROOT / path
+
+
+def agy_review_base_dir() -> Path:
+    cfg: dict[str, Any] = {}
+    try:
+        session_cfg = st.session_state.get("agy_review_cfg", {})
+        if isinstance(session_cfg, dict):
+            cfg = session_cfg
+    except Exception:
+        cfg = {}
+    if not cfg:
+        cfg = load_yaml(ROOT / "config" / "agy_cli_review.yaml")
+    return project_path(cfg.get("output_dir"), "data/review/agy_cli_experimental")
+
+
+def review_base_dir(review_source: str = FORMAL_REVIEW_SOURCE) -> Path:
+    if review_source == AGY_REVIEW_SOURCE:
+        return agy_review_base_dir()
+    return ROOT / "data" / "review"
+
+
+def review_dir_for_date(pick_date: str, review_source: str = FORMAL_REVIEW_SOURCE) -> Path:
+    return review_base_dir(review_source) / pick_date
+
+
+def load_review_suggestion(pick_date: str, review_source: str = FORMAL_REVIEW_SOURCE) -> dict[str, Any]:
+    return load_json(review_dir_for_date(pick_date, review_source) / "suggestion.json")
+
+
+def review_source_label(review_source: str) -> str:
+    return REVIEW_SOURCE_LABELS.get(review_source, review_source)
+
+
+def review_source_has_data(pick_date: str, review_source: str = FORMAL_REVIEW_SOURCE) -> bool:
+    if review_source == FORMAL_REVIEW_SOURCE:
+        return bool(load_history_results(pick_date, "all")) or pick_date == latest_pick_date()
+    review_dir = review_dir_for_date(pick_date, review_source)
+    if not review_dir.exists():
+        return False
+    return (review_dir / "suggestion.json").exists() or any(review_dir.glob("*.json"))
+
+
+def review_sources_for_date(pick_date: str) -> list[str]:
+    sources = [
+        source
+        for source in (FORMAL_REVIEW_SOURCE, AGY_REVIEW_SOURCE)
+        if review_source_has_data(pick_date, source)
+    ]
+    return sources or [FORMAL_REVIEW_SOURCE]
+
+
+def render_review_source_selectbox(label: str, pick_date: str, key: str) -> str:
+    sources = review_sources_for_date(pick_date)
+    labels = [review_source_label(source) for source in sources]
+    selected_label = st.selectbox(label, labels, key=key)
+    return sources[labels.index(selected_label)]
+
+
+def latest_suggestion(review_source: str = FORMAL_REVIEW_SOURCE) -> dict[str, Any]:
     pick_date = latest_pick_date()
     if not pick_date:
         return {}
-    return load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
+    return load_review_suggestion(pick_date, review_source)
 
 
 def history_index() -> dict[str, Any]:
@@ -1251,11 +1319,14 @@ def render_review_config() -> None:
     st.session_state.review_cfg = cfg
 
 
-def result_rows() -> list[dict[str, Any]]:
-    candidates_data = load_candidates()
-    suggestion = latest_suggestion()
+def result_rows_from_candidates(
+    candidates_data: dict[str, Any],
+    pick_date: str,
+    review_source: str = FORMAL_REVIEW_SOURCE,
+) -> list[dict[str, Any]]:
+    suggestion = load_review_suggestion(pick_date, review_source)
     rows: list[dict[str, Any]] = []
-    review_dir = ROOT / "data" / "review" / str(candidates_data.get("pick_date", ""))
+    review_dir = review_dir_for_date(pick_date, review_source)
     for candidate in candidates_data.get("candidates", []):
         code = str(candidate.get("code") or "")
         if not code:
@@ -1296,6 +1367,14 @@ def result_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def result_rows(review_source: str = FORMAL_REVIEW_SOURCE) -> list[dict[str, Any]]:
+    candidates_data = load_candidates()
+    pick_date = str(candidates_data.get("pick_date") or "")
+    if not pick_date:
+        return []
+    return result_rows_from_candidates(candidates_data, pick_date, review_source)
+
+
 def result_rows_from_history(pick_date: str) -> list[dict[str, Any]]:
     payload = load_history_results(pick_date, "all")
     rows: list[dict[str, Any]] = []
@@ -1333,15 +1412,25 @@ def result_center_dates() -> list[str]:
     latest = latest_pick_date()
     if latest:
         dates.add(latest)
+    agy_base = review_base_dir(AGY_REVIEW_SOURCE)
+    if agy_base.exists():
+        dates.update(
+            p.name
+            for p in agy_base.iterdir()
+            if p.is_dir() and review_source_has_data(p.name, AGY_REVIEW_SOURCE)
+        )
     return sorted(dates, reverse=True)
 
 
-def result_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
-    history_payload = load_history_results(pick_date, "all")
-    if history_payload:
+def result_rows_for_date(pick_date: str, review_source: str = FORMAL_REVIEW_SOURCE) -> list[dict[str, Any]]:
+    history_payload = load_history_results(pick_date, "all") if review_source == FORMAL_REVIEW_SOURCE else {}
+    if history_payload and review_source == FORMAL_REVIEW_SOURCE:
         return result_rows_from_history(pick_date)
     if pick_date == latest_pick_date():
-        return result_rows()
+        return result_rows(review_source)
+    candidates_data = load_candidates_for_date(pick_date)
+    if candidates_data:
+        return result_rows_from_candidates(candidates_data, pick_date, review_source)
     return []
 
 
@@ -1678,23 +1767,35 @@ def render_result_center() -> None:
         return
 
     selected_date = st.selectbox("选股日期", dates)
-    rows = result_rows_for_date(selected_date)
+    review_source = render_review_source_selectbox(
+        "复评结果源",
+        selected_date,
+        key=f"result_review_source_{selected_date}",
+    )
+    rows = result_rows_for_date(selected_date, review_source)
     if not rows:
         st.warning("当前日期没有候选结果。")
         return
+    st.caption(f"复评结果源：{review_source_label(review_source)}")
     render_result_metrics(selected_date, rows)
 
     # ── 导入通达信按钮 ────────────────────────────────────────────────
-    suggestion_for_date = load_json(ROOT / "data" / "review" / selected_date / "suggestion.json")
+    suggestion_for_date = load_review_suggestion(selected_date, review_source)
     has_recommendations = bool(suggestion_for_date.get("recommendations"))
-    tdx_disabled = not has_recommendations
+    tdx_disabled = review_source != FORMAL_REVIEW_SOURCE or not has_recommendations
+    if review_source != FORMAL_REVIEW_SOURCE:
+        tdx_help = "AGY 实验结果仅用于查看；通达信导入仍使用正式 Gemini 推荐"
+    elif tdx_disabled:
+        tdx_help = "没有可导入的推荐股票"
+    else:
+        tdx_help = "将正式推荐股票导出为通达信自定义板块"
     with st.columns([0.7, 0.3])[1]:
         if st.button(
             "📊 导入通达信",
             width="stretch",
             disabled=tdx_disabled,
-            help="没有可导入的推荐股票" if tdx_disabled else "将推荐股票导出为通达信自定义板块",
-            key=f"tdx_import_open_{selected_date}",
+            help=tdx_help,
+            key=f"tdx_import_open_{selected_date}_{review_source}",
         ):
             render_tdx_import_dialog(selected_date)
 
@@ -1898,9 +1999,9 @@ def stock_row_status_label(row: dict[str, Any]) -> str:
     return labels.get(stock_row_status(row), stock_row_status(row) or "未知")
 
 
-def stock_view_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
-    payload = load_history_results(pick_date, "all")
-    if payload:
+def stock_view_rows_for_date(pick_date: str, review_source: str = FORMAL_REVIEW_SOURCE) -> list[dict[str, Any]]:
+    payload = load_history_results(pick_date, "all") if review_source == FORMAL_REVIEW_SOURCE else {}
+    if payload and review_source == FORMAL_REVIEW_SOURCE:
         return [dict(row) for row in payload.get("results", []) if row.get("code")]
 
     candidates_data = load_candidates_for_date(pick_date)
@@ -1908,12 +2009,12 @@ def stock_view_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
     if not candidates:
         return []
 
-    suggestion = load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
+    suggestion = load_review_suggestion(pick_date, review_source)
     recommendations = {
         str(item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or ""))): item
         for item in suggestion.get("recommendations", [])
     }
-    review_dir = ROOT / "data" / "review" / pick_date
+    review_dir = review_dir_for_date(pick_date, review_source)
     rows: list[dict[str, Any]] = []
     for candidate in candidates:
         code = str(candidate.get("code") or "")
@@ -1931,6 +2032,7 @@ def stock_view_rows_for_date(pick_date: str) -> list[dict[str, Any]]:
                 "review": review,
                 "rank": recommendation.get("rank") if recommendation else None,
                 "status": "recommended" if recommendation else ("reviewed" if review else "unreviewed"),
+                "review_source": review_source,
                 "chart": str(ROOT / "data" / "kline" / pick_date / f"{code}_day.jpg"),
             }
         )
@@ -2032,23 +2134,29 @@ def render_stock_view() -> None:
         st.warning("还没有候选股票。")
         return
 
-    f1, f2, f3 = st.columns([0.24, 0.22, 0.24])
+    f1, f2, f3, f4 = st.columns([0.22, 0.22, 0.22, 0.22])
     with f1:
         pick_date = st.selectbox("选股日期", dates, key="stock_pick_date")
+    with f2:
+        review_source = render_review_source_selectbox(
+            "复评结果源",
+            pick_date,
+            key=f"stock_review_source_{pick_date}",
+        )
 
-    all_rows = stock_view_rows_for_date(pick_date)
+    all_rows = stock_view_rows_for_date(pick_date, review_source)
     if not all_rows:
         st.info("当前选股日期没有可复盘的候选股票。")
         return
 
     strategies = sorted({str(row.get("strategy") or "") for row in all_rows if row.get("strategy")})
-    with f2:
-        selected_strategy = st.selectbox("策略", ["全部"] + strategies, key=f"stock_strategy_{pick_date}")
     with f3:
+        selected_strategy = st.selectbox("策略", ["全部"] + strategies, key=f"stock_strategy_{pick_date}_{review_source}")
+    with f4:
         recommendation_filter = st.selectbox(
             "推荐状态",
             ["全部", "仅推荐", "未推荐", "已复评未推荐", "未复评"],
-            key=f"stock_recommendation_{pick_date}",
+            key=f"stock_recommendation_{pick_date}_{review_source}",
         )
 
     s1, s2 = st.columns([0.55, 0.2])
@@ -2059,13 +2167,13 @@ def render_stock_view() -> None:
             max_value=5.0,
             value=(0.0, 5.0),
             step=0.1,
-            key=f"stock_score_range_{pick_date}",
+            key=f"stock_score_range_{pick_date}_{review_source}",
         )
     with s2:
         include_unscored = st.checkbox(
             "包含未评分",
             value=True,
-            key=f"stock_include_unscored_{pick_date}",
+            key=f"stock_include_unscored_{pick_date}_{review_source}",
         )
 
     filtered_rows = filter_stock_view_rows(
@@ -2075,7 +2183,7 @@ def render_stock_view() -> None:
         score_range,
         include_unscored,
     )
-    st.caption(f"当前筛选结果：{len(filtered_rows)} / {len(all_rows)} 条")
+    st.caption(f"复评结果源：{review_source_label(review_source)}；当前筛选结果：{len(filtered_rows)} / {len(all_rows)} 条")
     if not filtered_rows:
         st.info("当前筛选条件下没有股票。")
         return
@@ -2084,7 +2192,7 @@ def render_stock_view() -> None:
         pd.DataFrame(stock_view_table_rows(filtered_rows)),
         width="stretch",
         hide_index=True,
-        key=f"stock_table_{pick_date}_{selected_strategy}_{recommendation_filter}_{score_range}_{include_unscored}",
+        key=f"stock_table_{pick_date}_{review_source}_{selected_strategy}_{recommendation_filter}_{score_range}_{include_unscored}",
         on_select="rerun",
         selection_mode="single-row",
     )
@@ -2101,7 +2209,7 @@ def render_stock_view() -> None:
     c2.metric("策略", selected_row.get("strategy", ""))
     c3.metric("状态", stock_row_status_label(selected_row))
     c4.metric("收盘价", selected_row.get("close", ""))
-    c5.metric("Gemini 结论", review.get("verdict", "未复评"))
+    c5.metric("复评结论", review.get("verdict", "未复评"))
     c6.metric("总分", review.get("total_score", ""))
     match_score = classic_pattern_match_score(review)
     c7.metric("匹配分", match_score if match_score is not None else "-")

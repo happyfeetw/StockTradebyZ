@@ -263,23 +263,57 @@ class WorkbenchStockViewTests(unittest.TestCase):
             ],
         )
 
-    def test_agy_model_options_reads_cli_models(self) -> None:
-        old_cache = workbench_app.AGY_MODELS_CACHE
+    def test_cached_agy_model_options_uses_session_state_without_cli(self) -> None:
+        old_st = workbench_app.st
         try:
-            workbench_app.AGY_MODELS_CACHE = {}
-            completed = SimpleNamespace(
-                returncode=0,
-                stdout="Gemini 3.5 Flash (Medium)\nGPT-OSS 120B (Medium)\n",
-                stderr="",
+            session = SessionDict(
+                {
+                    workbench_app.AGY_MODELS_CACHE_KEY: {
+                        "agy": {
+                            "models": ["Gemini 3.5 Flash (Medium)"],
+                            "error": "",
+                            "fetched_at": "2026-06-05T16:00:00",
+                        }
+                    }
+                }
             )
-            with patch.object(workbench_app.subprocess, "run", return_value=completed) as run_mock:
-                models, error = workbench_app.agy_model_options("agy")
+            workbench_app.st = SimpleNamespace(session_state=session)
+            with patch.object(workbench_app.subprocess, "run") as run_mock:
+                models, error, fetched_at = workbench_app.cached_agy_model_options("agy")
         finally:
-            workbench_app.AGY_MODELS_CACHE = old_cache
+            workbench_app.st = old_st
+
+        self.assertEqual(models, ["Gemini 3.5 Flash (Medium)"])
+        self.assertEqual(error, "")
+        self.assertEqual(fetched_at, "2026-06-05T16:00:00")
+        run_mock.assert_not_called()
+
+    def test_fetch_agy_model_options_reads_cli_models(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="Gemini 3.5 Flash (Medium)\nGPT-OSS 120B (Medium)\n",
+            stderr="",
+        )
+        with patch.object(workbench_app.subprocess, "run", return_value=completed) as run_mock:
+            models, error = workbench_app.fetch_agy_model_options("agy")
 
         self.assertEqual(error, "")
         self.assertEqual(models, ["Gemini 3.5 Flash (Medium)", "GPT-OSS 120B (Medium)"])
         run_mock.assert_called_once()
+
+    def test_store_agy_model_options_updates_session_cache(self) -> None:
+        old_st = workbench_app.st
+        try:
+            session = SessionDict()
+            workbench_app.st = SimpleNamespace(session_state=session)
+            workbench_app.store_agy_model_options("agy", ["Gemini 3.5 Flash (High)"])
+            models, error, fetched_at = workbench_app.cached_agy_model_options("agy")
+        finally:
+            workbench_app.st = old_st
+
+        self.assertEqual(models, ["Gemini 3.5 Flash (High)"])
+        self.assertEqual(error, "")
+        self.assertTrue(fetched_at)
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ REVIEWER_OPTIONS = {
     "gemini-api": "Gemini API Key",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
-AGY_MODELS_CACHE: dict[str, tuple[list[str], str]] = {}
+AGY_MODELS_CACHE_KEY = "agy_models_cache"
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -446,17 +446,48 @@ def parse_agy_models_output(output: str) -> list[str]:
     return models
 
 
+def agy_models_cache() -> dict[str, dict[str, Any]]:
+    cache = st.session_state.get(AGY_MODELS_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state[AGY_MODELS_CACHE_KEY] = cache
+    return cache
+
+
 def clear_agy_models_cache(agy_bin: str | None = None) -> None:
+    cache = agy_models_cache()
     if agy_bin:
-        AGY_MODELS_CACHE.pop(clean_text(agy_bin) or "agy", None)
+        cache.pop(clean_text(agy_bin) or "agy", None)
     else:
-        AGY_MODELS_CACHE.clear()
+        cache.clear()
 
 
-def agy_model_options(agy_bin: str) -> tuple[list[str], str]:
+def cached_agy_model_options(agy_bin: str) -> tuple[list[str], str, str]:
     command = clean_text(agy_bin) or "agy"
-    if command in AGY_MODELS_CACHE:
-        return AGY_MODELS_CACHE[command]
+    entry = agy_models_cache().get(command)
+    if not isinstance(entry, dict):
+        return [], "", ""
+    models = entry.get("models")
+    if not isinstance(models, list):
+        models = []
+    return (
+        [str(model) for model in models if str(model).strip()],
+        str(entry.get("error") or ""),
+        str(entry.get("fetched_at") or ""),
+    )
+
+
+def store_agy_model_options(agy_bin: str, models: list[str], error: str = "") -> None:
+    command = clean_text(agy_bin) or "agy"
+    agy_models_cache()[command] = {
+        "models": models,
+        "error": error,
+        "fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def fetch_agy_model_options(agy_bin: str) -> tuple[list[str], str]:
+    command = clean_text(agy_bin) or "agy"
     try:
         result = subprocess.run(
             [command, "models"],
@@ -475,7 +506,6 @@ def agy_model_options(agy_bin: str) -> tuple[list[str], str]:
     if not models:
         return [], "agy models 没有返回模型名称"
 
-    AGY_MODELS_CACHE[command] = (models, "")
     return models, ""
 
 
@@ -1285,7 +1315,8 @@ def render_review_config() -> None:
         left, right = st.columns(2, gap="large")
         with left:
             cfg["agy_bin"] = st.text_input("AGY CLI 路径", value=str(cfg.get("agy_bin", "agy")))
-            model_options, model_error = agy_model_options(str(cfg.get("agy_bin", "agy")))
+            agy_bin = str(cfg.get("agy_bin", "agy"))
+            model_options, model_error, model_fetched_at = cached_agy_model_options(agy_bin)
             current_model = clean_text(cfg.get("model")) or (model_options[0] if model_options else "")
             if model_options:
                 if current_model not in model_options:
@@ -1300,18 +1331,35 @@ def render_review_config() -> None:
                     key="agy_model_choice",
                     help="候选项直接来自 `agy models` 输出，名称不做改写。",
                 )
-                if st.button("刷新 AGY 模型列表", key="agy_model_refresh", help="重新执行 `agy models` 并刷新下拉候选。"):
-                    clear_agy_models_cache(str(cfg.get("agy_bin", "agy")))
-                    st.rerun()
+                if model_fetched_at:
+                    st.caption(f"模型列表缓存于 {model_fetched_at}；如 AGY 已升级，请手动刷新。")
             else:
                 cfg["model"] = st.text_input(
                     "模型 model",
-                    value=current_model or "无法读取 AGY 模型列表",
+                    value=current_model or "尚未加载 AGY 模型列表",
                     disabled=True,
                     key="agy_model_fallback",
-                    help="修正 AGY CLI 路径后，页面会从 `agy models` 生成下拉候选。",
+                    help="为避免切换到 AGY 时卡顿，页面不会自动执行 `agy models`；点击下面按钮后再生成下拉候选。",
                 )
-                st.warning(f"无法读取 AGY 模型列表：{model_error or '未知错误'}")
+                if model_error:
+                    st.warning(f"上次读取 AGY 模型列表失败：{model_error}")
+                else:
+                    st.info("尚未加载 AGY 模型列表。当前模型来自配置，点击按钮后会从 `agy models` 读取严格候选。")
+            if st.button(
+                "加载/刷新 AGY 模型列表",
+                key="agy_model_refresh",
+                help="手动执行 `agy models`；本机实测约 4 秒。",
+            ):
+                with st.spinner("正在执行 `agy models` ..."):
+                    refreshed_models, refresh_error = fetch_agy_model_options(agy_bin)
+                store_agy_model_options(agy_bin, refreshed_models, refresh_error)
+                if refreshed_models:
+                    selected = current_model if current_model in refreshed_models else refreshed_models[0]
+                    st.session_state["agy_model_choice"] = selected
+                    cfg["model"] = selected
+                    st.session_state.agy_review_cfg = cfg
+                    st.rerun()
+                st.warning(f"读取 AGY 模型列表失败：{refresh_error or '未知错误'}")
             cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "10m")))
             cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)

@@ -49,7 +49,7 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 - 实验 reviewer 会写入 `json_output_mode=prompt-json`、`json_schema_valid`、`json_repair_attempted`、`json_repair_used` 等字段，明确 AGY 输出不是 CLI 级结构化 JSON。
 - 每次 AGY 调用都会保存 `prompt.txt`、`stdout.txt`、`stderr.txt`、`meta.json`；JSON repair 调用以 `purpose=json_repair` 单独留痕。
 - Workbench 的“结果中心”和“单票复盘”已增加“复评结果源”选择器，可查看 `AGY 实验` 隔离结果；默认仍显示正式 Gemini 结果。
-- Workbench 的 AGY 模型下拉候选直接解析 `agy models`，保存到配置中的 `model` 名称与 AGY CLI 模型列表严格一致。
+- Workbench 的 AGY 模型下拉候选通过手动“加载/刷新 AGY 模型列表”解析 `agy models` 后写入会话缓存，保存到配置中的 `model` 名称与 AGY CLI 模型列表严格一致。
 
 ## 迁移设计原则
 

@@ -13,6 +13,17 @@ sys.path.insert(0, str(ROOT / "workbench"))
 import app as workbench_app  # noqa: E402
 
 
+class SessionDict(dict):
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
 class WorkbenchStockViewTests(unittest.TestCase):
     def test_stock_view_rows_read_selected_history_date(self) -> None:
         old_root = workbench_app.ROOT
@@ -82,6 +93,28 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual(workbench_app.stock_view_selected_index(state, 5), 1)
         self.assertEqual(workbench_app.stock_view_selected_index({"selection": {"rows": [9]}}, 5), 0)
         self.assertEqual(workbench_app.stock_view_selected_index({"selection": {"rows": []}}, 5), 0)
+
+    def test_command_plan_uses_selected_review_backend(self) -> None:
+        old_st = workbench_app.st
+        try:
+            session = SessionDict(
+                {
+                    "run_cfg": {"reviewer": "gemini-cli"},
+                    "agy_review_cfg": {"output_dir": "data/review/agy_cli_experimental"},
+                }
+            )
+            workbench_app.st = SimpleNamespace(session_state=session)
+            gemini_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-gemini"))
+            session["run_cfg"] = {"reviewer": "agy-cli-experimental"}
+            agy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-agy"))
+        finally:
+            workbench_app.st = old_st
+
+        self.assertEqual(gemini_steps[0][0], "Gemini CLI 复评")
+        self.assertIn("agent/gemini_cli_review.py", gemini_steps[0][1])
+        self.assertEqual(agy_steps[0][0], "AGY CLI 实验复评")
+        self.assertIn("agent/agy_cli_review.py", agy_steps[0][1])
+        self.assertEqual(len(agy_steps), 1)
 
 
 if __name__ == "__main__":

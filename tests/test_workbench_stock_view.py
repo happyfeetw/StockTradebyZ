@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workbench"))
@@ -242,6 +243,43 @@ class WorkbenchStockViewTests(unittest.TestCase):
             self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "agy-cli-experimental")
         finally:
             workbench_app.st = old_st
+
+    def test_parse_agy_models_output_preserves_exact_names(self) -> None:
+        output = "\n".join(
+            [
+                "Gemini 3.5 Flash (Medium)",
+                "Gemini 3.5 Flash (High)",
+                "Claude Sonnet 4.6 (Thinking)",
+                "",
+            ]
+        )
+
+        self.assertEqual(
+            workbench_app.parse_agy_models_output(output),
+            [
+                "Gemini 3.5 Flash (Medium)",
+                "Gemini 3.5 Flash (High)",
+                "Claude Sonnet 4.6 (Thinking)",
+            ],
+        )
+
+    def test_agy_model_options_reads_cli_models(self) -> None:
+        old_cache = workbench_app.AGY_MODELS_CACHE
+        try:
+            workbench_app.AGY_MODELS_CACHE = {}
+            completed = SimpleNamespace(
+                returncode=0,
+                stdout="Gemini 3.5 Flash (Medium)\nGPT-OSS 120B (Medium)\n",
+                stderr="",
+            )
+            with patch.object(workbench_app.subprocess, "run", return_value=completed) as run_mock:
+                models, error = workbench_app.agy_model_options("agy")
+        finally:
+            workbench_app.AGY_MODELS_CACHE = old_cache
+
+        self.assertEqual(error, "")
+        self.assertEqual(models, ["Gemini 3.5 Flash (Medium)", "GPT-OSS 120B (Medium)"])
+        run_mock.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ prompt_path: agent/prompt.md
 # AGY CLI 可执行文件名或绝对路径
 agy_bin: agy
 
-# AGY 1.0.5 支持 per-call --model；可用值可通过 `agy models` 查看。
+# AGY 1.0.5 支持 per-call --model；workbench 下拉候选直接来自 `agy models`。
 model: "Gemini 3.5 Flash (Medium)"
 
 # AGY print mode 超时
@@ -28,7 +28,7 @@ timeout_seconds: 900
 # 相邻 CLI 调用间隔（秒）
 request_delay: 10
 
-# 默认只跑 1 支，避免实验 reviewer 误跑完整批次
+# 本次 AGY 实验最多复评前 N 个候选；默认只跑 1 支，避免误跑完整批次。
 max_items: 1
 
 # true: 跳过已存在的 agy-cli-experimental 单股 JSON（断点续跑）

@@ -45,6 +45,7 @@ REVIEWER_OPTIONS = {
     "gemini-api": "Gemini API Key",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
+AGY_MODELS_CACHE: dict[str, tuple[list[str], str]] = {}
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -431,6 +432,51 @@ def sync_reviewer_from_widget() -> None:
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
     run_cfg["reviewer"] = normalize_reviewer(st.session_state.get(REVIEWER_WIDGET_KEY))
     st.session_state.run_cfg = run_cfg
+
+
+def parse_agy_models_output(output: str) -> list[str]:
+    models: list[str] = []
+    seen: set[str] = set()
+    for line in output.splitlines():
+        model = line.strip()
+        if not model or model in seen:
+            continue
+        models.append(model)
+        seen.add(model)
+    return models
+
+
+def clear_agy_models_cache(agy_bin: str | None = None) -> None:
+    if agy_bin:
+        AGY_MODELS_CACHE.pop(clean_text(agy_bin) or "agy", None)
+    else:
+        AGY_MODELS_CACHE.clear()
+
+
+def agy_model_options(agy_bin: str) -> tuple[list[str], str]:
+    command = clean_text(agy_bin) or "agy"
+    if command in AGY_MODELS_CACHE:
+        return AGY_MODELS_CACHE[command]
+    try:
+        result = subprocess.run(
+            [command, "models"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - UI should surface the CLI failure.
+        return [], str(exc)
+
+    models = parse_agy_models_output(result.stdout or "")
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or f"agy models exited with {result.returncode}").strip()
+        return [], error
+    if not models:
+        return [], "agy models 没有返回模型名称"
+
+    AGY_MODELS_CACHE[command] = (models, "")
+    return models, ""
 
 
 def classic_pattern_switch_enabled(cfg: dict[str, Any]) -> bool:
@@ -1183,7 +1229,7 @@ def render_review_config() -> None:
     st.title("复评配置")
     run_cfg = st.session_state.run_cfg
     ensure_reviewer_widget_state()
-    reviewer = st.radio(
+    st.radio(
         "复评方式",
         list(REVIEWER_OPTIONS),
         format_func=lambda key: REVIEWER_OPTIONS[key],
@@ -1191,7 +1237,7 @@ def render_review_config() -> None:
         key=REVIEWER_WIDGET_KEY,
         on_change=sync_reviewer_from_widget,
     )
-    reviewer = normalize_reviewer(reviewer)
+    reviewer = normalize_reviewer(st.session_state.get(REVIEWER_WIDGET_KEY))
     run_cfg["reviewer"] = reviewer
     st.session_state.run_cfg = run_cfg
 
@@ -1239,11 +1285,43 @@ def render_review_config() -> None:
         left, right = st.columns(2, gap="large")
         with left:
             cfg["agy_bin"] = st.text_input("AGY CLI 路径", value=str(cfg.get("agy_bin", "agy")))
-            cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "Gemini 3.5 Flash (Medium)")))
+            model_options, model_error = agy_model_options(str(cfg.get("agy_bin", "agy")))
+            current_model = clean_text(cfg.get("model")) or (model_options[0] if model_options else "")
+            if model_options:
+                if current_model not in model_options:
+                    st.warning(f"当前配置模型 `{current_model}` 不在 `agy models` 列表中，已切换为 `{model_options[0]}`。")
+                    current_model = model_options[0]
+                if st.session_state.get("agy_model_choice") not in {None, *model_options}:
+                    st.session_state.pop("agy_model_choice", None)
+                cfg["model"] = st.selectbox(
+                    "模型 model",
+                    model_options,
+                    index=model_options.index(current_model),
+                    key="agy_model_choice",
+                    help="候选项直接来自 `agy models` 输出，名称不做改写。",
+                )
+                if st.button("刷新 AGY 模型列表", key="agy_model_refresh", help="重新执行 `agy models` 并刷新下拉候选。"):
+                    clear_agy_models_cache(str(cfg.get("agy_bin", "agy")))
+                    st.rerun()
+            else:
+                cfg["model"] = st.text_input(
+                    "模型 model",
+                    value=current_model or "无法读取 AGY 模型列表",
+                    disabled=True,
+                    key="agy_model_fallback",
+                    help="修正 AGY CLI 路径后，页面会从 `agy models` 生成下拉候选。",
+                )
+                st.warning(f"无法读取 AGY 模型列表：{model_error or '未知错误'}")
             cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "10m")))
             cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
-            cfg["max_items"] = st.number_input("实验复评上限", min_value=1, value=int(cfg.get("max_items", 1)))
+            cfg["max_items"] = st.number_input(
+                "实验复评上限 max_items",
+                min_value=1,
+                value=int(cfg.get("max_items", 1)),
+                help="本次 AGY 实验最多复评前 N 个候选；默认 1 用于 smoke test，避免误跑完整候选集。命令行 --limit 会覆盖此值。",
+            )
+            st.caption("实验复评上限只限制处理数量，不影响评分口径；候选顺序沿用复评器的策略优先级排序。")
         with right:
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))

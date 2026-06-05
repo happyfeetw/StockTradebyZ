@@ -49,6 +49,7 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 - 实验 reviewer 会写入 `json_output_mode=prompt-json`、`json_schema_valid`、`json_repair_attempted`、`json_repair_used` 等字段，明确 AGY 输出不是 CLI 级结构化 JSON。
 - 每次 AGY 调用都会保存 `prompt.txt`、`stdout.txt`、`stderr.txt`、`meta.json`；JSON repair 调用以 `purpose=json_repair` 单独留痕。
 - Workbench 的“结果中心”和“单票复盘”已增加“复评结果源”选择器，可查看 `AGY 实验` 隔离结果；默认仍显示正式 Gemini 结果。
+- Workbench 的 AGY 模型下拉候选直接解析 `agy models`，保存到配置中的 `model` 名称与 AGY CLI 模型列表严格一致。
 
 ## 迁移设计原则
 
@@ -134,6 +135,7 @@ agy --model "Gemini 3.5 Flash (Low)" --print-timeout 5m --print "Return exactly 
 - 调用 `agy --model <model> --print-timeout <duration> --print <prompt>`。
 - 输出结果写入实验目录 `data/review/agy_cli_experimental/{pick_date}/{code}.json`，避免和正式结果混淆。
 - 保存 prompt、stdout、stderr、returncode、duration、resolved model evidence。
+- `max_items` 表示本次实验复评最多处理前 N 个候选，默认 1 只用于 smoke test；命令行 `--limit` 可覆盖。
 - 本地校验必需字段：reasoning 字段、`scores` 五项分数、`total_score`、`signal_type`、`verdict`、`comment`。
 - 如果首次 stdout 无法提取 JSON 或 schema 不完整，启用一次 JSON repair prompt；repair 仍不合格则该股票失败并进入 pending。
 

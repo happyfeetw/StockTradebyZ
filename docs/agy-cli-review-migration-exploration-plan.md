@@ -10,7 +10,7 @@
 2. `agy` 是否能稳定返回符合现有复评契约的 JSON。
 3. `agy` 是否能明确控制或确认实际使用的 Gemini 模型，尤其是 Gemini 3.5 Flash。
 
-Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，本分支已把单股实验 reviewer 迁移到 `agy --model ... --print`。在小批量 JSON 稳定性没有通过前，`gemini-cli` 复评仍是默认生产路径，`agy` 作为显式实验 reviewer。
+Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，本分支已把单股实验 reviewer 迁移到 `agy --model ... --print`。当前 AGY 仍没有 Gemini CLI 的 `--output-format json/stream-json`，因此实验 reviewer 采用 prompt 级 JSON 输出、本地 schema 校验和一次 JSON repair。小批量 JSON 稳定性没有通过前，`gemini-cli` 复评仍是默认生产路径，`agy` 作为显式实验 reviewer。
 
 ## 当前事实与约束
 
@@ -21,9 +21,10 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 - `agy models` 可列出 `Gemini 3.5 Flash (Low/Medium/High)` 等可选模型。
 - `agy --model "Gemini 3.5 Flash (Low)" --print-timeout 2m --print ...` 非交互 JSON 探针已通过。
 - `agy --help` 未暴露等价于 Gemini CLI 的 `--output-format json` 或 `--output-format stream-json` 参数。
+- `--output-format`、`--format`、`--json`、`--output`、`--raw-output` 在 1.0.5 下均会被参数解析器拒绝。
 - AGY 1.0.1 已修复上一轮重复登录阻断；1.0.5 下仍需通过探针回归确认认证状态。
 
-这些约束意味着：本分支可以明确指定模型，但仍不能把 `agy` 设计成 `gemini --output-format stream-json` 的直接替换；输出仍必须通过 prompt 约束和 JSON 抽取校验。
+这些约束意味着：本分支可以明确指定模型，但仍不能把 `agy` 设计成 `gemini --output-format stream-json` 的直接替换；输出只能按模型正文处理，必须通过 prompt 约束、JSON 抽取、schema 校验和失败 repair 管住质量。
 
 参考资料：
 
@@ -45,13 +46,15 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 - 探针会脱敏 Google OAuth URL，并显式识别 `authentication required`、`authorization code`、`authentication timed out` 等认证阻断文本。
 - 实验 reviewer 结果写入 `data/review/agy_cli_experimental/{pick_date}`，不覆盖正式复评结果。
 - 实验 reviewer 会写入 `reviewer: agy-cli-experimental`、`model` 和 `model_evidence`。
+- 实验 reviewer 会写入 `json_output_mode=prompt-json`、`json_schema_valid`、`json_repair_attempted`、`json_repair_used` 等字段，明确 AGY 输出不是 CLI 级结构化 JSON。
+- 每次 AGY 调用都会保存 `prompt.txt`、`stdout.txt`、`stderr.txt`、`meta.json`；JSON repair 调用以 `purpose=json_repair` 单独留痕。
 
 ## 迁移设计原则
 
 - 不污染生产结果：AGY 实验结果必须写入独立目录或明确标记 `reviewer: agy-cli-experimental`，不能覆盖现有 `gemini-cli` 结果。
 - 明确模型来源：AGY 1.0.5 起通过 per-call `--model` 指定模型，settings 只作为辅助证据写入 `model_evidence`。
 - 不修改用户全局设置：脚本默认只读 `~/.gemini/antigravity-cli/settings.json`，不自动改写 `/model`、权限、sandbox 或登录状态。
-- 不依赖自由文本：即使 `agy` 没有 JSON 输出参数，也必须通过现有 JSON schema 严格解析模型正文；解析失败视为实验失败。
+- 不依赖自由文本：即使 `agy` 没有 JSON 输出参数，也必须通过现有 JSON schema 严格解析模型正文；首次失败时只允许追加一次 JSON repair，repair 后仍失败则视为实验失败。
 - 不扩大权限面：默认使用 `--sandbox` 或最小权限运行；只有探针明确需要并经过人工确认时，才允许 `--dangerously-skip-permissions`。
 - 保留现有路径：`run_all.py --reviewer gemini-cli` 和 `agent/gemini_cli_review.py` 不因本分支探索而退化。
 
@@ -124,16 +127,18 @@ agy --model "Gemini 3.5 Flash (Low)" --print-timeout 5m --print "Return exactly 
 设计：
 
 - 新增 `agent/agy_cli_review.py`，复用 `BaseReviewer` 的候选读取、图表查找、结果汇总能力。
-- 新增 `config/agy_cli_review.yaml`，配置 `agy_bin`、`model`、`print_timeout`、`request_delay`、`skip_existing`、`raw_log_dir`、`suggest_min_score`、`max_items`。
+- 新增 `config/agy_cli_review.yaml`，配置 `agy_bin`、`model`、`print_timeout`、`request_delay`、`skip_existing`、`raw_log_dir`、`suggest_min_score`、`max_items`、`json_repair_enabled`。
 - 构造 prompt 时复用 `agent/prompt.md` 和现有 JSON 输出契约。
 - 调用 `agy --model <model> --print-timeout <duration> --print <prompt>`。
 - 输出结果写入实验目录 `data/review/agy_cli_experimental/{pick_date}/{code}.json`，避免和正式结果混淆。
 - 保存 prompt、stdout、stderr、returncode、duration、resolved model evidence。
+- 本地校验必需字段：reasoning 字段、`scores` 五项分数、`total_score`、`signal_type`、`verdict`、`comment`。
+- 如果首次 stdout 无法提取 JSON 或 schema 不完整，启用一次 JSON repair prompt；repair 仍不合格则该股票失败并进入 pending。
 
 验收：
 
 - 单股复评能输出现有 schema 兼容 JSON。
-- 输出包含 `code`、`reviewer`、`model`、`model_evidence`。
+- 输出包含 `code`、`reviewer`、`model`、`model_evidence`、`json_output_mode`、`json_schema_valid`。
 - 失败不会覆盖现有 `data/review/{pick_date}/{code}.json`。
 
 已验证：
@@ -145,7 +150,35 @@ python3 agent/agy_cli_review.py --limit 1 \
   --output-dir data/review/agy_cli_experimental
 ```
 
-结果：单股 `300475` 成功输出 `reviewer=agy-cli-experimental`、`total_score=2.7`、`verdict=FAIL`，并生成实验汇总。
+结果：单股 `300475` 成功输出 `reviewer=agy-cli-experimental`、`total_score=2.7`、`verdict=FAIL`，并生成实验汇总。后续 hardening 增加了本地 schema 校验和一次 JSON repair，结果会额外携带 prompt-json 元数据。
+
+Hardening 后回归验证：
+
+```bash
+python3 agent/agy_cli_review.py --limit 1 \
+  --model "Gemini 3.5 Flash (Medium)" \
+  --output-dir data/review/agy_cli_contract_smoke
+```
+
+结果：单股 `300802_brick` 成功输出 `reviewer=agy-cli-experimental`、`json_output_mode=prompt-json`、`json_schema_valid=true`、`json_repair_attempted=false`、`json_repair_used=false`、`total_score=4.6`、`verdict=PASS`。
+
+### Phase 3.5：Prompt JSON 契约加固（已实现）
+
+目标：在 AGY 没有 `--output-format` 的情况下，尽量接近可运维的结构化输出契约。
+
+当前实现：
+
+- 复评 prompt 末尾追加明确的 JSON 输出契约，禁止 Markdown、前后缀和解释文字。
+- 首次 stdout 先经过 `BaseReviewer.extract_json()` 抽取，再做本地 schema 校验。
+- schema 校验覆盖必需 reasoning 字段、五项分数、`total_score`、`signal_type`、`verdict` 和 `comment`。
+- 失败时发起一次 `json_repair` 调用，要求只修复上一段输出，不重新分析图表。
+- repair 成功的结果写入 `json_repair_attempted=true`、`json_repair_used=true` 和 `json_repair_reason`。
+- repair 失败时该股票失败，不写入单股结果，避免把不可信 JSON 混入推荐。
+
+边界：
+
+- 这仍不是 AGY CLI 原生 JSON 输出；没有流式事件、usage metadata 或稳定外层结构。
+- 不读取 AGY 内部 transcript、SQLite 或 `brain/<cid>` 目录作为主路径；那些属于内部存储结构，只可作为人工排障线索。
 
 ### Phase 4：小批量与回退策略
 
@@ -187,9 +220,11 @@ python3 agent/agy_cli_review.py --limit 1 \
 | JSON 探针 | `agy --print ...` | 已通过，stdout 可解析为 JSON |
 | 图片探针 | 单图 prompt + K 线图 | 已通过，返回图像相关 JSON |
 | 单股复评 | `agent/agy_cli_review.py --limit 1` | 输出 schema 兼容结果 |
+| JSON repair | unit test / 真实 malformed stdout | 首次失败后只调用一次 repair，repair 成功才写结果 |
 | 小批量复评 | 5 支候选 | 全部成功或失败可追踪 |
 | 断点续跑 | 中断后重跑 | 已成功结果不重复 |
 | 现有 CLI 回归 | `python run_all.py --reviewer gemini-cli` | 原路径不受影响 |
+| 单元回归 | `python -m unittest discover -s tests -p 'test_*.py' -v` | 31 tests OK |
 
 ## 交付物
 

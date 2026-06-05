@@ -35,6 +35,7 @@ agy --model "Gemini 3.5 Flash (Low)" --print-timeout 2m --print 'Return exactly 
 | `--sandbox` | 存在 |
 | per-call `--model` | 存在，最小 JSON 探针已通过 |
 | `--output-format json/stream-json` | 未发现 |
+| `--format` / `--json` / `--output` / `--raw-output` | 均未发现，1.0.5 下会报 `flags provided but not defined` |
 | `agy models` | 可列出 Gemini 3.5 Flash Low/Medium/High 等模型 |
 | settings 文件 | 可读，路径为 `~/.gemini/antigravity-cli/settings.json` |
 | 非交互 JSON 探针 | `--model "Gemini 3.5 Flash (Low)"` 通过，返回严格 JSON |
@@ -57,10 +58,11 @@ AGY 1.0.1 已解除上一轮认证硬阻断；1.0.5 需要继续用探针观察�
 
 当前剩余迁移限制：
 
-- 无 `--output-format json/stream-json`，只能依赖 prompt 约束和 JSON 解析。
+- 无 `--output-format json/stream-json`，只能依赖 prompt 约束、JSON 抽取、本地 schema 校验和一次 JSON repair。
+- repair 只是模型正文修复，不是 AGY CLI 原生结构化输出；结果会标记 `json_output_mode=prompt-json`。
 - 小批量 JSON 成功率仍需用真实候选继续验证。
 
-因此当前可以进入显式实验 reviewer，并能通过 `--model` 控制模型；在 JSON 稳定性通过前，不能作为默认生产复评入口。
+因此当前可以进入显式实验 reviewer，并能通过 `--model` 控制模型；在小批量 prompt-json 稳定性通过前，不能作为默认生产复评入口。
 
 ## 下一步
 
@@ -92,6 +94,18 @@ AGY 1.0.1 已解除上一轮认证硬阻断；1.0.5 需要继续用探针观察�
    ```bash
    python3 agent/agy_cli_review.py --limit 1 --model "Gemini 3.5 Flash (Medium)"
    ```
+
+   输出结果应包含 `json_schema_valid=true`。若首次输出不合格但 repair 成功，会看到 `json_repair_attempted=true` 和 `json_repair_used=true`。
+
+   2026-06-05 hardening 后回归命令：
+
+   ```bash
+   python3 agent/agy_cli_review.py --limit 1 \
+     --model "Gemini 3.5 Flash (Medium)" \
+     --output-dir data/review/agy_cli_contract_smoke
+   ```
+
+   结果：`300802_brick` 成功，`json_output_mode=prompt-json`，`json_schema_valid=true`，`json_repair_attempted=false`，`json_repair_used=false`。
 
 5. 每次 `agy update` 后重新运行探针，重点观察 `current_run_keyring_auth_timeout_seen` 是否保持 false：
 

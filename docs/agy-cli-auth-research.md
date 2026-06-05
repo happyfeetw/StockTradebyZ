@@ -126,10 +126,10 @@ Print mode: auth timed out
 
 当前 AGY 迁移风险已收敛为一个主要风险和一个观察项：
 
-1. 输出不可结构化指定：当前未发现 `--output-format json/stream-json`，只能依赖 prompt 和后处理解析，失败率需要单独验证。
+1. 输出不可结构化指定：当前未发现 `--output-format json/stream-json`，只能依赖 prompt 级 JSON、本地 schema 校验和一次 JSON repair，失败率需要继续用小批量样本验证。
 2. 认证静默恢复需要每次升级后继续探针回归，避免历史 keyring 超时问题复发。
 
-因此，AGY CLI 已具备显式实验 reviewer 条件，并能通过 `--model` 指定 Gemini 3.5 Flash；在小批量 JSON 稳定性验证通过前，仍不作为默认生产 reviewer。实验结果必须带上 `reviewer=agy-cli-experimental`、`model` 和 `model_evidence`，并保持输出目录隔离。
+因此，AGY CLI 已具备显式实验 reviewer 条件，并能通过 `--model` 指定 Gemini 3.5 Flash；在小批量 JSON 稳定性验证通过前，仍不作为默认生产 reviewer。实验结果必须带上 `reviewer=agy-cli-experimental`、`model`、`model_evidence` 和 `json_output_mode=prompt-json`，并保持输出目录隔离。
 
 ## 当前可行策略
 

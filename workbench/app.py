@@ -1162,6 +1162,8 @@ def render_review_config() -> None:
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
             cfg["save_raw_cli_io"] = st.toggle("保存 AGY 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
+            cfg["json_repair_enabled"] = st.toggle("JSON repair", value=bool(cfg.get("json_repair_enabled", True)))
+            cfg["json_repair_prompt_max_chars"] = st.number_input("repair 原文字符上限", min_value=1000, value=int(cfg.get("json_repair_prompt_max_chars", 12000)), step=1000)
             agy_path = shutil.which(str(cfg.get("agy_bin", "agy")))
             st.caption(f"AGY CLI: {agy_path or '未找到'}")
 

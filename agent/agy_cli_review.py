@@ -44,14 +44,73 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "suggest_min_score": 4.0,
     "save_raw_cli_io": True,
     "raw_log_dir": "",
+    "json_repair_enabled": True,
+    "json_repair_prompt_max_chars": 12000,
     "settings_path": "~/.gemini/antigravity-cli/settings.json",
     "expected_model_label": "",
     "fail_on_model_mismatch": False,
     "classic_pattern_enabled": True,
 }
 
+REQUIRED_TEXT_FIELDS: tuple[str, ...] = (
+    "trend_reasoning",
+    "position_reasoning",
+    "volume_reasoning",
+    "abnormal_move_reasoning",
+    "signal_reasoning",
+    "classic_pattern_type",
+    "classic_pattern_reasoning",
+    "signal_type",
+    "verdict",
+    "comment",
+)
+REQUIRED_SCORE_FIELDS: tuple[str, ...] = (
+    "trend_structure",
+    "price_position",
+    "volume_behavior",
+    "previous_abnormal_move",
+    "classic_pattern_match",
+)
+VALID_VERDICTS = {"PASS", "WATCH", "FAIL"}
+
+JSON_OUTPUT_CONTRACT = """
+输出契约：
+1. 只能输出一个 JSON 对象，必须能被 Python json.loads 直接解析。
+2. 不要输出 Markdown 代码块、解释文字、前后缀、注释或多余字段说明。
+3. 必须包含 trend_reasoning、position_reasoning、volume_reasoning、abnormal_move_reasoning、signal_reasoning、classic_pattern_type、classic_pattern_reasoning、scores、total_score、signal_type、verdict、comment。
+4. scores 必须包含 trend_structure、price_position、volume_behavior、previous_abnormal_move、classic_pattern_match，且分数必须是 0 到 5 的数字。
+5. verdict 只能是 PASS、WATCH 或 FAIL。
+""".strip()
+
+JSON_SCHEMA_EXAMPLE = """
+{
+  "trend_reasoning": "string",
+  "position_reasoning": "string",
+  "volume_reasoning": "string",
+  "abnormal_move_reasoning": "string",
+  "signal_reasoning": "string",
+  "classic_pattern_type": "string",
+  "classic_pattern_reasoning": "string",
+  "scores": {
+    "trend_structure": 1,
+    "price_position": 1,
+    "volume_behavior": 1,
+    "previous_abnormal_move": 1,
+    "classic_pattern_match": 1
+  },
+  "total_score": 1.0,
+  "signal_type": "string",
+  "verdict": "WATCH",
+  "comment": "一句中文交易员点评"
+}
+""".strip()
+
 
 class AgyCliError(RuntimeError):
+    pass
+
+
+class AgyCliJsonContractError(AgyCliError):
     pass
 
 
@@ -67,6 +126,8 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
     for key in ("candidates", "kline_dir", "output_dir", "prompt_path"):
         config[key] = _resolve_cfg_path(config[key])
     config["settings_path"] = _resolve_cfg_path(config["settings_path"], base_dir=Path.home())
+    config["json_repair_enabled"] = bool(config.get("json_repair_enabled", True))
+    config["json_repair_prompt_max_chars"] = int(config.get("json_repair_prompt_max_chars", 12000))
     return config
 
 
@@ -143,6 +204,17 @@ class AgyCliReviewer(BaseReviewer):
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        half = max(1, max_chars // 2)
+        return (
+            text[:half]
+            + "\n\n...[TRUNCATED_FOR_JSON_REPAIR]...\n\n"
+            + text[-half:]
+        )
+
+    @staticmethod
     def _chart_ref_for_agy(source: Path) -> str:
         return f"@{source.resolve().as_posix()}"
 
@@ -156,7 +228,7 @@ class AgyCliReviewer(BaseReviewer):
             f"{strategy_line}"
             f"日线图：{chart_ref}\n\n"
             "请读取上面的日线图，严格按照评分规则完成复评。"
-            "只输出一个 JSON 对象，不要输出 Markdown、解释文字或额外字段。"
+            f"\n\n{JSON_OUTPUT_CONTRACT}"
         )
 
     def _build_command(self, day_chart: Path, prompt_text: str) -> list[str]:
@@ -173,8 +245,15 @@ class AgyCliReviewer(BaseReviewer):
             cmd[1:1] = ["--model", self.model]
         return cmd
 
-    def _run_agy(self, *, code: str, day_chart: Path, prompt_text: str) -> subprocess.CompletedProcess[str]:
-        raw_dir = self._next_raw_call_dir(code)
+    def _run_agy(
+        self,
+        *,
+        code: str,
+        day_chart: Path,
+        prompt_text: str,
+        purpose: str = "review",
+    ) -> subprocess.CompletedProcess[str]:
+        raw_dir = self._next_raw_call_dir(f"{code}_{purpose}")
         cmd = self._build_command(day_chart, prompt_text)
         started_at = datetime.now()
         started_monotonic = time.monotonic()
@@ -188,6 +267,7 @@ class AgyCliReviewer(BaseReviewer):
                     "started_at": started_at.isoformat(timespec="seconds"),
                     "command": cmd,
                     "code": code,
+                    "purpose": purpose,
                     "image_path": str(day_chart),
                     "print_timeout": self.print_timeout,
                     "timeout_seconds": self.timeout_seconds,
@@ -225,6 +305,7 @@ class AgyCliReviewer(BaseReviewer):
                     "elapsed_seconds": round(time.monotonic() - started_monotonic, 3),
                     "command": cmd,
                     "code": code,
+                    "purpose": purpose,
                     "image_path": str(day_chart),
                     "exit_code": result.returncode,
                     "model": self.model,
@@ -235,6 +316,81 @@ class AgyCliReviewer(BaseReviewer):
             )
         return result
 
+    @staticmethod
+    def _numeric_score(value: Any) -> float | None:
+        return BaseReviewer._numeric_score(value)
+
+    def _validate_review_payload(self, payload: dict[str, Any], *, code: str, strategy: str) -> None:
+        errors: list[str] = []
+        for field in REQUIRED_TEXT_FIELDS:
+            value = payload.get(field)
+            if not isinstance(value, str):
+                errors.append(f"{field} 缺失或不是字符串")
+
+        scores = payload.get("scores")
+        if not isinstance(scores, dict):
+            errors.append("scores 缺失或不是对象")
+        else:
+            for field in REQUIRED_SCORE_FIELDS:
+                if field not in scores:
+                    errors.append(f"scores.{field} 缺失")
+                    continue
+                if self._numeric_score(scores.get(field)) is None:
+                    errors.append(f"scores.{field} 不是 0 到 5 的数字")
+
+        if self._numeric_score(payload.get("total_score")) is None:
+            errors.append("total_score 缺失或不是 0 到 5 的数字")
+
+        verdict = str(payload.get("verdict") or "").strip().upper()
+        if verdict not in VALID_VERDICTS:
+            errors.append("verdict 必须是 PASS、WATCH 或 FAIL")
+
+        payload_code = str(payload.get("code") or "").strip()
+        if payload_code and payload_code != code:
+            errors.append(f"code 不匹配：输出 {payload_code}，期望 {code}")
+
+        payload_strategy = str(payload.get("strategy") or "").strip()
+        if payload_strategy and strategy and payload_strategy != strategy:
+            errors.append(f"strategy 不匹配：输出 {payload_strategy}，期望 {strategy}")
+
+        if errors:
+            raise AgyCliJsonContractError("; ".join(errors))
+
+    def _parse_review_payload(self, text: str, *, code: str, strategy: str) -> dict[str, Any]:
+        try:
+            parsed = self.extract_json(text)
+        except Exception as exc:  # noqa: BLE001 - turn parser detail into reviewer contract error
+            raise AgyCliJsonContractError(f"无法从 AGY 输出提取合法 JSON：{exc}") from exc
+        self._validate_review_payload(parsed, code=code, strategy=strategy)
+        return parsed
+
+    def _build_json_repair_prompt(
+        self,
+        *,
+        code: str,
+        strategy: str,
+        original_output: str,
+        error: Exception,
+    ) -> str:
+        max_chars = int(self.config.get("json_repair_prompt_max_chars", 12000))
+        clipped_output = self._truncate_text(original_output, max_chars)
+        strategy_line = f"候选策略：{strategy}\n" if strategy else ""
+        return (
+            "你上一次输出没有通过本地 JSON 契约校验。"
+            "不要重新分析图表，不要改变已有交易判断；只把上一段输出修复为一个合法 JSON 对象。\n\n"
+            f"股票代码：{code}\n"
+            f"{strategy_line}"
+            f"校验错误：{error}\n\n"
+            f"{JSON_OUTPUT_CONTRACT}\n\n"
+            "必须使用以下 JSON 形状，保留原输出中已有的判断和分数；"
+            "如果某个必需字段确实缺失，用保守中文说明补齐，不要添加解释文字。\n\n"
+            f"{JSON_SCHEMA_EXAMPLE}\n\n"
+            "上一段原始输出如下：\n"
+            "```text\n"
+            f"{clipped_output}\n"
+            "```"
+        )
+
     def review_stock(self, code: str, day_chart: Path, prompt: str, strategy: str = "") -> dict:
         prompt_text = self._build_prompt(
             code=code,
@@ -242,16 +398,56 @@ class AgyCliReviewer(BaseReviewer):
             prompt=prompt,
             strategy=strategy,
         )
-        result = self._run_agy(code=code, day_chart=day_chart, prompt_text=prompt_text)
+        result = self._run_agy(code=code, day_chart=day_chart, prompt_text=prompt_text, purpose="review")
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
             raise AgyCliError(f"AGY CLI 退出码 {result.returncode}: {combined_output[:1200]}")
-        parsed = self.extract_json(result.stdout)
+
+        repair_attempted = False
+        repair_used = False
+        repair_reason = ""
+        try:
+            parsed = self._parse_review_payload(result.stdout, code=code, strategy=strategy)
+        except AgyCliJsonContractError as exc:
+            repair_reason = str(exc)
+            if not self.config.get("json_repair_enabled", True):
+                raise
+            repair_attempted = True
+            repair_prompt = self._build_json_repair_prompt(
+                code=code,
+                strategy=strategy,
+                original_output=result.stdout,
+                error=exc,
+            )
+            repair_result = self._run_agy(
+                code=code,
+                day_chart=day_chart,
+                prompt_text=repair_prompt,
+                purpose="json_repair",
+            )
+            repair_output = f"{repair_result.stdout}\n{repair_result.stderr}".strip()
+            if repair_result.returncode != 0:
+                raise AgyCliError(f"AGY JSON 修复调用退出码 {repair_result.returncode}: {repair_output[:1200]}")
+            try:
+                parsed = self._parse_review_payload(repair_result.stdout, code=code, strategy=strategy)
+            except AgyCliJsonContractError as repair_exc:
+                raise AgyCliError(
+                    "AGY 输出 JSON 修复失败："
+                    f"初次错误：{repair_reason}；修复后错误：{repair_exc}"
+                ) from repair_exc
+            repair_used = True
+
         parsed["code"] = code
         parsed["strategy"] = strategy or parsed.get("strategy", "")
         parsed["reviewer"] = "agy-cli-experimental"
         parsed["model"] = self.model
         parsed["model_evidence"] = self.model_evidence
+        parsed["json_output_mode"] = "prompt-json"
+        parsed["json_schema_valid"] = True
+        parsed["json_repair_attempted"] = repair_attempted
+        parsed["json_repair_used"] = repair_used
+        if repair_reason:
+            parsed["json_repair_reason"] = repair_reason[:500]
         return parsed
 
     def run(self) -> None:

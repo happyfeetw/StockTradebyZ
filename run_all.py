@@ -14,6 +14,7 @@ run_all.py
     python run_all.py --skip-fetch     # 跳过行情下载（已有最新数据时）
     python run_all.py --start-from 3   # 从第 3 步开始（跳过前两步）
     python run_all.py --reviewer gemini-api
+    python run_all.py --reviewer agy-cli-experimental
     python run_all.py --skip-review
 """
 from __future__ import annotations
@@ -30,17 +31,32 @@ PYTHON = sys.executable  # 与当前进程同一个 Python 解释器
 
 def _run(step_name: str, cmd: list[str]) -> None:
     """运行子进程，失败时终止整个流程。"""
-    print(f"\n{'='*60}")
-    print(f"[步骤] {step_name}")
-    print(f"  命令: {' '.join(cmd)}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print(f"[步骤] {step_name}", flush=True)
+    print(f"  命令: {' '.join(cmd)}", flush=True)
+    print(f"{'='*60}", flush=True)
     result = subprocess.run(cmd, cwd=str(ROOT))
     if result.returncode != 0:
         print(f"\n[ERROR] 步骤「{step_name}」返回非零退出码 {result.returncode}，流程已中止。")
         sys.exit(result.returncode)
 
 
-def _print_recommendations() -> None:
+def _reviewer_script(reviewer: str) -> Path:
+    scripts = {
+        "gemini-cli": ROOT / "agent" / "gemini_cli_review.py",
+        "gemini-api": ROOT / "agent" / "gemini_review.py",
+        "agy-cli-experimental": ROOT / "agent" / "agy_cli_review.py",
+    }
+    return scripts[reviewer]
+
+
+def _suggestion_file_for_reviewer(pick_date: str, reviewer: str) -> Path:
+    if reviewer == "agy-cli-experimental":
+        return ROOT / "data" / "review" / "agy_cli_experimental" / pick_date / "suggestion.json"
+    return ROOT / "data" / "review" / pick_date / "suggestion.json"
+
+
+def _print_recommendations(reviewer: str) -> None:
     """读取最新 suggestion.json，打印推荐购买的股票。"""
     candidates_file = ROOT / "data" / "candidates" / "candidates_latest.json"
     if not candidates_file.exists():
@@ -54,7 +70,7 @@ def _print_recommendations() -> None:
         print("[ERROR] candidates_latest.json 中未设置 pick_date。")
         return
 
-    suggestion_file = ROOT / "data" / "review" / pick_date / "suggestion.json"
+    suggestion_file = _suggestion_file_for_reviewer(pick_date, reviewer)
     if not suggestion_file.exists():
         print(f"[ERROR] 找不到评分汇总文件：{suggestion_file}")
         return
@@ -110,9 +126,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--reviewer",
-        choices=("gemini-cli", "gemini-api"),
+        choices=("gemini-cli", "gemini-api", "agy-cli-experimental"),
         default="gemini-cli",
-        help="第 4 步复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY",
+        help="第 4 步复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY；agy-cli-experimental 使用隔离实验输出",
     )
     parser.add_argument(
         "--skip-review",
@@ -147,16 +163,11 @@ def main() -> None:
             [PYTHON, str(ROOT / "dashboard" / "export_kline_charts.py")],
         )
 
-    # ── 步骤 4：Gemini 图表分析 ──────────────────────────────────────
+    # ── 步骤 4：图表复评 ─────────────────────────────────────────────
     if start <= 4 and not args.skip_review:
-        reviewer_script = (
-            ROOT / "agent" / "gemini_cli_review.py"
-            if args.reviewer == "gemini-cli"
-            else ROOT / "agent" / "gemini_review.py"
-        )
         _run(
-            f"4/4  Gemini 图表分析（{args.reviewer}）",
-            [PYTHON, str(reviewer_script)],
+            f"4/4  图表复评（{args.reviewer}）",
+            [PYTHON, str(_reviewer_script(args.reviewer))],
         )
     elif args.skip_review:
         print("\n[INFO] 已跳过 Gemini 复评步骤。")
@@ -164,7 +175,7 @@ def main() -> None:
     # ── 步骤 5：打印推荐结果 ─────────────────────────────────────────
     print(f"\n{'='*60}")
     print("[步骤] 5/5  推荐购买的股票")
-    _print_recommendations()
+    _print_recommendations(args.reviewer)
 
 
 if __name__ == "__main__":

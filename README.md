@@ -154,10 +154,12 @@ python agent/gemini_cli_review.py
 ~~~bash
 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
 python agent/gemini_review.py --config config/gemini_review.yaml
+python agent/agy_cli_review.py --config config/agy_cli_review.yaml --limit 1
 ~~~
 
 Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
 旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
+AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认输出到隔离目录 `data/review/agy_cli_experimental`。
 
 读取候选与图表后，输出：
 
@@ -194,6 +196,8 @@ Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.ya
 - daily_request_budget：项目侧每日请求预算
 - skip_existing：是否断点续跑
 - suggest_min_score：推荐分数门槛
+
+AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前可用 `run_all.py --reviewer agy-cli-experimental` 或工作台复评配置中的 “AGY CLI（实验）” 显式运行；默认复评方式仍是 Gemini CLI。
 
 ---
 

@@ -87,7 +87,17 @@ def review_step(run_dir: Path, reviewer: str) -> tuple[str, list[str]]:
     python = sys.executable
     if reviewer == "gemini-api":
         return "Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")]
+    if reviewer == "agy-cli-experimental":
+        return "AGY CLI 实验复评", [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")]
     return "Gemini CLI 复评", [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")]
+
+
+def reviewer_uses_isolated_output(run_dir: Path, reviewer: str) -> bool:
+    if reviewer != "agy-cli-experimental":
+        return False
+    cfg = load_yaml(run_dir / "agy_cli_review.yaml")
+    output_dir = str(cfg.get("output_dir") or "").strip()
+    return output_dir not in {"data/review", "./data/review"}
 
 
 def latest_candidate_pick_date() -> str:
@@ -210,9 +220,16 @@ def run_stock_selection_if_needed(
             return actual_signal_date
 
         run_command(f"导出 {label} 候选图表", [sys.executable, "dashboard/export_kline_charts.py"])
-        review_name, review_cmd = review_step(run_dir, str(run_options.get("reviewer") or "gemini-cli"))
+        reviewer = str(run_options.get("reviewer") or "gemini-cli")
+        review_name, review_cmd = review_step(run_dir, reviewer)
         run_command(review_name, review_cmd)
         completed_strategies.append(strategy)
+        if reviewer_uses_isolated_output(run_dir, reviewer):
+            print(
+                "[INFO] AGY 实验复评输出位于隔离目录，本轮跳过正式归档。",
+                flush=True,
+            )
+            continue
         run_command(
             f"归档 {strategy_labels(completed_strategies)} 结果",
             [sys.executable, "-m", "pipeline.archive_results", "--run-id", run_dir.name],

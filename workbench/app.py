@@ -198,6 +198,7 @@ def environment_status() -> list[tuple[str, str, str]]:
     return [
         ("Tushare", "ok" if token else "err", "已配置" if token else "未配置"),
         ("Gemini CLI", "ok" if shutil.which("gemini") else "warn", "已安装" if shutil.which("gemini") else "未找到"),
+        ("AGY CLI", "ok" if shutil.which("agy") else "warn", "已安装" if shutil.which("agy") else "未找到"),
         ("Gemini API", "ok" if gemini_api_key else "warn", "已配置" if gemini_api_key else "未配置"),
         ("原始数据", "ok" if csv_count(raw_dir) else "warn", f"{csv_count(raw_dir)} 个 CSV"),
         ("最新候选", "ok" if candidates else "warn", candidates.get("pick_date", "无")),
@@ -224,6 +225,8 @@ def ensure_session_state() -> None:
         st.session_state.review_cfg = load_yaml(ROOT / "config" / "gemini_cli_review.yaml")
     if "api_review_cfg" not in st.session_state:
         st.session_state.api_review_cfg = load_yaml(ROOT / "config" / "gemini_review.yaml")
+    if "agy_review_cfg" not in st.session_state:
+        st.session_state.agy_review_cfg = load_yaml(ROOT / "config" / "agy_cli_review.yaml")
     if "trading_cfg" not in st.session_state:
         st.session_state.trading_cfg = trading_config(ROOT / "config" / "paper_trading.yaml")
     if "run_cfg" not in st.session_state:
@@ -394,6 +397,7 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
@@ -409,6 +413,7 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
             "rules_config": str(run_dir / "rules_preselect.yaml"),
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
             "gemini_api_config": str(run_dir / "gemini_review.yaml"),
+            "agy_cli_config": str(run_dir / "agy_cli_review.yaml"),
             "run_options": str(run_dir / "run_options.json"),
             "commands": [
                 {"name": name, "cmd": cmd}
@@ -428,6 +433,7 @@ def create_paper_run_snapshot() -> Path:
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
     write_yaml(run_dir / "paper_trading.yaml", st.session_state.trading_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     command = [sys.executable, "-m", "paper_trading.daily_flow", "--run-dir", str(run_dir)]
@@ -445,6 +451,7 @@ def create_paper_run_snapshot() -> Path:
             "rules_config": str(run_dir / "rules_preselect.yaml"),
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
             "gemini_api_config": str(run_dir / "gemini_review.yaml"),
+            "agy_cli_config": str(run_dir / "agy_cli_review.yaml"),
             "paper_trading_config": str(run_dir / "paper_trading.yaml"),
             "run_options": str(run_dir / "run_options.json"),
             "commands": [{"name": "模拟交易每日流程", "cmd": command}],
@@ -463,11 +470,19 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
     if reviewer == "gemini-api":
         review_step = ("Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")])
+    elif reviewer == "agy-cli-experimental":
+        review_step = (
+            "AGY CLI 实验复评",
+            [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")],
+        )
     else:
         review_step = (
             "Gemini CLI 复评",
             [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")],
         )
+    agy_output_dir = clean_text(st.session_state.get("agy_review_cfg", {}).get("output_dir"))
+    agy_isolated = reviewer == "agy-cli-experimental" and agy_output_dir not in {"data/review", "./data/review"}
+    archive_step = [] if agy_isolated else [("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id])]
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
     preselect_cmd += ["--merge-same-date"]
     if clean_text(run_cfg.get("pick_date")):
@@ -483,13 +498,13 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             review_step,
-            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
+            *archive_step,
         ],
         "跳过抓取": [
             ("量化初选", preselect_cmd),
             ("导出候选图表", [python, "dashboard/export_kline_charts.py"]),
             review_step,
-            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
+            *archive_step,
         ],
         "初选+导出图表": [
             ("量化初选", preselect_cmd),
@@ -506,7 +521,7 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
         ],
         "只跑复评": [
             review_step,
-            ("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id]),
+            *archive_step,
         ],
     }
     return plans[run_mode]
@@ -1078,6 +1093,7 @@ def render_review_config() -> None:
     run_cfg = st.session_state.run_cfg
     reviewer_options = {
         "gemini-cli": "Gemini CLI（本机登录）",
+        "agy-cli-experimental": "AGY CLI（实验）",
         "gemini-api": "Gemini API Key",
     }
     current_reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
@@ -1130,6 +1146,44 @@ def render_review_config() -> None:
             unsafe_allow_html=True,
         )
         st.session_state.api_review_cfg = cfg
+        return
+
+    if reviewer == "agy-cli-experimental":
+        cfg = st.session_state.agy_review_cfg
+        left, right = st.columns(2, gap="large")
+        with left:
+            cfg["agy_bin"] = st.text_input("AGY CLI 路径", value=str(cfg.get("agy_bin", "agy")))
+            cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "Gemini 3.5 Flash (Medium)")))
+            cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "10m")))
+            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
+            cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
+            cfg["max_items"] = st.number_input("实验复评上限", min_value=1, value=int(cfg.get("max_items", 1)))
+        with right:
+            cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
+            cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
+            cfg["save_raw_cli_io"] = st.toggle("保存 AGY 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
+            agy_path = shutil.which(str(cfg.get("agy_bin", "agy")))
+            st.caption(f"AGY CLI: {agy_path or '未找到'}")
+
+        with st.expander("经典图形匹配", expanded=True):
+            cfg = render_classic_pattern_config(cfg, "agy_review")
+
+        with st.expander("路径配置"):
+            p1, p2 = st.columns(2)
+            with p1:
+                cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
+                cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
+                cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
+            with p2:
+                cfg["output_dir"] = st.text_input("实验复评输出目录", value=str(cfg.get("output_dir", "data/review/agy_cli_experimental")))
+                cfg["raw_log_dir"] = st.text_input("AGY 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/agy_cli_runs。")
+                cfg["settings_path"] = st.text_input("AGY settings 路径", value=str(cfg.get("settings_path", "~/.gemini/antigravity-cli/settings.json")))
+
+        st.markdown(
+            "<div class='panel-note'>AGY 路径为实验 reviewer；默认输出到隔离目录，不覆盖正式 Gemini CLI 复评结果。若输出目录不是 <code>data/review</code>，运行计划会跳过归档步骤。</div>",
+            unsafe_allow_html=True,
+        )
+        st.session_state.agy_review_cfg = cfg
         return
 
     cfg = st.session_state.review_cfg

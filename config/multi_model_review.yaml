@@ -18,6 +18,26 @@ suggest_min_score: 4.0
 batch_size: 5
 skip_existing: true
 classic_pattern_enabled: true
+group_review_by_strategy: true
+
+review_scoring:
+  enabled: true
+  common_gate:
+    enabled: true
+    pass_min: 3.0
+    watch_min: 2.4
+    hard_fail_below: 2.0
+    watch_caps_strategy_pass: true
+  strategy_profiles:
+    b1:
+      pass_min: 4.0
+      watch_min: 3.3
+    b2:
+      pass_min: 4.1
+      watch_min: 3.4
+    brick:
+      pass_min: 4.2
+      watch_min: 3.5
 
 reviewers:
   - enabled: true

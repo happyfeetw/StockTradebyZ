@@ -78,6 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "skip_existing": True,
     "suggest_min_score": 4.0,
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 RATE_LIMIT_MARKERS = (
@@ -474,6 +475,7 @@ class GeminiCliReviewer(BaseReviewer):
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def _build_prompt(self, *, code: str, chart_ref: str, prompt: str, strategy: str = "") -> str:
+        prompt = self.prompt_for_strategy(prompt, strategy)
         strategy_line = f"来源策略：{strategy}\n" if strategy else ""
         return (
             f"{prompt}\n\n"
@@ -486,6 +488,7 @@ class GeminiCliReviewer(BaseReviewer):
         )
 
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        prompt = self.prompt_for_strategy(prompt, self.batch_strategy(items))
         lines = [
             f"{prompt}",
             "",
@@ -1201,6 +1204,22 @@ class GeminiCliReviewer(BaseReviewer):
                 print(f"[{i}/{len(candidates)}] {review_key} — 图片 token 估算失败，跳过：{exc}")
                 failed_codes.append(review_key)
                 continue
+
+            if review_batch and self.batch_strategy(review_batch) != strategy:
+                results, failed, reason = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                review_batch_estimated_tokens = ESTIMATED_PROMPT_TOKEN_RESERVE
+                if reason:
+                    stop_reason = reason
+                    break
+                ok, next_reason = self._can_start_request()
+                if not ok:
+                    stop_reason = next_reason
+                    print(f"[STOP] {next_reason}")
+                    break
+                time.sleep(self.config.get("request_delay", 10))
 
             if review_batch and review_batch_estimated_tokens + item_estimated_tokens > MAX_CONTEXT_TOKENS:
                 print(

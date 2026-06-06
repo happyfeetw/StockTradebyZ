@@ -128,6 +128,93 @@ class ReviewBatchConsensusTests(unittest.TestCase):
             self.assertTrue(decisions[0]["all_models_recommended"])
             self.assertEqual(decisions[1]["missing_models"], ["model/b"])
 
+    def test_build_consensus_uses_strategy_profile_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            candidates_path = project / "batches" / "batch1" / "candidates.json"
+            write_json(
+                candidates_path,
+                {
+                    "pick_date": "2026-06-01",
+                    "candidates": [
+                        {"code": "000001", "strategy": "brick"},
+                    ],
+                },
+            )
+            manifest = {
+                "batch_id": "batch1",
+                "pick_date": "2026-06-01",
+                "candidates_file": str(candidates_path),
+            }
+            out_a = project / "runs" / "a"
+            out_b = project / "runs" / "b"
+            write_json(out_a / "2026-06-01" / "000001_brick.json", review_payload("000001", "brick", 4.1))
+            write_json(out_b / "2026-06-01" / "000001_brick.json", review_payload("000001", "brick", 4.3))
+
+            summary = build_consensus(
+                batch_manifest=manifest,
+                run_specs=[
+                    {"model_key": "model/a", "reviewer": "a", "model": "a", "output_dir": str(out_a)},
+                    {"model_key": "model/b", "reviewer": "b", "model": "b", "output_dir": str(out_b)},
+                ],
+                output_dir=project / "consensus" / "batch1",
+                threshold=4.0,
+            )
+
+            decisions = json.loads((project / "consensus" / "batch1" / "decisions.json").read_text(encoding="utf-8"))
+            self.assertTrue(summary["complete"])
+            self.assertEqual(decisions[0]["strategy_pass_min"], 4.2)
+            self.assertEqual(decisions[0]["recommended_count"], 1)
+            self.assertEqual(decisions[0]["decision_bucket"], "single_model_recommended")
+            self.assertEqual(decisions[0]["consensus_verdict"], "WATCH")
+
+    def test_build_consensus_accepts_direct_review_scoring_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            candidates_path = project / "batches" / "batch1" / "candidates.json"
+            write_json(
+                candidates_path,
+                {
+                    "pick_date": "2026-06-01",
+                    "candidates": [
+                        {"code": "000001", "strategy": "brick"},
+                    ],
+                },
+            )
+            manifest = {
+                "batch_id": "batch1",
+                "pick_date": "2026-06-01",
+                "candidates_file": str(candidates_path),
+            }
+            out_a = project / "runs" / "a"
+            out_b = project / "runs" / "b"
+            write_json(out_a / "2026-06-01" / "000001_brick.json", review_payload("000001", "brick", 4.3))
+            write_json(out_b / "2026-06-01" / "000001_brick.json", review_payload("000001", "brick", 4.6))
+
+            build_consensus(
+                batch_manifest=manifest,
+                run_specs=[
+                    {"model_key": "model/a", "reviewer": "a", "model": "a", "output_dir": str(out_a)},
+                    {"model_key": "model/b", "reviewer": "b", "model": "b", "output_dir": str(out_b)},
+                ],
+                output_dir=project / "consensus" / "batch1",
+                threshold=4.0,
+                review_scoring={
+                    "strategy_profiles": {
+                        "brick": {
+                            "pass_min": 4.5,
+                            "watch_min": 3.8,
+                        }
+                    }
+                },
+            )
+
+            decisions = json.loads((project / "consensus" / "batch1" / "decisions.json").read_text(encoding="utf-8"))
+            self.assertEqual(decisions[0]["strategy_pass_min"], 4.5)
+            self.assertEqual(decisions[0]["strategy_watch_min"], 3.8)
+            self.assertEqual(decisions[0]["recommended_count"], 1)
+            self.assertEqual(decisions[0]["decision_bucket"], "single_model_recommended")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -96,8 +96,11 @@ def prepare_reviewer_config(
         "batch_size": int(spec.get("batch_size") or multi_cfg.get("batch_size") or base_cfg.get("batch_size") or 5),
         "skip_existing": bool(multi_cfg.get("skip_existing", base_cfg.get("skip_existing", True))),
         "classic_pattern_enabled": bool(multi_cfg.get("classic_pattern_enabled", base_cfg.get("classic_pattern_enabled", True))),
+        "group_review_by_strategy": bool(multi_cfg.get("group_review_by_strategy", base_cfg.get("group_review_by_strategy", True))),
         "max_items": multi_cfg.get("max_items", None),
     }
+    if "review_scoring" in multi_cfg:
+        runtime_cfg["review_scoring"] = multi_cfg["review_scoring"]
     if spec.get("model"):
         runtime_cfg["model"] = spec["model"]
     if spec.get("output_format"):
@@ -235,6 +238,7 @@ def main() -> int:
         run_specs=run_specs,
         output_dir=consensus_root / str(manifest["batch_id"]),
         threshold=float(multi_cfg.get("suggest_min_score", 4.0)),
+        review_scoring=multi_cfg.get("review_scoring"),
     )
     write_json(run_specs_path, {"batch_id": manifest["batch_id"], "reviewers": run_specs, "summary": summary})
 

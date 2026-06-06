@@ -10,7 +10,7 @@
 - AGY CLI: `Gemini 3.5 Flash (High)`
 - Codex CLI: `gpt-5.5`，`reasoning_effort=high`，标准速度路径
 
-推荐阈值统一沿用现有口径：`total_score >= 4.0`。评分归一化仍由 `BaseReviewer.normalize_scores()` 完成。
+推荐阈值不再使用单一全局 `4.0`。评分归一化仍由 `BaseReviewer.normalize_scores()` 完成，但现在分成三层：公共条件 gate、策略 profile 评分、共识汇总评分。
 
 ## Flow
 
@@ -18,9 +18,10 @@
 flowchart TD
     A["candidates_latest.json"] --> B["freeze_review_batch"]
     B --> C["data/review_batches/{batch_id}/candidates.json"]
-    C --> D1["Gemini CLI reviewer"]
-    C --> D2["AGY CLI reviewer"]
-    C --> D3["Codex CLI reviewer"]
+    C --> S["按 strategy 分组"]
+    S --> D1["Gemini CLI reviewer"]
+    S --> D2["AGY CLI reviewer"]
+    S --> D3["Codex CLI reviewer"]
     D1 --> E1["data/review_runs/{batch_id}/gemini-cli/{model}/{pick_date}"]
     D2 --> E2["data/review_runs/{batch_id}/agy-cli-experimental/{model}/{pick_date}"]
     D3 --> E3["data/review_runs/{batch_id}/codex-cli/{model}/{pick_date}"]
@@ -51,7 +52,32 @@ python agent/multi_model_review.py --config config/multi_model_review.yaml
 python agent/multi_model_review.py --run-dir data/runs/<run_id>
 ```
 
-多模型之间并行执行；每个工具内部按批串行处理，默认 `batch_size: 5`。各 reviewer 写入独立目录，不覆盖正式 Gemini CLI 结果。
+多模型之间并行执行；每个工具内部按批串行处理，默认 `batch_size: 5`。各 reviewer 会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。各 reviewer 写入独立目录，不覆盖正式 Gemini CLI 结果。
+
+## Strategy Review Scoring
+
+评分体系主要落在 AI 复评环节，前置 `fetch_kline -> run_preselect -> code+strategy 去重` 不改变。
+
+复评分三层：
+
+1. 公共条件 gate：先判断所有战法共用的交易前提。活跃市值/大盘择时由用户人工确认，本轮不由模型臆测；图中可判断的白黄线资格、止损可控、上方压力、量价健康和买后纪律必须评分。公共 gate 硬否决时，最终不能 PASS。
+2. 策略 profile：公共 gate 通过后，按来源策略解释同名字段和权重。`b1` 偏回调建仓质量，`b2` 偏确认强度和量价接管，`brick` 偏绿转红后 1-4 日超短延续。
+3. 本地归一化：模型仍输出统一 JSON，但 `total_score`、`verdict` 会由本地程序按 `config/multi_model_review.yaml` 中的 `review_scoring` 和默认 profile 重算。
+
+默认策略门槛：
+
+| strategy | PASS | WATCH | 目标 |
+|---|---:|---:|---|
+| `b1` | 4.0 | 3.3 | 回调建仓是否值得跟踪/试仓 |
+| `b2` | 4.1 | 3.4 | B1 后确认是否足够强 |
+| `brick` | 4.2 | 3.5 | 绿转红后 1-4 日延续概率 |
+
+每个复评 JSON 会保留：
+
+- `common_gate`: 公共条件分数、硬否决和说明。
+- `strategy_score`: 按策略 profile 算出的专项分。
+- `common_gate_score` / `common_gate_status`: 公共条件结果。
+- `score_profile`: 本次使用的策略权重和门槛。
 
 Codex reviewer 通过非交互命令执行：
 
@@ -77,6 +103,16 @@ codex --ask-for-approval never exec \
 - `data/review_consensus/{batch_id}/details.csv`
 
 `details` 是模型粒度明细，可按策略和模型查看分数、结论、推荐意见。`decisions` 是股票粒度结果集，按 `code+strategy` 对齐所有模型。
+
+共识推荐判断同样按策略 profile，而不是全局 `score >= 4.0`。例如 `brick` 默认需要 `total_score >= 4.2` 且 `verdict=PASS` 才算该模型推荐。
+
+`decisions` 额外输出：
+
+- `average_score`: 已完成模型的平均分。
+- `agreement_score`: 推荐模型占比换算到 0-5。
+- `consensus_score`: `average_score * 0.70 + agreement_score * 0.30`。
+- `consensus_verdict`: `PASS` / `WATCH` / `FAIL` / `INCOMPLETE`。
+- `strategy_pass_min` / `strategy_watch_min`: 当前策略门槛。
 
 决策分组：
 

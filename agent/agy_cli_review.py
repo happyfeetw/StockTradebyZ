@@ -52,6 +52,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "expected_model_label": "",
     "fail_on_model_mismatch": False,
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 REQUIRED_TEXT_FIELDS: tuple[str, ...] = (
@@ -79,9 +80,10 @@ JSON_OUTPUT_CONTRACT = """
 输出契约：
 1. 只能输出一个 JSON 对象，必须能被 Python json.loads 直接解析。
 2. 不要输出 Markdown 代码块、解释文字、前后缀、注释或多余字段说明。
-3. 必须包含 trend_reasoning、position_reasoning、volume_reasoning、abnormal_move_reasoning、signal_reasoning、classic_pattern_type、classic_pattern_reasoning、scores、total_score、signal_type、verdict、comment。
-4. scores 必须包含 trend_structure、price_position、volume_behavior、previous_abnormal_move、classic_pattern_match，且分数必须是 0 到 5 的数字。
-5. verdict 只能是 PASS、WATCH 或 FAIL。
+3. 必须包含 trend_reasoning、position_reasoning、volume_reasoning、abnormal_move_reasoning、signal_reasoning、classic_pattern_type、classic_pattern_reasoning、common_gate、scores、total_score、signal_type、verdict、comment。
+4. common_gate.scores 必须包含 trend_qualification、support_stop_loss_control、overhead_room、volume_health、post_entry_discipline，且分数必须是 0 到 5 的数字。
+5. scores 必须包含 trend_structure、price_position、volume_behavior、previous_abnormal_move、classic_pattern_match，且分数必须是 0 到 5 的数字。
+6. verdict 只能是 PASS、WATCH 或 FAIL。
 """.strip()
 
 JSON_SCHEMA_EXAMPLE = """
@@ -93,6 +95,18 @@ JSON_SCHEMA_EXAMPLE = """
   "signal_reasoning": "string",
   "classic_pattern_type": "string",
   "classic_pattern_reasoning": "string",
+  "common_gate": {
+    "scores": {
+      "trend_qualification": 1,
+      "support_stop_loss_control": 1,
+      "overhead_room": 1,
+      "volume_health": 1,
+      "post_entry_discipline": 1
+    },
+    "hard_veto": false,
+    "hard_veto_reasons": [],
+    "comment": "string"
+  },
   "scores": {
     "trend_structure": 1,
     "price_position": 1,
@@ -257,6 +271,7 @@ class AgyCliReviewer(BaseReviewer):
         return f"@{source.resolve().as_posix()}"
 
     def _build_prompt(self, *, code: str, day_chart: Path, prompt: str, strategy: str = "") -> str:
+        prompt = self.prompt_for_strategy(prompt, strategy)
         chart_ref = self._chart_ref_for_agy(day_chart)
         strategy_line = f"候选策略：{strategy}\n" if strategy else ""
         return (
@@ -270,6 +285,7 @@ class AgyCliReviewer(BaseReviewer):
         )
 
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        prompt = self.prompt_for_strategy(prompt, self.batch_strategy(items))
         lines = [
             prompt,
             "",
@@ -699,6 +715,14 @@ class AgyCliReviewer(BaseReviewer):
                 print(f"[{i}/{len(candidates)}] {review_key} — 缺少日线图，跳过。")
                 failed_codes.append(review_key)
                 continue
+
+            if review_batch and self.batch_strategy(review_batch) != strategy:
+                results, failed = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                if i < len(candidates):
+                    time.sleep(float(self.config.get("request_delay", 10)))
 
             review_batch.append(
                 {

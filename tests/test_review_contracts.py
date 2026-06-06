@@ -46,6 +46,7 @@ class ReviewContractTests(unittest.TestCase):
             "strategy": "b1",
             "review_key": "000001_b1",
             "total_score": 4.2,
+            "verdict": "PASS",
             "classic_pattern_type": "b1_type1_low_breakout_pullback",
             "classic_pattern_reasoning": "缩量回踩匹配第一类",
             "scores": {
@@ -65,7 +66,7 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(recommendation["classic_pattern_match"], 5.0)
         self.assertEqual(recommendation["classic_pattern_reasoning"], "缩量回踩匹配第一类")
 
-    def test_classic_pattern_strategy_adds_bonus_to_base_score(self) -> None:
+    def test_strategy_profile_weights_classic_pattern_as_strategy_score(self) -> None:
         result = {
             "strategy": "brick",
             "total_score": 1.0,
@@ -83,10 +84,12 @@ class ReviewContractTests(unittest.TestCase):
 
         self.assertEqual(normalized["scores"]["previous_abnormal_move"], 2.0)
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 5.0)
-        self.assertEqual(normalized["total_score"], 3.9)
-        self.assertEqual(normalized["verdict"], "WATCH")
+        self.assertEqual(normalized["strategy_score"], 4.25)
+        self.assertEqual(normalized["total_score"], 4.25)
+        self.assertEqual(normalized["verdict"], "PASS")
+        self.assertEqual(normalized["common_gate_status"], "PASS")
 
-    def test_classic_pattern_non_match_does_not_lower_base_score(self) -> None:
+    def test_strategy_profile_non_match_lowers_strategy_score(self) -> None:
         result = {
             "strategy": "b2",
             "total_score": 1.0,
@@ -102,9 +105,9 @@ class ReviewContractTests(unittest.TestCase):
         enabled = BaseReviewer.normalize_scores(deepcopy(result), {"classic_pattern_enabled": True})
         disabled = BaseReviewer.normalize_scores(deepcopy(result), {"classic_pattern_enabled": False})
 
-        self.assertEqual(enabled["total_score"], 4.0)
+        self.assertEqual(enabled["total_score"], 3.55)
         self.assertEqual(disabled["total_score"], 4.0)
-        self.assertEqual(enabled["verdict"], "PASS")
+        self.assertEqual(enabled["verdict"], "WATCH")
 
     def test_classic_pattern_active_zero_is_normalized_to_no_bonus(self) -> None:
         result = {
@@ -122,7 +125,8 @@ class ReviewContractTests(unittest.TestCase):
         normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
 
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 1.0)
-        self.assertEqual(normalized["total_score"], 4.0)
+        self.assertEqual(normalized["total_score"], 3.7)
+        self.assertEqual(normalized["verdict"], "WATCH")
 
     def test_hard_volume_veto_keeps_score_below_recommendation_threshold(self) -> None:
         result = {
@@ -141,8 +145,42 @@ class ReviewContractTests(unittest.TestCase):
 
         self.assertLess(normalized["total_score"], 4.0)
         self.assertEqual(normalized["verdict"], "FAIL")
-        self.assertEqual(normalized["score_before_hard_veto"], 4.2)
-        self.assertEqual(normalized["hard_veto_reason"], "volume_behavior <= 1")
+        self.assertEqual(normalized["score_before_hard_veto"], 4.0)
+        self.assertIn("common_gate.volume_health <= 1", normalized["hard_veto_reason"])
+        self.assertIn("strategy_profile.volume_behavior <= 1", normalized["hard_veto_reason"])
+
+    def test_common_gate_hard_veto_caps_strategy_pass(self) -> None:
+        result = {
+            "strategy": "b1",
+            "total_score": 5.0,
+            "common_gate": {
+                "scores": {
+                    "trend_qualification": 5,
+                    "support_stop_loss_control": 5,
+                    "overhead_room": 5,
+                    "volume_health": 5,
+                    "post_entry_discipline": 5,
+                },
+                "hard_veto": True,
+                "hard_veto_reasons": ["上方标准压力过近"],
+                "comment": "公共条件不通过",
+            },
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 5,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 5,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
+
+        self.assertEqual(normalized["strategy_score"], 5.0)
+        self.assertLess(normalized["total_score"], 4.0)
+        self.assertEqual(normalized["verdict"], "FAIL")
+        self.assertEqual(normalized["common_gate_status"], "FAIL")
+        self.assertIn("上方标准压力过近", normalized["hard_veto_reason"])
 
     def test_composite_strategy_uses_base_four_dimension_weight(self) -> None:
         result = {
@@ -195,8 +233,8 @@ class ReviewContractTests(unittest.TestCase):
         disabled = BaseReviewer.normalize_scores(deepcopy(brick_result), {"classic_pattern_enabled": False})
         unknown = BaseReviewer.normalize_scores(deepcopy(unknown_result), {"classic_pattern_enabled": True})
 
-        self.assertEqual(enabled["total_score"], 3.9)
-        self.assertEqual(disabled["total_score"], 3.5)
+        self.assertEqual(enabled["total_score"], 4.25)
+        self.assertEqual(disabled["total_score"], 3.75)
         self.assertEqual(disabled["scores"]["classic_pattern_match"], 0.0)
         self.assertEqual(unknown["total_score"], 3.8)
         self.assertEqual(unknown["scores"]["classic_pattern_match"], 0.0)

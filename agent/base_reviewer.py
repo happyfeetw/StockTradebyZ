@@ -15,16 +15,23 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from review_scoring import (
+    BASE_SCORE_WEIGHTS,
+    CLASSIC_PATTERN_BONUS_WEIGHT,
+    build_prompt_context,
+    normalize_common_gate,
+    numeric_score,
+    scoring_config,
+    strategy_profile,
+    strategy_thresholds,
+    weighted_score,
+)
+
 
 class BaseReviewer:
     DEFAULT_CLASSIC_PATTERN_STRATEGIES: tuple[str, ...] = ("b1", "b2", "brick")
-    BASE_SCORE_WEIGHTS: dict[str, float] = {
-        "trend_structure": 0.20,
-        "price_position": 0.20,
-        "volume_behavior": 0.30,
-        "previous_abnormal_move": 0.30,
-    }
-    CLASSIC_PATTERN_BONUS_WEIGHT: float = 0.10
+    BASE_SCORE_WEIGHTS: dict[str, float] = dict(BASE_SCORE_WEIGHTS)
+    CLASSIC_PATTERN_BONUS_WEIGHT: float = CLASSIC_PATTERN_BONUS_WEIGHT
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -122,7 +129,8 @@ class BaseReviewer:
     def order_candidates_for_review(self, candidates_data: dict) -> list[dict]:
         candidates = list(candidates_data.get("candidates") or [])
         priority = self.review_priority_strategies(candidates_data)
-        if not priority:
+        group_by_strategy = bool(self.config.get("group_review_by_strategy", True))
+        if not priority and not group_by_strategy:
             return candidates
 
         priority_index = {strategy: index for index, strategy in enumerate(priority)}
@@ -131,10 +139,16 @@ class BaseReviewer:
             key=lambda item: (
                 str(item[1].get("strategy") or "") not in priority_index,
                 priority_index.get(str(item[1].get("strategy") or ""), len(priority_index)),
+                str(item[1].get("strategy") or "") if group_by_strategy else "",
                 item[0],
             )
         )
         return [candidate for _, candidate in indexed_candidates]
+
+    @staticmethod
+    def batch_strategy(items: list[dict[str, Any]]) -> str:
+        strategies = {str(item.get("strategy") or "") for item in items}
+        return strategies.pop() if len(strategies) == 1 else ""
 
     @staticmethod
     def extract_json(text: str) -> dict:
@@ -153,13 +167,7 @@ class BaseReviewer:
 
     @staticmethod
     def _numeric_score(value: Any) -> float | None:
-        try:
-            score = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not 0 <= score <= 5:
-            return None
-        return score
+        return numeric_score(value)
 
     @classmethod
     def classic_pattern_score(cls, result: dict) -> float | None:
@@ -169,7 +177,23 @@ class BaseReviewer:
         return cls._numeric_score(scores.get("classic_pattern_match"))
 
     @classmethod
-    def normalize_scores(cls, result: dict, classic_pattern_config: Any = None) -> dict:
+    def strategy_thresholds(cls, strategy: str, config: Any = None, fallback: float = 4.0) -> tuple[float, float]:
+        return strategy_thresholds(strategy, config, fallback=fallback)
+
+    @classmethod
+    def is_result_recommended(cls, result: dict, min_score: float = 4.0, config: Any = None) -> bool:
+        score = cls._numeric_score(result.get("total_score"))
+        if score is None:
+            return False
+        strategy = str(result.get("strategy") or "")
+        pass_min, _ = cls.strategy_thresholds(strategy, config, fallback=min_score)
+        return score >= pass_min and str(result.get("verdict") or "").upper() == "PASS"
+
+    def prompt_for_strategy(self, prompt: str, strategy: str = "") -> str:
+        return prompt + build_prompt_context(strategy, self.config)
+
+    @classmethod
+    def _normalize_legacy_scores(cls, result: dict, classic_pattern_config: Any = None) -> dict:
         strategy = str(result.get("strategy") or "").strip().lower()
         scores = result.get("scores") or {}
         if not isinstance(scores, dict):
@@ -225,6 +249,93 @@ class BaseReviewer:
 
         return result
 
+    @classmethod
+    def normalize_scores(cls, result: dict, classic_pattern_config: Any = None) -> dict:
+        strategy = str(result.get("strategy") or "").strip().lower()
+        profile = strategy_profile(strategy, classic_pattern_config)
+        if not profile:
+            return cls._normalize_legacy_scores(result, classic_pattern_config)
+
+        scores = result.get("scores") or {}
+        if not isinstance(scores, dict):
+            return result
+
+        has_classic_pattern = cls.has_classic_pattern_review(strategy, classic_pattern_config)
+        normalized_scores: dict[str, float] = {}
+        required_fields = set(profile.get("weights") or {})
+        required_fields.update(cls.BASE_SCORE_WEIGHTS)
+        for key in required_fields:
+            score = cls._numeric_score(scores.get(key))
+            if score is None:
+                return result
+            if key == "classic_pattern_match" and has_classic_pattern:
+                score = max(1.0, score)
+            normalized_scores[key] = score
+
+        merged_scores = {**scores, **normalized_scores}
+        if not has_classic_pattern:
+            merged_scores["classic_pattern_match"] = 0.0
+            result["classic_pattern_type"] = "none"
+            result["classic_pattern_reasoning"] = ""
+
+        common_gate = normalize_common_gate({**result, "scores": merged_scores}, classic_pattern_config)
+        result["common_gate"] = common_gate
+        result["common_gate_score"] = common_gate["score"]
+        result["common_gate_status"] = common_gate["status"]
+
+        disabled_fields = set()
+        if not has_classic_pattern:
+            disabled_fields.add("classic_pattern_match")
+        strategy_score = weighted_score(merged_scores, profile.get("weights") or {}, disabled_fields=disabled_fields)
+        if strategy_score is None:
+            return result
+        strategy_score = round(float(strategy_score), 2)
+        result["scores"] = merged_scores
+        result["strategy_score"] = strategy_score
+        result["score_profile"] = {
+            "strategy": strategy,
+            "label": profile.get("label", strategy),
+            "pass_min": float(profile.get("pass_min", 4.0)),
+            "watch_min": float(profile.get("watch_min", 3.2)),
+            "weights": profile.get("weights") or {},
+        }
+
+        hard_veto_reasons = list(common_gate.get("hard_veto_reasons") or [])
+        for field, max_score in (profile.get("hard_veto_score_max") or {}).items():
+            if str(field) in disabled_fields:
+                continue
+            score = cls._numeric_score(merged_scores.get(str(field)))
+            if score is not None and score <= float(max_score):
+                hard_veto_reasons.append(f"strategy_profile.{field} <= {float(max_score):g}")
+
+        pass_min = float(profile.get("pass_min", 4.0))
+        watch_min = float(profile.get("watch_min", 3.2))
+        total_score = strategy_score
+        verdict = "FAIL"
+        if hard_veto_reasons:
+            if total_score >= pass_min:
+                result["score_before_hard_veto"] = total_score
+            total_score = min(total_score, pass_min - 0.01)
+            verdict = "FAIL"
+        elif common_gate["status"] == "FAIL":
+            total_score = min(total_score, pass_min - 0.01)
+            verdict = "FAIL"
+        elif common_gate["status"] == "WATCH" and scoring_config(classic_pattern_config)["common_gate"].get("watch_caps_strategy_pass", True):
+            result["score_before_common_gate_cap"] = total_score
+            total_score = min(total_score, pass_min - 0.01)
+            verdict = "WATCH" if total_score >= watch_min else "FAIL"
+        elif total_score >= pass_min:
+            verdict = "PASS"
+        elif total_score >= watch_min:
+            verdict = "WATCH"
+
+        result["total_score"] = round(max(0.0, min(5.0, total_score)), 2)
+        result["verdict"] = verdict
+        if hard_veto_reasons:
+            result["hard_veto_reason"] = "; ".join(hard_veto_reasons)
+            result["hard_veto_reasons"] = hard_veto_reasons
+        return result
+
     def generate_suggestion(
         self,
         pick_date: str,
@@ -239,8 +350,9 @@ class BaseReviewer:
             if candidate.get("code")
         }
         result_by_key = {self.result_review_key(result): result for result in all_results if result.get("code")}
-        passed = [r for r in all_results if r.get("total_score", 0) >= min_score]
-        excluded = [self.result_review_key(r) for r in all_results if r.get("total_score", 0) < min_score]
+        config = getattr(self, "config", {})
+        passed = [r for r in all_results if self.is_result_recommended(r, min_score, config)]
+        excluded = [self.result_review_key(r) for r in all_results if not self.is_result_recommended(r, min_score, config)]
 
         strategy_counts: dict[str, dict[str, int]] = {}
         for candidate in candidates:
@@ -259,7 +371,7 @@ class BaseReviewer:
                 counts["pending"] += 1
                 continue
             counts["reviewed"] += 1
-            if result.get("total_score", 0) >= min_score:
+            if self.is_result_recommended(result, min_score, config):
                 counts["recommended"] += 1
             else:
                 counts["excluded"] += 1
@@ -274,6 +386,9 @@ class BaseReviewer:
                 "review_key": self.result_review_key(r),
                 "verdict": r.get("verdict", ""),
                 "total_score": r.get("total_score", 0),
+                "strategy_score": r.get("strategy_score", ""),
+                "common_gate_score": r.get("common_gate_score", ""),
+                "common_gate_status": r.get("common_gate_status", ""),
                 "signal_type": r.get("signal_type", ""),
                 "classic_pattern_type": r.get("classic_pattern_type", ""),
                 "classic_pattern_match": self.classic_pattern_score(r),
@@ -286,6 +401,7 @@ class BaseReviewer:
         return {
             "date": pick_date,
             "min_score_threshold": min_score,
+            "score_threshold_mode": "strategy_profile",
             "total_reviewed": len(all_results),
             "recommendations": recommendations,
             "excluded": excluded,

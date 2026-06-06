@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "skip_existing": False,
     "suggest_min_score": 4.0,
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 
@@ -100,6 +101,7 @@ class GeminiReviewer(BaseReviewer):
         """
         调用 Gemini API，对单支股票进行图表分析，返回解析后的 JSON 结果。
         """
+        prompt = self.prompt_for_strategy(prompt, strategy)
         strategy_line = f"来源策略：{strategy}\n" if strategy else ""
         user_text = (
             f"股票代码：{code}\n"

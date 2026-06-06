@@ -55,6 +55,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fallback_to_single_on_batch_error": True,
     "retry_backoff_seconds": [30, 90],
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 REQUIRED_TEXT_FIELDS: tuple[str, ...] = (
@@ -200,6 +201,7 @@ def output_schema(item_count: int) -> dict[str, Any]:
             "signal_reasoning",
             "classic_pattern_type",
             "classic_pattern_reasoning",
+            "common_gate",
             "scores",
             "total_score",
             "signal_type",
@@ -216,6 +218,34 @@ def output_schema(item_count: int) -> dict[str, Any]:
             "signal_reasoning": {"type": "string"},
             "classic_pattern_type": {"type": "string"},
             "classic_pattern_reasoning": {"type": "string"},
+            "common_gate": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["scores", "hard_veto", "hard_veto_reasons", "comment"],
+                "properties": {
+                    "scores": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "trend_qualification",
+                            "support_stop_loss_control",
+                            "overhead_room",
+                            "volume_health",
+                            "post_entry_discipline",
+                        ],
+                        "properties": {
+                            "trend_qualification": {"type": "number", "minimum": 0, "maximum": 5},
+                            "support_stop_loss_control": {"type": "number", "minimum": 0, "maximum": 5},
+                            "overhead_room": {"type": "number", "minimum": 0, "maximum": 5},
+                            "volume_health": {"type": "number", "minimum": 0, "maximum": 5},
+                            "post_entry_discipline": {"type": "number", "minimum": 0, "maximum": 5},
+                        },
+                    },
+                    "hard_veto": {"type": "boolean"},
+                    "hard_veto_reasons": {"type": "array", "items": {"type": "string"}},
+                    "comment": {"type": "string"},
+                },
+            },
             "scores": {
                 "type": "object",
                 "required": list(REQUIRED_SCORE_FIELDS),
@@ -291,6 +321,7 @@ class CodexCliReviewer(BaseReviewer):
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        prompt = self.prompt_for_strategy(prompt, self.batch_strategy(items))
         lines = [
             prompt,
             "",
@@ -626,6 +657,14 @@ class CodexCliReviewer(BaseReviewer):
                 print(f"[{i}/{len(candidates)}] {item_key} — 缺少日线图，跳过。")
                 failed_codes.append(item_key)
                 continue
+
+            if review_batch and self.batch_strategy(review_batch) != strategy:
+                results, failed = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                if i < len(candidates) and float(self.config.get("request_delay", 1)) > 0:
+                    time.sleep(float(self.config.get("request_delay", 1)))
 
             review_batch.append(
                 {

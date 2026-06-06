@@ -61,6 +61,14 @@ def _load_raw(code: str, raw_dir: Path) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
+def _truncate_to_pick_date(df: pd.DataFrame, pick_date: str) -> pd.DataFrame:
+    """只保留选股基准日及之前的 K 线，避免历史复评看到未来走势。"""
+    if df.empty or not pick_date:
+        return df
+    target = pd.to_datetime(pick_date)
+    return df[df["date"] <= target].sort_values("date").reset_index(drop=True)
+
+
 # ── 导出单张图 ────────────────────────────────────────────────────────────────
 
 def _export_fig(fig, out_path: Path, width: int, height: int) -> None:
@@ -247,8 +255,9 @@ def main() -> None:
 
     for code in codes:
         df_raw = _load_raw(code, raw_dir)
+        df_raw = _truncate_to_pick_date(df_raw, export_date)
         if df_raw.empty:
-            print(f"[SKIP] {code}  — 无日线数据")
+            print(f"[SKIP] {code}  — 无不晚于 {export_date} 的日线数据")
             skip_count += 1
             continue
 

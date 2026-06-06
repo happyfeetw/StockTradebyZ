@@ -39,6 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "print_timeout": "10m",
     "timeout_seconds": 900,
     "request_delay": 10,
+    "batch_size": 5,
     "max_items": 1,
     "skip_existing": True,
     "suggest_min_score": 4.0,
@@ -46,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "raw_log_dir": "",
     "json_repair_enabled": True,
     "json_repair_prompt_max_chars": 12000,
+    "fallback_to_single_on_batch_error": True,
     "settings_path": "~/.gemini/antigravity-cli/settings.json",
     "expected_model_label": "",
     "fail_on_model_mismatch": False,
@@ -128,7 +130,43 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
     config["settings_path"] = _resolve_cfg_path(config["settings_path"], base_dir=Path.home())
     config["json_repair_enabled"] = bool(config.get("json_repair_enabled", True))
     config["json_repair_prompt_max_chars"] = int(config.get("json_repair_prompt_max_chars", 12000))
+    config["batch_size"] = max(1, int(config.get("batch_size", 5)))
+    config["request_delay"] = float(config.get("request_delay", 10))
     return config
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3 and lines[0].startswith("```") and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _extract_json_array(text: str) -> list[dict[str, Any]]:
+    payload = _strip_json_fence(text)
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        start = payload.find("[")
+        end = payload.rfind("]") + 1
+        if start == -1 or end == 0:
+            raise ValueError(f"未能在 AGY 输出中找到 JSON 数组:\n{payload[:1200]}")
+        parsed = json.loads(payload[start:end])
+
+    if isinstance(parsed, dict):
+        for key in ("reviews", "results", "items", "stocks"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                parsed = value
+                break
+
+    if not isinstance(parsed, list):
+        raise ValueError(f"AGY 输出不是 JSON 数组:\n{payload[:1200]}")
+    if not all(isinstance(item, dict) for item in parsed):
+        raise ValueError(f"AGY 输出数组中存在非对象元素:\n{payload[:1200]}")
+    return parsed
 
 
 def _read_model_evidence(settings_path: Path, configured_model: str) -> dict[str, Any]:
@@ -230,6 +268,32 @@ class AgyCliReviewer(BaseReviewer):
             "请读取上面的日线图，严格按照评分规则完成复评。"
             f"\n\n{JSON_OUTPUT_CONTRACT}"
         )
+
+    def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        lines = [
+            prompt,
+            "",
+            "---",
+            "",
+            f"本批需要复评 {len(items)} 支股票。每张日线图与股票代码严格一一对应：",
+        ]
+        for index, item in enumerate(items, 1):
+            lines.append(f"{index}. 股票代码：{item['code']}")
+            if item.get("strategy"):
+                lines.append(f"   候选策略：{item['strategy']}")
+            lines.append(f"   日线图：{self._chart_ref_for_agy(Path(item['day_chart']))}")
+        lines.extend(
+            [
+                "",
+                "请分别读取每张日线图，严格按照评分规则逐只完成复评。",
+                "本批输出格式覆盖上方单股输出格式：只能输出一个 JSON 数组，不要输出 Markdown、解释文字或额外字段。",
+                "数组长度必须等于本批股票数量，顺序必须与上方股票列表一致。",
+                "数组中每个对象必须包含 code 字段，并保留单股输出格式里的所有字段。",
+                "",
+                JSON_OUTPUT_CONTRACT.replace("只能输出一个 JSON 对象", "数组中每个元素都是一个 JSON 对象"),
+            ]
+        )
+        return "\n".join(lines)
 
     def _build_command(self, day_chart: Path, prompt_text: str) -> list[str]:
         cmd = [
@@ -450,6 +514,152 @@ class AgyCliReviewer(BaseReviewer):
             parsed["json_repair_reason"] = repair_reason[:500]
         return parsed
 
+    def review_batch(self, items: list[dict[str, Any]], prompt: str) -> list[dict[str, Any]]:
+        if len(items) == 1:
+            item = items[0]
+            return [
+                self.review_stock(
+                    code=str(item["code"]),
+                    day_chart=Path(item["day_chart"]),
+                    prompt=prompt,
+                    strategy=str(item.get("strategy") or ""),
+                )
+            ]
+
+        prompt_text = self._build_batch_prompt(items=items, prompt=prompt)
+        result = self._run_agy(
+            code="-".join(str(item["code"]) for item in items),
+            day_chart=Path(items[0]["day_chart"]),
+            prompt_text=prompt_text,
+            purpose=f"batch_{len(items)}",
+        )
+        combined_output = f"{result.stdout}\n{result.stderr}".strip()
+        if result.returncode != 0:
+            raise AgyCliError(f"AGY CLI 批量调用退出码 {result.returncode}: {combined_output[:1200]}")
+
+        try:
+            parsed_items = _extract_json_array(result.stdout)
+        except Exception as exc:  # noqa: BLE001 - caller may split and fallback to single.
+            raise AgyCliJsonContractError(f"AGY 批量输出无法解析为 JSON 数组：{exc}") from exc
+        if len(parsed_items) != len(items):
+            raise AgyCliJsonContractError(f"AGY 批量返回数量不匹配：期望 {len(items)}，实际 {len(parsed_items)}")
+
+        results: list[dict[str, Any]] = []
+        for item, parsed in zip(items, parsed_items):
+            code = str(item["code"])
+            strategy = str(item.get("strategy") or "")
+            self._validate_review_payload(parsed, code=code, strategy=strategy)
+            parsed["code"] = code
+            parsed["strategy"] = strategy or parsed.get("strategy", "")
+            parsed["reviewer"] = "agy-cli-experimental"
+            parsed["model"] = self.model
+            parsed["model_evidence"] = self.model_evidence
+            parsed["json_output_mode"] = "prompt-json-array"
+            parsed["json_schema_valid"] = True
+            parsed["json_repair_attempted"] = False
+            parsed["json_repair_used"] = False
+            results.append(parsed)
+        return results
+
+    @staticmethod
+    def _codes(items: list[dict[str, Any]]) -> list[str]:
+        return [str(item.get("review_key") or item["code"]) for item in items]
+
+    @staticmethod
+    def _format_result_status(result: dict[str, Any]) -> str:
+        return f"verdict={result.get('verdict', '?')}, score={result.get('total_score', '?')}"
+
+    def _write_stock_result(self, item: dict[str, Any], result: dict[str, Any]) -> None:
+        self._write_json(Path(item["out_file"]), result)
+
+    def _review_batch_items(
+        self,
+        items: list[dict[str, Any]],
+        total_candidates: int,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        if not items:
+            return [], []
+        if len(items) == 1 or int(self.config.get("batch_size", 1)) == 1:
+            return self._review_single_items(items, total_candidates)
+
+        start_index = items[0]["index"]
+        end_index = items[-1]["index"]
+        codes = self._codes(items)
+        print(
+            f"[{start_index}-{end_index}/{total_candidates}] "
+            f"{','.join(codes)} — AGY 批量分析 {len(items)} 张图 ...",
+            end=" ",
+            flush=True,
+        )
+        try:
+            results = self.review_batch(items=items, prompt=self.prompt)
+            for item, result in zip(items, results):
+                result["strategy"] = item.get("strategy") or result.get("strategy", "")
+                result["review_key"] = item.get("review_key") or self.review_key(
+                    str(result.get("code") or item["code"]),
+                    str(result.get("strategy") or ""),
+                )
+                result = self.normalize_scores(result, self.config)
+                self._write_stock_result(item, result)
+            print("完成")
+            for result in results:
+                print(f"    {result['code']} — {self._format_result_status(result)}")
+            return results, []
+        except Exception as exc:  # noqa: BLE001 - fallback below decides how to continue.
+            print(f"批量失败 — {exc}")
+
+        if not self.config.get("fallback_to_single_on_batch_error", True):
+            return [], codes
+
+        delay = float(self.config.get("request_delay", 10))
+        if len(items) > 2:
+            mid = len(items) // 2
+            print(f"[INFO] AGY 批量失败，拆分为 {mid}+{len(items) - mid} 继续。")
+            if delay:
+                time.sleep(delay)
+            left_results, left_failed = self._review_batch_items(items[:mid], total_candidates)
+            if delay:
+                time.sleep(delay)
+            right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
+            return left_results + right_results, left_failed + right_failed
+
+        print("[INFO] AGY 小批量失败，降级为逐只复评。")
+        return self._review_single_items(items, total_candidates)
+
+    def _review_single_items(
+        self,
+        items: list[dict[str, Any]],
+        total_candidates: int,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        all_results: list[dict[str, Any]] = []
+        failed_codes: list[str] = []
+        for offset, item in enumerate(items):
+            code = str(item["code"])
+            strategy = str(item.get("strategy") or "")
+            review_key = str(item.get("review_key") or self.review_key(code, strategy))
+            print(f"[{item['index']}/{total_candidates}] {review_key} — AGY 正在分析 ...", end=" ", flush=True)
+            try:
+                result = self.review_stock(
+                    code=code,
+                    day_chart=Path(item["day_chart"]),
+                    prompt=self.prompt,
+                    strategy=strategy,
+                )
+                result["strategy"] = strategy or result.get("strategy", "")
+                result["review_key"] = review_key
+                result = self.normalize_scores(result, self.config)
+                self._write_stock_result(item, result)
+                all_results.append(result)
+                print(f"完成 — {self._format_result_status(result)}")
+            except Exception as exc:  # noqa: BLE001 - collect failed code and continue
+                print(f"失败 — {exc}")
+                failed_codes.append(review_key)
+
+            if offset < len(items) - 1:
+                time.sleep(float(self.config.get("request_delay", 10)))
+
+        return all_results, failed_codes
+
     def run(self) -> None:
         candidates_data = self.load_candidates(Path(self.config["candidates"]))
         pick_date: str = candidates_data["pick_date"]
@@ -457,7 +667,8 @@ class AgyCliReviewer(BaseReviewer):
         max_items = self.config.get("max_items")
         if max_items is not None:
             candidates = candidates[: int(max_items)]
-        print(f"[INFO] pick_date={pick_date}，AGY 实验复评股票数={len(candidates)}")
+        batch_size = int(self.config.get("batch_size", 5))
+        print(f"[INFO] pick_date={pick_date}，AGY 实验复评股票数={len(candidates)}，batch_size={batch_size}")
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -469,6 +680,7 @@ class AgyCliReviewer(BaseReviewer):
 
         all_results: list[dict[str, Any]] = []
         failed_codes: list[str] = []
+        review_batch: list[dict[str, Any]] = []
         for i, candidate in enumerate(candidates, 1):
             code = str(candidate["code"])
             strategy = str(candidate.get("strategy") or "")
@@ -488,26 +700,30 @@ class AgyCliReviewer(BaseReviewer):
                 failed_codes.append(review_key)
                 continue
 
-            print(f"[{i}/{len(candidates)}] {review_key} — AGY 正在分析 ...", end=" ", flush=True)
-            try:
-                result = self.review_stock(
-                    code=code,
-                    day_chart=day_chart,
-                    prompt=self.prompt,
-                    strategy=strategy,
-                )
-                result["strategy"] = strategy or result.get("strategy", "")
-                result["review_key"] = review_key
-                result = self.normalize_scores(result, self.config)
-                self._write_json(out_file, result)
-                all_results.append(result)
-                print(f"完成 — verdict={result.get('verdict', '?')}, score={result.get('total_score', '?')}")
-            except Exception as exc:  # noqa: BLE001 - collect failed code and continue
-                print(f"失败 — {exc}")
-                failed_codes.append(review_key)
+            review_batch.append(
+                {
+                    "index": i,
+                    "code": code,
+                    "strategy": strategy,
+                    "review_key": review_key,
+                    "day_chart": day_chart,
+                    "out_file": out_file,
+                }
+            )
+            if len(review_batch) < batch_size:
+                continue
 
+            results, failed = self._review_batch_items(review_batch, len(candidates))
+            all_results.extend(results)
+            failed_codes.extend(failed)
+            review_batch = []
             if i < len(candidates):
                 time.sleep(float(self.config.get("request_delay", 10)))
+
+        if review_batch:
+            results, failed = self._review_batch_items(review_batch, len(candidates))
+            all_results.extend(results)
+            failed_codes.extend(failed)
 
         print(f"\n[INFO] AGY 实验复评完成：成功 {len(all_results)} 支，失败/跳过 {len(failed_codes)} 支")
         if failed_codes:

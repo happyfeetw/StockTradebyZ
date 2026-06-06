@@ -204,15 +204,23 @@ class BaseReviewer:
             classic_bonus = max(0.0, classic_score - 1.0) * cls.CLASSIC_PATTERN_BONUS_WEIGHT
 
         result["scores"] = merged_scores
-        result["total_score"] = round(min(5.0, base_score + classic_bonus), 2)
+        total_score = round(min(5.0, base_score + classic_bonus), 2)
 
         if normalized_scores["volume_behavior"] <= 1:
+            if total_score >= 4.0:
+                result["score_before_hard_veto"] = total_score
+                result["hard_veto_reason"] = "volume_behavior <= 1"
+                total_score = 3.99
+            result["total_score"] = total_score
             result["verdict"] = "FAIL"
-        elif result["total_score"] >= 4.0:
+        elif total_score >= 4.0:
+            result["total_score"] = total_score
             result["verdict"] = "PASS"
-        elif result["total_score"] >= 3.2:
+        elif total_score >= 3.2:
+            result["total_score"] = total_score
             result["verdict"] = "WATCH"
         else:
+            result["total_score"] = total_score
             result["verdict"] = "FAIL"
 
         return result

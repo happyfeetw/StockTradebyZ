@@ -143,6 +143,43 @@ class AgyCliReviewerTests(unittest.TestCase):
             with self.assertRaises(agy_cli_review.AgyCliJsonContractError):
                 reviewer.review_stock("000001", chart, "prompt", strategy="brick")
 
+    def test_review_batch_parses_json_array_and_marks_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            chart1 = Path(tmp) / "000001_day.jpg"
+            chart2 = Path(tmp) / "000002_day.jpg"
+            chart1.write_bytes(b"fake")
+            chart2.write_bytes(b"fake")
+
+            def fake_run_agy(*, code: str, day_chart: Path, prompt_text: str, purpose: str = "review"):
+                self.assertEqual(purpose, "batch_2")
+                self.assertIn("JSON 数组", prompt_text)
+                return subprocess.CompletedProcess(
+                    args=["agy"],
+                    returncode=0,
+                    stdout=json.dumps(
+                        [
+                            valid_review_payload(code="000001", strategy="b1"),
+                            valid_review_payload(code="000002", strategy="brick"),
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    stderr="",
+                )
+
+            reviewer._run_agy = fake_run_agy  # type: ignore[method-assign]
+            results = reviewer.review_batch(
+                [
+                    {"code": "000001", "strategy": "b1", "day_chart": chart1},
+                    {"code": "000002", "strategy": "brick", "day_chart": chart2},
+                ],
+                "prompt",
+            )
+
+        self.assertEqual([item["code"] for item in results], ["000001", "000002"])
+        self.assertEqual(results[0]["json_output_mode"], "prompt-json-array")
+        self.assertEqual(results[1]["reviewer"], "agy-cli-experimental")
+
 
 if __name__ == "__main__":
     unittest.main()

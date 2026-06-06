@@ -31,17 +31,22 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
 HISTORY_DIR = ROOT / "data" / "history"
+CONSENSUS_DIR = ROOT / "data" / "review_consensus"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 FORMAL_REVIEW_SOURCE = "formal"
 AGY_REVIEW_SOURCE = "agy-cli-experimental"
+CODEX_REVIEW_SOURCE = "codex-cli"
 REVIEW_SOURCE_LABELS = {
     FORMAL_REVIEW_SOURCE: "正式 Gemini",
     AGY_REVIEW_SOURCE: "AGY 实验",
+    CODEX_REVIEW_SOURCE: "Codex GPT-5.5",
 }
 REVIEWER_OPTIONS = {
     "gemini-cli": "Gemini CLI（本机登录）",
     "agy-cli-experimental": "AGY CLI（实验）",
+    "codex-cli": "Codex GPT-5.5",
+    "multi-model": "多模型复评",
     "gemini-api": "Gemini API Key",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
@@ -188,9 +193,24 @@ def agy_review_base_dir() -> Path:
     return project_path(cfg.get("output_dir"), "data/review/agy_cli_experimental")
 
 
+def codex_review_base_dir() -> Path:
+    cfg: dict[str, Any] = {}
+    try:
+        session_cfg = st.session_state.get("codex_review_cfg", {})
+        if isinstance(session_cfg, dict):
+            cfg = session_cfg
+    except Exception:
+        cfg = {}
+    if not cfg:
+        cfg = load_yaml(ROOT / "config" / "codex_cli_review.yaml")
+    return project_path(cfg.get("output_dir"), "data/review/codex_cli")
+
+
 def review_base_dir(review_source: str = FORMAL_REVIEW_SOURCE) -> Path:
     if review_source == AGY_REVIEW_SOURCE:
         return agy_review_base_dir()
+    if review_source == CODEX_REVIEW_SOURCE:
+        return codex_review_base_dir()
     return ROOT / "data" / "review"
 
 
@@ -218,7 +238,7 @@ def review_source_has_data(pick_date: str, review_source: str = FORMAL_REVIEW_SO
 def review_sources_for_date(pick_date: str) -> list[str]:
     sources = [
         source
-        for source in (FORMAL_REVIEW_SOURCE, AGY_REVIEW_SOURCE)
+        for source in (FORMAL_REVIEW_SOURCE, AGY_REVIEW_SOURCE, CODEX_REVIEW_SOURCE)
         if review_source_has_data(pick_date, source)
     ]
     return sources or [FORMAL_REVIEW_SOURCE]
@@ -274,6 +294,7 @@ def environment_status() -> list[tuple[str, str, str]]:
         ("Tushare", "ok" if token else "err", "已配置" if token else "未配置"),
         ("Gemini CLI", "ok" if shutil.which("gemini") else "warn", "已安装" if shutil.which("gemini") else "未找到"),
         ("AGY CLI", "ok" if shutil.which("agy") else "warn", "已安装" if shutil.which("agy") else "未找到"),
+        ("Codex CLI", "ok" if shutil.which("codex") else "warn", "已安装" if shutil.which("codex") else "未找到"),
         ("Gemini API", "ok" if gemini_api_key else "warn", "已配置" if gemini_api_key else "未配置"),
         ("原始数据", "ok" if csv_count(raw_dir) else "warn", f"{csv_count(raw_dir)} 个 CSV"),
         ("最新候选", "ok" if candidates else "warn", candidates.get("pick_date", "无")),
@@ -302,6 +323,10 @@ def ensure_session_state() -> None:
         st.session_state.api_review_cfg = load_yaml(ROOT / "config" / "gemini_review.yaml")
     if "agy_review_cfg" not in st.session_state:
         st.session_state.agy_review_cfg = load_yaml(ROOT / "config" / "agy_cli_review.yaml")
+    if "codex_review_cfg" not in st.session_state:
+        st.session_state.codex_review_cfg = load_yaml(ROOT / "config" / "codex_cli_review.yaml")
+    if "multi_model_review_cfg" not in st.session_state:
+        st.session_state.multi_model_review_cfg = load_yaml(ROOT / "config" / "multi_model_review.yaml")
     if "trading_cfg" not in st.session_state:
         st.session_state.trading_cfg = trading_config(ROOT / "config" / "paper_trading.yaml")
     if "run_cfg" not in st.session_state:
@@ -565,6 +590,8 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
     write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
@@ -581,6 +608,8 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
             "gemini_api_config": str(run_dir / "gemini_review.yaml"),
             "agy_cli_config": str(run_dir / "agy_cli_review.yaml"),
+            "codex_cli_config": str(run_dir / "codex_cli_review.yaml"),
+            "multi_model_config": str(run_dir / "multi_model_review.yaml"),
             "run_options": str(run_dir / "run_options.json"),
             "commands": [
                 {"name": name, "cmd": cmd}
@@ -601,6 +630,8 @@ def create_paper_run_snapshot() -> Path:
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
     write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
     write_yaml(run_dir / "paper_trading.yaml", st.session_state.trading_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     command = [sys.executable, "-m", "paper_trading.daily_flow", "--run-dir", str(run_dir)]
@@ -619,6 +650,8 @@ def create_paper_run_snapshot() -> Path:
             "gemini_cli_config": str(run_dir / "gemini_cli_review.yaml"),
             "gemini_api_config": str(run_dir / "gemini_review.yaml"),
             "agy_cli_config": str(run_dir / "agy_cli_review.yaml"),
+            "codex_cli_config": str(run_dir / "codex_cli_review.yaml"),
+            "multi_model_config": str(run_dir / "multi_model_review.yaml"),
             "paper_trading_config": str(run_dir / "paper_trading.yaml"),
             "run_options": str(run_dir / "run_options.json"),
             "commands": [{"name": "模拟交易每日流程", "cmd": command}],
@@ -637,6 +670,16 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
     if reviewer == "gemini-api":
         review_step = ("Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")])
+    elif reviewer == "multi-model":
+        review_step = (
+            "多模型复评与共识汇总",
+            [python, "agent/multi_model_review.py", "--run-dir", str(run_dir)],
+        )
+    elif reviewer == "codex-cli":
+        review_step = (
+            "Codex GPT-5.5 复评",
+            [python, "agent/codex_cli_review.py", "--config", str(run_dir / "codex_cli_review.yaml")],
+        )
     elif reviewer == "agy-cli-experimental":
         review_step = (
             "AGY CLI 实验复评",
@@ -648,8 +691,13 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")],
         )
     agy_output_dir = clean_text(st.session_state.get("agy_review_cfg", {}).get("output_dir"))
-    agy_isolated = reviewer == "agy-cli-experimental" and agy_output_dir not in {"data/review", "./data/review"}
-    archive_step = [] if agy_isolated else [("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id])]
+    codex_output_dir = clean_text(st.session_state.get("codex_review_cfg", {}).get("output_dir"))
+    isolated_reviewer = (
+        reviewer == "multi-model"
+        or (reviewer == "agy-cli-experimental" and agy_output_dir not in {"data/review", "./data/review"})
+        or (reviewer == "codex-cli" and codex_output_dir not in {"data/review", "./data/review"})
+    )
+    archive_step = [] if isolated_reviewer else [("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id])]
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
     preselect_cmd += ["--merge-same-date"]
     if clean_text(run_cfg.get("pick_date")):
@@ -1400,6 +1448,103 @@ def render_review_config() -> None:
         st.session_state.agy_review_cfg = cfg
         return
 
+    if reviewer == "codex-cli":
+        cfg = st.session_state.codex_review_cfg
+        left, right = st.columns(2, gap="large")
+        with left:
+            cfg["codex_bin"] = st.text_input("Codex CLI 路径", value=str(cfg.get("codex_bin", "codex")))
+            cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=20, value=int(cfg.get("batch_size", 5)))
+            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=60, value=int(cfg.get("timeout_seconds", 900)), step=30)
+            cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 1)), step=1.0)
+            cfg["max_items"] = st.number_input(
+                "实验复评上限 max_items",
+                min_value=1,
+                value=int(cfg.get("max_items", 1)),
+                help="单独使用 Codex reviewer 时最多复评前 N 个候选；多模型复评会覆盖为完整候选集。",
+            )
+        with right:
+            st.caption("固定模型：GPT-5.5")
+            st.caption("固定思考强度：high")
+            st.caption("速度路径：standard（禁用 fast 默认路径）")
+            cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
+            cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
+            cfg["save_raw_cli_io"] = st.toggle("保存 Codex 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
+            cfg["fallback_to_single_on_batch_error"] = st.toggle(
+                "批量失败后降级逐只复评",
+                value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
+            )
+            codex_path = shutil.which(str(cfg.get("codex_bin", "codex")))
+            st.caption(f"Codex CLI: {codex_path or '未找到'}")
+
+        with st.expander("经典图形匹配", expanded=True):
+            cfg = render_classic_pattern_config(cfg, "codex_review")
+
+        with st.expander("路径配置"):
+            p1, p2 = st.columns(2)
+            with p1:
+                cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
+                cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
+                cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
+            with p2:
+                cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review/codex_cli")))
+                cfg["raw_log_dir"] = st.text_input("Codex 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/codex_cli_runs。")
+
+        st.markdown(
+            "<div class='panel-note'>Codex reviewer 固定使用 <code>gpt-5.5</code>、<code>high</code> 思考强度，并通过 <code>--output-schema</code> 返回 JSON；默认输出到隔离目录。</div>",
+            unsafe_allow_html=True,
+        )
+        st.session_state.codex_review_cfg = cfg
+        return
+
+    if reviewer == "multi-model":
+        cfg = st.session_state.multi_model_review_cfg
+        left, right = st.columns(2, gap="large")
+        with left:
+            expected = cfg.get("expected_strategies", list(DEFAULT_CLASSIC_PATTERN_STRATEGIES))
+            expected_text = ",".join(str(item) for item in expected)
+            cfg["expected_strategies"] = [item.strip() for item in st.text_input("必需策略", value=expected_text).split(",") if item.strip()]
+            cfg["suggest_min_score"] = st.number_input("统一推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
+            cfg["batch_size"] = st.number_input("默认批处理大小", min_value=1, max_value=20, value=int(cfg.get("batch_size", 5)))
+            cfg["strict_batch"] = st.toggle("批次完整性严格校验", value=bool(cfg.get("strict_batch", True)))
+            cfg["skip_existing"] = st.toggle("各模型断点续跑", value=bool(cfg.get("skip_existing", True)))
+            cfg["classic_pattern_enabled"] = st.toggle(
+                "统一启用经典图形匹配",
+                value=bool(cfg.get("classic_pattern_enabled", True)),
+                help="多模型复评会把该开关强制传给每个 reviewer，保证同一批横向比较使用相同评分环节。",
+            )
+        with right:
+            cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
+            cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
+            cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
+            cfg["batch_root"] = st.text_input("冻结批次目录", value=str(cfg.get("batch_root", "data/review_batches")))
+            cfg["review_runs_dir"] = st.text_input("模型独立输出根目录", value=str(cfg.get("review_runs_dir", "data/review_runs")))
+            cfg["consensus_dir"] = st.text_input("共识汇总目录", value=str(cfg.get("consensus_dir", "data/review_consensus")))
+
+        st.subheader("参与复评的模型")
+        reviewers = cfg.get("reviewers") or []
+        for index, spec in enumerate(reviewers):
+            label = str(spec.get("label") or spec.get("reviewer_key") or f"model-{index + 1}")
+            c1, c2, c3 = st.columns([0.28, 0.48, 0.18])
+            with c1:
+                spec["enabled"] = st.toggle(label, value=bool(spec.get("enabled", True)), key=f"multi_model_enabled_{index}")
+            with c2:
+                spec["model"] = st.text_input("模型", value=str(spec.get("model", "")), key=f"multi_model_model_{index}")
+            with c3:
+                spec["batch_size"] = st.number_input(
+                    "batch",
+                    min_value=1,
+                    max_value=20,
+                    value=int(spec.get("batch_size") or cfg.get("batch_size", 5)),
+                    key=f"multi_model_batch_{index}",
+                )
+        cfg["reviewers"] = reviewers
+        st.markdown(
+            "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动各 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>，最后生成 <code>data/review_consensus/{batch_id}</code>。</div>",
+            unsafe_allow_html=True,
+        )
+        st.session_state.multi_model_review_cfg = cfg
+        return
+
     cfg = st.session_state.review_cfg
     left, right = st.columns(2, gap="large")
     with left:
@@ -1562,6 +1707,13 @@ def result_center_dates() -> list[str]:
             p.name
             for p in agy_base.iterdir()
             if p.is_dir() and review_source_has_data(p.name, AGY_REVIEW_SOURCE)
+        )
+    codex_base = review_base_dir(CODEX_REVIEW_SOURCE)
+    if codex_base.exists():
+        dates.update(
+            p.name
+            for p in codex_base.iterdir()
+            if p.is_dir() and review_source_has_data(p.name, CODEX_REVIEW_SOURCE)
         )
     return sorted(dates, reverse=True)
 
@@ -1928,7 +2080,7 @@ def render_result_center() -> None:
     has_recommendations = bool(suggestion_for_date.get("recommendations"))
     tdx_disabled = review_source != FORMAL_REVIEW_SOURCE or not has_recommendations
     if review_source != FORMAL_REVIEW_SOURCE:
-        tdx_help = "AGY 实验结果仅用于查看；通达信导入仍使用正式 Gemini 推荐"
+        tdx_help = "隔离复评结果仅用于查看；通达信导入仍使用正式 Gemini 推荐"
     elif tdx_disabled:
         tdx_help = "没有可导入的推荐股票"
     else:
@@ -1967,6 +2119,164 @@ def render_result_center() -> None:
     st.caption(f"当前筛选结果：{len(df)} 条")
     st.dataframe(df, width="stretch", hide_index=True)
     render_return_action_table(df, selected_date)
+
+
+DECISION_BUCKET_LABELS = {
+    "all_models_recommended": "所有模型推荐",
+    "majority_recommended": "多数模型推荐",
+    "single_model_recommended": "单模型推荐",
+    "partial_recommended": "部分模型推荐",
+    "none_recommended": "无模型推荐",
+    "incomplete": "评分不完整",
+}
+
+
+def consensus_summary_files() -> list[Path]:
+    if not CONSENSUS_DIR.exists():
+        return []
+    files = [p / "summary.json" for p in CONSENSUS_DIR.iterdir() if p.is_dir() and (p / "summary.json").exists()]
+    files.sort(key=lambda path: (load_json(path).get("generated_at") or "", path.parent.name), reverse=True)
+    return files
+
+
+def consensus_label(summary_path: Path) -> str:
+    summary = load_json(summary_path)
+    batch_id = summary.get("batch_id") or summary_path.parent.name
+    pick_date = summary.get("pick_date") or ""
+    all_count = summary.get("all_models_recommended_count", 0)
+    complete = "完整" if summary.get("complete") else "不完整"
+    return f"{pick_date} · {batch_id} · 全票 {all_count} · {complete}"
+
+
+def load_consensus_payload(summary_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    summary = load_json(summary_path)
+    base = summary_path.parent
+    decisions = load_json(base / "decisions.json")
+    details = load_json(base / "details.json")
+    return summary, decisions if isinstance(decisions, list) else [], details if isinstance(details, list) else []
+
+
+def consensus_decision_table_rows(decisions: list[dict[str, Any]], models: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for decision in decisions:
+        row: dict[str, Any] = {
+            "排名": decision.get("rank"),
+            "代码": decision.get("code"),
+            "策略": decision.get("strategy"),
+            "决策分组": DECISION_BUCKET_LABELS.get(str(decision.get("decision_bucket")), decision.get("decision_bucket")),
+            "推荐模型数": decision.get("recommended_count"),
+            "完成模型数": decision.get("completed_count"),
+            "模型总数": decision.get("total_models"),
+            "缺失模型": ", ".join(decision.get("missing_models") or []),
+        }
+        scores = decision.get("scores_by_model") or {}
+        verdicts = decision.get("verdicts_by_model") or {}
+        recommended = decision.get("recommended_by_model") or {}
+        for model in models:
+            score = scores.get(model)
+            row[f"{model} 分"] = float(score) if score is not None else None
+            row[f"{model} 结论"] = verdicts.get(model, "")
+            row[f"{model} 推荐"] = "是" if recommended.get(model) else "否"
+        rows.append(row)
+    return rows
+
+
+def consensus_detail_table_rows(details: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in details:
+        score = item.get("total_score")
+        rows.append(
+            {
+                "代码": item.get("code"),
+                "策略": item.get("strategy"),
+                "模型": item.get("model_key"),
+                "状态": "已复评" if item.get("status") == "reviewed" else "缺失",
+                "总分": float(score) if score not in {"", None} else None,
+                "结论": item.get("verdict") or "",
+                "推荐": "是" if item.get("recommended") else "否",
+                "评论": item.get("comment") or "",
+            }
+        )
+    return rows
+
+
+def render_consensus_center() -> None:
+    st.title("共识结果")
+    summary_files = consensus_summary_files()
+    if not summary_files:
+        st.warning("还没有多模型共识结果。请先在运行中心选择「多模型复评」并执行。")
+        return
+
+    labels = [consensus_label(path) for path in summary_files]
+    selected_label = st.selectbox("复评批次", labels)
+    summary_path = summary_files[labels.index(selected_label)]
+    summary, decisions, details = load_consensus_payload(summary_path)
+    models = [str(model) for model in summary.get("models", [])]
+
+    bucket_counts = summary.get("decision_bucket_counts") or {}
+    st.markdown(
+        f"""
+        <div class="metric-row">
+          <div class="metric-card"><div class="metric-label">选股日期</div><div class="metric-value">{summary.get('pick_date', '')}</div></div>
+          <div class="metric-card"><div class="metric-label">候选数量</div><div class="metric-value">{summary.get('candidate_count', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">参与模型</div><div class="metric-value">{summary.get('model_count', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">全票推荐 / 不完整</div><div class="metric-value">{bucket_counts.get('all_models_recommended', 0)} / {bucket_counts.get('incomplete', 0)}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if summary.get("invariant_violations"):
+        st.warning("存在 score>=阈值 但 verdict!=PASS 的历史结果，请查看 summary.json 的 invariant_violations。")
+    if not summary.get("complete"):
+        st.warning("当前批次存在模型缺失评分，不能作为最终全票推荐结果；可断点重跑多模型复评。")
+
+    tab_decision, tab_detail = st.tabs(["决策结果集", "模型评分明细"])
+    with tab_decision:
+        decision_df = pd.DataFrame(consensus_decision_table_rows(decisions, models))
+        if decision_df.empty:
+            st.info("没有决策结果。")
+        else:
+            f1, f2 = st.columns(2)
+            with f1:
+                strategies = sorted([x for x in decision_df["策略"].dropna().unique() if x])
+                strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"consensus_strategy_{summary.get('batch_id')}")
+            with f2:
+                bucket_labels = ["全部"] + [DECISION_BUCKET_LABELS.get(key, key) for key in sorted(bucket_counts)]
+                bucket_label = st.selectbox("决策分组", bucket_labels, key=f"consensus_bucket_{summary.get('batch_id')}")
+            filtered = decision_df
+            if strategy != "全部":
+                filtered = filtered[filtered["策略"] == strategy]
+            if bucket_label != "全部":
+                filtered = filtered[filtered["决策分组"] == bucket_label]
+            st.caption(f"当前筛选结果：{len(filtered)} 条")
+            st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
+
+    with tab_detail:
+        detail_df = pd.DataFrame(consensus_detail_table_rows(details))
+        if detail_df.empty:
+            st.info("没有模型明细。")
+        else:
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                strategies = sorted([x for x in detail_df["策略"].dropna().unique() if x])
+                strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"consensus_detail_strategy_{summary.get('batch_id')}")
+            with f2:
+                model = st.selectbox("模型筛选", ["全部"] + models, key=f"consensus_detail_model_{summary.get('batch_id')}")
+            with f3:
+                recommendation = st.selectbox("推荐状态", ["全部", "仅推荐", "未推荐", "缺失"], key=f"consensus_detail_rec_{summary.get('batch_id')}")
+            filtered = detail_df
+            if strategy != "全部":
+                filtered = filtered[filtered["策略"] == strategy]
+            if model != "全部":
+                filtered = filtered[filtered["模型"] == model]
+            if recommendation == "仅推荐":
+                filtered = filtered[filtered["推荐"] == "是"]
+            elif recommendation == "未推荐":
+                filtered = filtered[(filtered["推荐"] == "否") & (filtered["状态"] == "已复评")]
+            elif recommendation == "缺失":
+                filtered = filtered[filtered["状态"] == "缺失"]
+            st.caption(f"当前筛选结果：{len(filtered)} 条")
+            st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
 
 
 def history_rows(pick_date: str, strategy: str) -> list[dict[str, Any]]:
@@ -2624,7 +2934,7 @@ def main() -> None:
         st.caption("本地选股工作台")
         page = st.radio(
             "导航",
-            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "历史结果", "单票复盘", "模拟交易"],
+            ["运行中心", "数据配置", "策略配置", "复评配置", "结果中心", "共识结果", "历史结果", "单票复盘", "模拟交易"],
             label_visibility="collapsed",
         )
 
@@ -2639,6 +2949,8 @@ def main() -> None:
         render_review_config()
     elif page == "结果中心":
         render_result_center()
+    elif page == "共识结果":
+        render_consensus_center()
     elif page == "历史结果":
         render_history_center()
     elif page == "模拟交易":

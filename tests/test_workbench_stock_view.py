@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import sys
 import tempfile
 import unittest
+import types
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workbench"))
+
+if importlib.util.find_spec("streamlit") is None:
+    streamlit_stub = types.ModuleType("streamlit")
+    streamlit_stub.session_state = {}
+    streamlit_stub.fragment = lambda *args, **kwargs: (lambda func: func)
+    streamlit_stub.dialog = lambda *args, **kwargs: (lambda func: func)
+    components_stub = types.ModuleType("streamlit.components")
+    components_v1_stub = types.ModuleType("streamlit.components.v1")
+    components_v1_stub.html = lambda *args, **kwargs: None
+    components_stub.v1 = components_v1_stub
+    sys.modules["streamlit"] = streamlit_stub
+    sys.modules["streamlit.components"] = components_stub
+    sys.modules["streamlit.components.v1"] = components_v1_stub
 
 import app as workbench_app  # noqa: E402
 
@@ -211,12 +226,17 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 {
                     "run_cfg": {"reviewer": "gemini-cli"},
                     "agy_review_cfg": {"output_dir": "data/review/agy_cli_experimental"},
+                    "codex_review_cfg": {"output_dir": "data/review/codex_cli"},
                 }
             )
             workbench_app.st = SimpleNamespace(session_state=session)
             gemini_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-gemini"))
             session["run_cfg"] = {"reviewer": "agy-cli-experimental"}
             agy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-agy"))
+            session["run_cfg"] = {"reviewer": "codex-cli"}
+            codex_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-codex"))
+            session["run_cfg"] = {"reviewer": "multi-model"}
+            multi_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-multi"))
         finally:
             workbench_app.st = old_st
 
@@ -225,6 +245,12 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual(agy_steps[0][0], "AGY CLI 实验复评")
         self.assertIn("agent/agy_cli_review.py", agy_steps[0][1])
         self.assertEqual(len(agy_steps), 1)
+        self.assertEqual(codex_steps[0][0], "Codex GPT-5.5 复评")
+        self.assertIn("agent/codex_cli_review.py", codex_steps[0][1])
+        self.assertEqual(len(codex_steps), 1)
+        self.assertEqual(multi_steps[0][0], "多模型复评与共识汇总")
+        self.assertIn("agent/multi_model_review.py", multi_steps[0][1])
+        self.assertEqual(len(multi_steps), 1)
 
     def test_reviewer_widget_sync_preserves_first_selection_change(self) -> None:
         old_st = workbench_app.st

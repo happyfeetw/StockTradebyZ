@@ -124,6 +124,26 @@ class ReviewContractTests(unittest.TestCase):
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 1.0)
         self.assertEqual(normalized["total_score"], 4.0)
 
+    def test_hard_volume_veto_keeps_score_below_recommendation_threshold(self) -> None:
+        result = {
+            "strategy": "b1",
+            "total_score": 5.0,
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 5,
+                "volume_behavior": 1,
+                "previous_abnormal_move": 5,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
+
+        self.assertLess(normalized["total_score"], 4.0)
+        self.assertEqual(normalized["verdict"], "FAIL")
+        self.assertEqual(normalized["score_before_hard_veto"], 4.2)
+        self.assertEqual(normalized["hard_veto_reason"], "volume_behavior <= 1")
+
     def test_composite_strategy_uses_base_four_dimension_weight(self) -> None:
         result = {
             "strategy": "b1+brick",

@@ -117,11 +117,38 @@ codex --ask-for-approval never exec \
   --ignore-user-config --ignore-rules \
   -c model_reasoning_effort=\"high\" \
   -c fast_default_opt_out=true \
+  -c model_provider=\"env_custom\" \
+  -c model_providers.env_custom.wire_api=\"responses\" \
+  -c model_providers.env_custom.requires_openai_auth=true \
+  -c model_providers.env_custom.base_url=\"${CODEX_OPENAI_BASE_URL}\" \
+  -c preferred_auth_method=\"apikey\" \
   --model gpt-5.5 \
   --sandbox read-only \
   --ephemeral \
   --output-schema schema.json
 ```
+
+默认保留 `--ignore-user-config`，避免临时复评子进程依赖用户当前 Codex 会话配置。为了兼容 CCSwitch 这类 OpenAI-compatible 本地代理，项目从环境变量读取 base URL 和 API key，并用命令级 `-c` 配置注入本次 Codex 调用。
+
+推荐环境变量：
+
+```bash
+export CODEX_OPENAI_BASE_URL=http://127.0.0.1:8317/v1
+export CODEX_OPENAI_API_KEY=<ccswitch-api-key>
+```
+
+`CODEX_OPENAI_BASE_URL` 会被写入本次命令的 `model_providers.env_custom.base_url`。`CODEX_OPENAI_API_KEY` 只会映射到子进程环境变量 `OPENAI_API_KEY`，不会进入命令行或 raw log。如果当前 `CODEX_HOME/auth.json` 已有可被 CCSwitch 接受的 API key，也可以只设置 base URL；`codex exec --ignore-user-config` 仍会使用 `CODEX_HOME` 下的认证信息。
+
+### Codex CLI 进度卡住排障
+
+如果 Codex reviewer 长时间停在 `0%`、`1%` 或只停留在第一批附近，先检查该 reviewer 的 raw log：
+
+- `data/review_runs/{batch_id}/codex-cli/{profile}/{pick_date}/codex_cli_runs/*/stderr.txt`
+- `data/runs/{run_id}/multi_model_logs/codex-cli__{profile}.log`
+
+如果 stderr 中出现 `401 Unauthorized`、`Incorrect API key provided`，且日志头部显示 `provider: openai`、请求地址为 `https://api.openai.com/v1/responses`，说明本次 Codex 子进程没有拿到 OpenAI-compatible provider 覆盖，通常是 `CODEX_OPENAI_BASE_URL` / `OPENAI_BASE_URL` 未设置，或运行入口没有继承这些环境变量。
+
+这类认证错误不是模型慢，也不是进度统计问题。没有单票 JSON 写出时，真实完成数就是 0；旧实现会把认证失败当成普通批量失败，继续重试、拆批、逐只 fallback，造成看起来一直卡住。当前实现会把 `401` / API key 错误归类为 `CodexCliAuthError` 并快速失败，由多模型编排保留其他 reviewer 的进度。
 
 ## Consensus Output
 

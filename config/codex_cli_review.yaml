@@ -14,6 +14,25 @@ model_profile: gpt-5.5-high-standard
 reasoning_effort: high
 speed_tier: standard
 
+# 保持临时子进程隔离：不读取 ~/.codex/config.toml；auth 仍会使用 CODEX_HOME。
+ignore_user_config: true
+
+# 在 ignore_user_config=true 时，通过环境变量为本次命令注入 OpenAI-compatible provider。
+# 推荐 CCSwitch：
+#   CODEX_OPENAI_BASE_URL=http://127.0.0.1:8317/v1
+#   CODEX_OPENAI_API_KEY=<ccswitch-api-key>
+# 如果 OPENAI_API_KEY 已由 Codex auth.json 提供，也可以只设置 base_url。
+env_provider_enabled: true
+codex_provider_name: env_custom
+codex_base_url: ""
+base_url_env_vars:
+  - CODEX_OPENAI_BASE_URL
+  - OPENAI_BASE_URL
+  - OPENAI_API_BASE
+api_key_env_vars:
+  - CODEX_OPENAI_API_KEY
+  - OPENAI_API_KEY
+
 timeout_seconds: 900
 request_delay: 1
 batch_size: 5

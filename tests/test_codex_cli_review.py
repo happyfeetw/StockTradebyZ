@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,63 @@ class CodexCliReviewerTests(unittest.TestCase):
         self.assertIn("--output-schema", cmd)
         self.assertEqual(cmd[-1], "prompt text")
 
+    def test_build_command_can_load_user_config_when_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp), ignore_user_config=False)
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+
+        self.assertNotIn("--ignore-user-config", cmd)
+
+    def test_build_command_adds_env_provider_from_base_url_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"CODEX_OPENAI_BASE_URL": "http://127.0.0.1:8317/v1"},
+            clear=False,
+        ):
+            reviewer = self.make_reviewer(Path(tmp))
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+
+        self.assertIn('model_provider="env_custom"', cmd)
+        self.assertIn('model_providers.env_custom.base_url="http://127.0.0.1:8317/v1"', cmd)
+        self.assertIn('preferred_auth_method="apikey"', cmd)
+
+    def test_codex_env_maps_namespaced_api_key_to_openai_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"CODEX_OPENAI_API_KEY": "ccswitch-test-key"},
+            clear=True,
+        ):
+            reviewer = self.make_reviewer(Path(tmp))
+            env, meta = reviewer._codex_env()
+
+        self.assertEqual(env["OPENAI_API_KEY"], "ccswitch-test-key")
+        self.assertEqual(meta["api_key_env_var"], "CODEX_OPENAI_API_KEY")
+        self.assertTrue(meta["api_key_env_present"])
+
     def test_parse_result_marks_fixed_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             reviewer = self.make_reviewer(Path(tmp))
@@ -102,6 +160,23 @@ class CodexCliReviewerTests(unittest.TestCase):
         self.assertEqual(parsed[0]["reasoning_effort"], "high")
         self.assertEqual(parsed[0]["speed_tier"], "standard")
         self.assertEqual(parsed[0]["json_output_mode"], "output-schema")
+
+    def test_parse_result_classifies_api_key_error_as_auth_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            result = subprocess.CompletedProcess(
+                args=["codex"],
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "ERROR: unexpected status 401 Unauthorized: "
+                    "Incorrect API key provided: sk-***"
+                ),
+            )
+
+            with self.assertRaises(codex_cli_review.CodexCliAuthError):
+                reviewer._parse_result(result, items=[{"code": "000001", "strategy": "b1"}])
+
 
     def test_explicit_unfixed_model_override_updates_command_and_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -199,6 +274,7 @@ class CodexCliReviewerTests(unittest.TestCase):
                         "model: not-gpt",
                         "reasoning_effort: low",
                         "speed_tier: fast",
+                        "ignore_user_config: true",
                     ]
                 ),
                 encoding="utf-8",
@@ -209,6 +285,7 @@ class CodexCliReviewerTests(unittest.TestCase):
         self.assertEqual(cfg["model"], "gpt-5.5")
         self.assertEqual(cfg["reasoning_effort"], "high")
         self.assertEqual(cfg["speed_tier"], "standard")
+        self.assertTrue(cfg["ignore_user_config"])
 
     def test_load_config_allows_model_override_when_explicitly_unfixed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

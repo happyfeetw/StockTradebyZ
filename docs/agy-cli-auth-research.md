@@ -25,6 +25,31 @@ AGY CLI 1.0.5 已解除上一轮模型控制阻断。依据：
 2. 输出只能通过 prompt 约束和后处理 JSON 抽取，批量稳定性需要继续验证。
 3. 认证问题已从硬阻断变成回归观察项：每次升级后仍需跑探针，确认本轮 `current_run_keyring_auth_timeout_seen=false`。
 
+## 2026-06-09 运行中回归结论
+
+AGY CLI 1.0.6 在批量多模型复评中重新暴露出认证不稳定问题。当前不是“完全没有登录”，而是 **新启动的 `agy --print` 子进程偶发无法在 5 秒内从 macOS Keychain 完成静默认证**：
+
+- 当前 `agy --version` 为 `1.0.6`。
+- 批次 `2026-06-09_5aa9d352` 的 AGY 内部日志中，22:36 后 23 次调用里有 20 次 `authenticated via keyring` / `silent auth succeeded`，3 次出现 `keyringAuth: timed out after 5s`。
+- 失败链路为：`Print mode: not authenticated` -> `keyringAuth: timed out after 5s` -> `silent auth failed, triggering OAuth` -> `auth timed out`。
+- AGY 在这些认证失败场景下仍可能返回进程退出码 `0`，但 stdout 是 `Authentication required ... Error: authentication timed out`，不是模型 JSON。
+
+这说明认证态存在，但 AGY CLI 1.0.6 的 keyring 读取在高频新进程调用下不稳定。项目侧当前把这类 stdout 当作 JSON 契约失败，随后触发 JSON repair、批量拆分和单票 fallback，反而继续启动新的 `agy` 子进程，放大浏览器登录弹窗次数。
+
+### 项目侧修复方案
+
+1. 在 `agent/agy_cli_review.py` 中增加认证失败分类，stdout/stderr 命中以下文本时直接抛出 `AgyCliAuthError`：
+   - `Authentication required`
+   - `Waiting for authentication`
+   - `authorization code`
+   - `authentication timed out`
+   - `keyringAuth: timed out`
+   - `silent auth failed, triggering OAuth`
+2. `AgyCliAuthError` 不进入 JSON repair，因为认证输出不是模型正文，修复 prompt 没有意义。
+3. 批量调用遇到 `AgyCliAuthError` 时，不再拆批、不再逐只 fallback；应让 AGY reviewer 快速失败并保留已成功写出的单股结果，后续依靠 `skip_existing` 断点续跑。
+4. 多模型复评启动前可增加 AGY preflight：用极短 `agy --print` 探针确认本轮 keyring 可用。探针失败时跳过或终止 AGY reviewer，避免进入几百只股票后才连续弹浏览器。
+5. 文档和日志中继续保留 AGY 为实验 reviewer；在官方提供稳定 token/API key/cache 控制前，不做手工 token 保存、授权码转发或二进制 patch。
+
 ## 2026-05-22 更新结论
 
 AGY CLI 1.0.1 已修复上一轮认证阻断。依据：

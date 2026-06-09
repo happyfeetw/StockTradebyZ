@@ -126,8 +126,34 @@ class AgyCliError(RuntimeError):
     pass
 
 
+class AgyCliAuthError(AgyCliError):
+    pass
+
+
 class AgyCliJsonContractError(AgyCliError):
     pass
+
+
+def _is_auth_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "authentication required",
+            "waiting for authentication",
+            "authorization code",
+            "authentication timed out",
+            "keyringauth: timed out",
+            "silent auth failed",
+            "auth timed out",
+            "print mode: not authenticated",
+        )
+    )
+
+
+def _raise_if_auth_error(output: str, *, prefix: str = "AGY CLI 认证失败") -> None:
+    if _is_auth_error(output):
+        raise AgyCliAuthError(f"{prefix}: {output[:1200]}")
 
 
 def _resolve_cfg_path(path_like: str | Path, base_dir: Path = _ROOT) -> Path:
@@ -480,6 +506,7 @@ class AgyCliReviewer(BaseReviewer):
         )
         result = self._run_agy(code=code, day_chart=day_chart, prompt_text=prompt_text, purpose="review")
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
+        _raise_if_auth_error(combined_output)
         if result.returncode != 0:
             raise AgyCliError(f"AGY CLI 退出码 {result.returncode}: {combined_output[:1200]}")
 
@@ -506,6 +533,7 @@ class AgyCliReviewer(BaseReviewer):
                 purpose="json_repair",
             )
             repair_output = f"{repair_result.stdout}\n{repair_result.stderr}".strip()
+            _raise_if_auth_error(repair_output, prefix="AGY JSON 修复调用认证失败")
             if repair_result.returncode != 0:
                 raise AgyCliError(f"AGY JSON 修复调用退出码 {repair_result.returncode}: {repair_output[:1200]}")
             try:
@@ -550,6 +578,7 @@ class AgyCliReviewer(BaseReviewer):
             purpose=f"batch_{len(items)}",
         )
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
+        _raise_if_auth_error(combined_output, prefix="AGY CLI 批量调用认证失败")
         if result.returncode != 0:
             raise AgyCliError(f"AGY CLI 批量调用退出码 {result.returncode}: {combined_output[:1200]}")
 
@@ -621,6 +650,9 @@ class AgyCliReviewer(BaseReviewer):
             for result in results:
                 print(f"    {result['code']} — {self._format_result_status(result)}")
             return results, []
+        except AgyCliAuthError as exc:
+            print(f"认证失败 — {exc}")
+            raise
         except Exception as exc:  # noqa: BLE001 - fallback below decides how to continue.
             print(f"批量失败 — {exc}")
 
@@ -667,6 +699,9 @@ class AgyCliReviewer(BaseReviewer):
                 self._write_stock_result(item, result)
                 all_results.append(result)
                 print(f"完成 — {self._format_result_status(result)}")
+            except AgyCliAuthError as exc:
+                print(f"认证失败 — {exc}")
+                raise
             except Exception as exc:  # noqa: BLE001 - collect failed code and continue
                 print(f"失败 — {exc}")
                 failed_codes.append(review_key)

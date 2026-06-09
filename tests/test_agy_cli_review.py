@@ -124,6 +124,28 @@ class AgyCliReviewerTests(unittest.TestCase):
         self.assertTrue(result["json_repair_used"])
         self.assertIn("无法从 AGY 输出提取合法 JSON", result["json_repair_reason"])
 
+    def test_review_stock_auth_output_does_not_attempt_json_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            chart = Path(tmp) / "000001_day.jpg"
+            chart.write_bytes(b"fake")
+            calls: list[str] = []
+
+            def fake_run_agy(*, code: str, day_chart: Path, prompt_text: str, purpose: str = "review"):
+                calls.append(purpose)
+                return subprocess.CompletedProcess(
+                    args=["agy"],
+                    returncode=0,
+                    stdout="Authentication required\nWaiting for authentication\nError: authentication timed out",
+                    stderr="",
+                )
+
+            reviewer._run_agy = fake_run_agy  # type: ignore[method-assign]
+            with self.assertRaises(agy_cli_review.AgyCliAuthError):
+                reviewer.review_stock("000001", chart, "prompt", strategy="brick")
+
+        self.assertEqual(calls, ["review"])
+
     def test_review_stock_rejects_schema_error_when_repair_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             reviewer = self.make_reviewer(Path(tmp))
@@ -179,6 +201,91 @@ class AgyCliReviewerTests(unittest.TestCase):
         self.assertEqual([item["code"] for item in results], ["000001", "000002"])
         self.assertEqual(results[0]["json_output_mode"], "prompt-json-array")
         self.assertEqual(results[1]["reviewer"], "agy-cli-experimental")
+
+    def test_review_batch_auth_output_does_not_fallback_to_single(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            chart1 = Path(tmp) / "000001_day.jpg"
+            chart2 = Path(tmp) / "000002_day.jpg"
+            chart1.write_bytes(b"fake")
+            chart2.write_bytes(b"fake")
+            calls: list[str] = []
+
+            def fake_run_agy(*, code: str, day_chart: Path, prompt_text: str, purpose: str = "review"):
+                calls.append(purpose)
+                return subprocess.CompletedProcess(
+                    args=["agy"],
+                    returncode=0,
+                    stdout="Print mode: not authenticated\nAuthentication required\nError: auth timed out",
+                    stderr="",
+                )
+
+            def fake_review_stock(*, code: str, day_chart: Path, prompt: str, strategy: str = ""):
+                raise AssertionError("auth failures must not fall back to single-stock review")
+
+            reviewer._run_agy = fake_run_agy  # type: ignore[method-assign]
+            reviewer.review_stock = fake_review_stock  # type: ignore[method-assign]
+            items = [
+                {
+                    "index": 1,
+                    "code": "000001",
+                    "strategy": "b1",
+                    "review_key": "000001__b1",
+                    "day_chart": chart1,
+                    "out_file": Path(tmp) / "000001__b1.json",
+                },
+                {
+                    "index": 2,
+                    "code": "000002",
+                    "strategy": "b1",
+                    "review_key": "000002__b1",
+                    "day_chart": chart2,
+                    "out_file": Path(tmp) / "000002__b1.json",
+                },
+            ]
+
+            with self.assertRaises(agy_cli_review.AgyCliAuthError):
+                reviewer._review_batch_items(items, total_candidates=2)
+
+        self.assertEqual(calls, ["batch_2"])
+
+    def test_single_items_auth_error_stops_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            chart1 = Path(tmp) / "000001_day.jpg"
+            chart2 = Path(tmp) / "000002_day.jpg"
+            chart1.write_bytes(b"fake")
+            chart2.write_bytes(b"fake")
+            calls: list[str] = []
+
+            def fake_review_stock(*, code: str, day_chart: Path, prompt: str, strategy: str = ""):
+                calls.append(code)
+                raise agy_cli_review.AgyCliAuthError("AGY CLI 认证失败")
+
+            reviewer.review_stock = fake_review_stock  # type: ignore[method-assign]
+            items = [
+                {
+                    "index": 1,
+                    "code": "000001",
+                    "strategy": "b1",
+                    "review_key": "000001__b1",
+                    "day_chart": chart1,
+                    "out_file": Path(tmp) / "000001__b1.json",
+                },
+                {
+                    "index": 2,
+                    "code": "000002",
+                    "strategy": "b1",
+                    "review_key": "000002__b1",
+                    "day_chart": chart2,
+                    "out_file": Path(tmp) / "000002__b1.json",
+                },
+            ]
+
+            with self.assertRaises(agy_cli_review.AgyCliAuthError):
+                reviewer._review_single_items(items, total_candidates=2)
+
+        self.assertEqual(calls, ["000001"])
 
 
 if __name__ == "__main__":

@@ -194,12 +194,16 @@ python3 agent/agy_cli_review.py --limit 1 \
 - 等单股成功率稳定后，再尝试 2 到 5 张图的小批量。
 - 复用 Gemini CLI 的退避思想：先 retry 原请求，再拆分，最后逐只处理。
 - 因 `agy` 当前无 `stream-json` 参数，不以流式事件作为进度判断，只以总超时和进程退出为准。
+- 认证错误必须从普通 JSON 失败中拆出来处理。AGY stdout/stderr 出现 `Authentication required`、`Waiting for authentication`、`authorization code`、`authentication timed out`、`keyringAuth: timed out`、`silent auth failed` 时，应视为 `AgyCliAuthError`。
+- `AgyCliAuthError` 不进入 JSON repair，不触发拆批和逐只 fallback；这些动作只适用于模型正文格式错误。认证失败时继续启动新 `agy` 子进程只会放大浏览器 OAuth 弹窗。
+- 多模型复评接入前应增加 AGY preflight。preflight 通过后再运行批量 reviewer；preflight 失败时应跳过或终止 AGY reviewer，并保留已完成结果供 `skip_existing` 续跑。
 
 验收：
 
 - 5 支样本全部输出 JSON。
 - 中断后可通过 `skip_existing` 续跑。
 - 失败股票有单独失败记录，成功结果不被覆盖。
+- 认证失败时不会触发 JSON repair，不会进入批量拆分或逐只 fallback。
 
 ### Phase 5：接入运行入口（已接入为显式实验选项）
 

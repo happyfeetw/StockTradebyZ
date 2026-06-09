@@ -25,6 +25,11 @@ group_review_by_strategy: true
 no_model_substitution: true
 rerun_failed_models_once: true
 
+z_quality:
+  enabled: true
+  config: config/z_quality_rules.yaml
+  output_root: data/z_quality
+
 review_scoring:
   enabled: true
   common_gate:

@@ -4,7 +4,10 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -246,6 +249,55 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                     review_runs_dir=project / "review_runs",
                 )
 
+    def test_run_z_quality_postprocess_writes_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            consensus_dir = project / "consensus" / "batch1"
+            summary_path = consensus_dir / "summary.json"
+            decisions_path = consensus_dir / "decisions.json"
+            details_path = consensus_dir / "details.json"
+            summary = {
+                "batch_id": "batch1",
+                "pick_date": "2026-06-01",
+                "files": {
+                    "summary": str(summary_path),
+                    "decisions": str(decisions_path),
+                    "details": str(details_path),
+                },
+            }
+            write_json(summary_path, summary)
+            write_json(decisions_path, [])
+            write_json(details_path, [])
+            z_config = project / "z_quality_rules.yaml"
+            z_config.write_text(
+                "\n".join(
+                    [
+                        "ruleset_version: test_z",
+                        f"raw_dir: {project / 'raw'}",
+                        f"kline_dir: {project / 'kline'}",
+                        f"output_root: {project / 'z_quality'}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            z_summary = multi_model_review.run_z_quality_postprocess(
+                {
+                    "z_quality": {
+                        "enabled": True,
+                        "config": str(z_config),
+                        "output_root": str(project / "z_quality"),
+                    }
+                },
+                summary,
+            )
+            z_summary_exists = Path(z_summary["files"]["summary"]).exists() if z_summary else False
+
+        self.assertIsNotNone(z_summary)
+        assert z_summary is not None
+        self.assertEqual(z_summary["processed_count"], 0)
+        self.assertTrue(z_summary_exists)
+
     def test_read_failure_info_extracts_reason_from_log_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "model.log"
@@ -264,6 +316,65 @@ class ReviewBatchConsensusTests(unittest.TestCase):
 
         self.assertIn("FAILED_PRECONDITION", info["summary"])
         self.assertIn("User location is not supported", info["log_tail"])
+
+    def test_progress_snapshot_extracts_latest_model_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.log"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[INFO] pick_date=2026-06-08，复评股票数=104，batch_size=5",
+                        "[1-5/104] 000001_b1,000002_b1 — Gemini CLI 批量分析 5 张图 ... 完成",
+                        "    000001 — verdict=FAIL, score=2.4",
+                        "[6-10/104] 000003_b1,000004_b1 — Gemini CLI 批量分析 5 张图 ...",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = multi_model_review.progress_snapshot(path)
+
+        self.assertEqual(snapshot["completed"], 10)
+        self.assertEqual(snapshot["total"], 104)
+        self.assertEqual(snapshot["progress_text"], "10/104 (10%)")
+        self.assertIn("Gemini CLI 批量分析", snapshot["latest"])
+
+    def test_grouped_progress_output_groups_by_reviewer_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            gemini_log = project / "gemini.log"
+            codex_log = project / "codex.log"
+            gemini_log.write_text("[1-5/20] gemini batch ... 完成\n", encoding="utf-8")
+            codex_log.write_text("[1/20] codex single ... 完成\n", encoding="utf-8")
+            runtimes = {
+                "gemini-cli/gemini-3.1-pro-preview": multi_model_review.ReviewerRuntime(
+                    spec={},
+                    proc=mock.Mock(),
+                    log_file=mock.Mock(),
+                    log_path=gemini_log,
+                    started_at=0.0,
+                ),
+                "codex-cli/gpt-5.5-high-standard": multi_model_review.ReviewerRuntime(
+                    spec={},
+                    proc=mock.Mock(),
+                    log_file=mock.Mock(),
+                    log_path=codex_log,
+                    started_at=0.0,
+                ),
+            }
+
+            with mock.patch.object(multi_model_review.time, "monotonic", return_value=65.0):
+                buf = StringIO()
+                with redirect_stdout(buf):
+                    multi_model_review.log_grouped_progress(runtimes, attempt=1)
+
+        output = buf.getvalue()
+        self.assertIn("[PROGRESS] 多模型复评进度 attempt=1", output)
+        self.assertIn("[gemini-cli]", output)
+        self.assertIn("[codex-cli]", output)
+        self.assertIn("gemini-cli/gemini-3.1-pro-preview: running", output)
+        self.assertIn("codex-cli/gpt-5.5-high-standard: running", output)
+        self.assertIn("elapsed=1m05s", output)
 
 
 if __name__ == "__main__":

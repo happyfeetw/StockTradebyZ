@@ -50,6 +50,7 @@ Workbench 多模型流程：
 - data/review_batches：冻结后的多模型复评批次
 - data/review_runs：各模型独立复评结果
 - data/review_consensus：多模型共识结果
+- data/z_quality：Z 视角精选池质量裁决结果
 
 ---
 
@@ -197,13 +198,15 @@ python agent/gemini_review.py --config config/gemini_review.yaml
 python agent/agy_cli_review.py --config config/agy_cli_review.yaml --limit 1
 python agent/codex_cli_review.py --config config/codex_cli_review.yaml
 python agent/multi_model_review.py --config config/multi_model_review.yaml
+python agent/z_quality_review.py --config config/z_quality_rules.yaml
 ~~~
 
 Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
 旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
 AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认输出到隔离目录 `data/review/agy_cli_experimental`。AGY 1.0.5 目前没有 `--output-format json/stream-json`，实验路径使用 prompt 级 JSON、本地 schema 校验和一次 JSON repair，不作为默认生产复评入口。
 Codex CLI 配置见 [config/codex_cli_review.yaml](config/codex_cli_review.yaml)，默认固定 `gpt-5.5`、`reasoning_effort=high`、标准速度路径。
-多模型配置见 [config/multi_model_review.yaml](config/multi_model_review.yaml)，会冻结候选批次并生成共识结果。
+多模型配置见 [config/multi_model_review.yaml](config/multi_model_review.yaml)，会冻结候选批次、生成共识结果，并在 `z_quality.enabled=true` 时自动运行 Z 质量裁决。
+Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yaml)，也可单独重跑；默认读取最新共识结果，输出到 `data/z_quality/{batch_id}`。第一版不调用 zettaranc skill 的数据层，只使用本项目共识结果、单股复评 JSON、日线图和 `data/raw` K 线特征；详见 [docs/z-quality-layer.md](docs/z-quality-layer.md)。
 在 workbench 的“复评配置”页面，AGY 模型下拉候选通过“加载/刷新 AGY 模型列表”手动执行 `agy models` 后缓存，名称不做改写；“实验复评上限 max_items”表示本次最多复评前 N 个候选。结果中心和单票复盘可以通过“复评结果源”选择“AGY 实验”查看隔离结果。
 
 读取候选与图表后，输出：
@@ -213,6 +216,8 @@ Codex CLI 配置见 [config/codex_cli_review.yaml](config/codex_cli_review.yaml)
 - data/review_consensus/批次/summary.json
 - data/review_consensus/批次/decisions.json
 - data/review_consensus/批次/details.json
+- data/z_quality/批次/summary.json
+- data/z_quality/批次/decisions.json
 
 ---
 
@@ -251,6 +256,7 @@ Codex CLI 配置见 [config/codex_cli_review.yaml](config/codex_cli_review.yaml)
 - strict_batch：缺少策略或缺少图表时是否中止
 - no_model_substitution：禁止模型替换或降级，默认开启
 - rerun_failed_models_once：失败模型按原模型重跑一次，默认开启
+- z_quality：共识完成后的 Z 质量裁决后处理配置
 - review_scoring：公共 gate、策略 profile 和 PASS/WATCH 门槛
 - reviewers：声明要运行的 reviewer、模型和输出 profile
 
@@ -283,6 +289,7 @@ data/review_consensus/批次/summary.json
 - models：本批实际纳入共识的模型
 - decision_bucket_counts：共同推荐、多数推荐、单模型推荐、无推荐、缺失的数量
 - invariant_violations：共识构建时发现的数据一致性问题
+- z_quality：若已运行 Z 层，记录 Z summary、decisions、裁决统计和 result_mode
 
 data/review_consensus/批次/decisions.json
 
@@ -294,9 +301,22 @@ data/review_consensus/批次/decisions.json
 
 `incomplete` 不应作为最终决策依据，应断点重跑补齐缺失模型。
 
+### Z 精选池
+
+data/z_quality/批次/decisions.json
+
+- z_quality_verdict：A_SELECT / B_WATCH / C_REVIEW_ONLY / REJECT
+- z_quality_score：本地规则 dry-run 质量分
+- quality_reasons：入选或保留观察的核心原因
+- quality_risks：主要硬伤和观察风险
+- next_day_plan：次日条件化观察预案，不是自动买入指令
+- hold_plan：买后观察纪律，供人工参考
+
+当前 Z 层是共识后的后处理器，不绕过多模型复评直接处理原始初选池。
+
 ### 运行产物清理口径
 
-- `data/` 下的 raw、review、runs、analysis、consensus 都是本地运行产物，默认不应提交。
+- `data/` 下的 raw、review、runs、analysis、consensus、z_quality 都是本地运行产物，默认不应提交。
 - 多模型探索过程中可能留下旧模型目录或旧日志；判断当前有效口径时，以 `data/review_consensus/latest.json` 里的 `models` 和 `generated_at` 为准。
 - Workbench 的 pid 文件只能作为启动记录；如果进程不存在，应以实际进程状态为准。
 - 需要给通达信导入时，优先从 Workbench 的“结果中心”或“共识结果”页面发起，避免手工复制 `.blk` 内容。

@@ -7,6 +7,7 @@ multi_model_review.py
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -26,6 +27,25 @@ from pipeline.review_batch import freeze_review_batch
 from pipeline.review_consensus import build_consensus
 
 DEFAULT_CONFIG_PATH = ROOT / "config" / "multi_model_review.yaml"
+PROGRESS_LINE_RE = re.compile(r"^\[(\d+)(?:-(\d+))?/(\d+)\]\s*(.+)$")
+EVENT_LINE_RE = re.compile(r"(\[ERROR\]|\[WARN\]|\[STOP\]|\[INFO\]|失败|错误|限流|重试|完成|已存在|缺少)")
+
+
+@dataclass
+class ReviewerRuntime:
+    spec: dict[str, Any]
+    proc: subprocess.Popen[bytes]
+    log_file: Any
+    log_path: Path
+    started_at: float
+
+
+def timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def log_event(level: str, message: str) -> None:
+    print(f"[{timestamp()}] [{level}] {message}", flush=True)
 
 
 def resolve_path(value: str | Path, *, base: Path = ROOT) -> Path:
@@ -56,6 +76,55 @@ def load_config(path: Path) -> dict[str, Any]:
     if not config:
         raise FileNotFoundError(f"找不到多模型复评配置：{path}")
     return config
+
+
+def refresh_latest_json(path: Path, payload: Any, *, default_root: Path) -> None:
+    write_json(path, payload)
+    try:
+        path.resolve().parent.relative_to(default_root.resolve())
+    except ValueError:
+        return
+    write_json(default_root / "latest.json", payload)
+
+
+def run_z_quality_postprocess(multi_cfg: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any] | None:
+    z_cfg = multi_cfg.get("z_quality") or {}
+    if not isinstance(z_cfg, dict) or not _truthy(z_cfg.get("enabled"), default=False):
+        return None
+
+    import z_quality_review
+
+    config_path = resolve_path(z_cfg.get("config", "config/z_quality_rules.yaml"))
+    config = z_quality_review.load_yaml(config_path)
+    if not config:
+        raise FileNotFoundError(f"找不到 Z 质量规则配置：{config_path}")
+
+    for key in ("raw_dir", "kline_dir", "include_incomplete", "local_rules_only"):
+        if key in z_cfg:
+            config[key] = z_cfg[key]
+
+    summary_file = str((summary.get("files") or {}).get("summary") or "")
+    if not summary_file:
+        raise ValueError("共识 summary 缺少 files.summary，无法运行 Z 质量层")
+    summary_path = resolve_path(summary_file)
+    output_root = resolve_path(z_cfg.get("output_root") or config.get("output_root", "data/z_quality"))
+    max_items = z_cfg.get("max_items", config.get("max_items"))
+    max_items_int = int(max_items) if max_items not in {"", None, 0, "0"} else None
+
+    log_event("INFO", f"开始 Z 质量裁决: consensus={summary_path}")
+    z_summary = z_quality_review.run_z_quality_review(
+        config,
+        summary_path=summary_path,
+        output_root=output_root,
+        max_items=max_items_int,
+    )
+    log_event("INFO", f"Z 质量裁决已写入: {z_summary['files']['summary']}")
+    log_event(
+        "INFO",
+        "Z 裁决统计: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(z_summary.get("verdict_counts", {}).items())),
+    )
+    return z_summary
 
 
 def config_path_for_spec(spec: dict[str, Any], run_dir: Path | None) -> Path:
@@ -109,6 +178,122 @@ def safe_log_name(key: str, *, attempt: int) -> str:
     if attempt > 1:
         name = f"{name}__attempt{attempt}"
     return name
+
+
+def reviewer_group(model_key_value: str) -> str:
+    return str(model_key_value or "reviewer").split("/", 1)[0] or "reviewer"
+
+
+def format_duration(seconds: float) -> str:
+    seconds_i = max(0, int(seconds))
+    minutes, sec = divmod(seconds_i, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{sec:02d}s"
+    if minutes:
+        return f"{minutes}m{sec:02d}s"
+    return f"{sec}s"
+
+
+def tail_text(path: Path, *, max_bytes: int = 16000) -> str:
+    if not path.exists():
+        return ""
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - max_bytes), os.SEEK_SET)
+        return f.read().decode("utf-8", errors="replace")
+
+
+def _shorten_line(line: str, *, limit: int = 220) -> str:
+    line = re.sub(r"\s+", " ", line.strip())
+    if len(line) <= limit:
+        return line
+    return line[: limit - 1] + "…"
+
+
+def progress_snapshot(log_path: Path) -> dict[str, Any]:
+    text = tail_text(log_path)
+    if not text:
+        return {
+            "completed": None,
+            "total": None,
+            "progress_text": "等待输出",
+            "latest": "暂无日志输出",
+        }
+
+    latest_progress = ""
+    latest_event = ""
+    completed: int | None = None
+    total: int | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = PROGRESS_LINE_RE.match(line)
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2) or start)
+            completed = end
+            total = int(match.group(3))
+            latest_progress = line
+            latest_event = line
+            continue
+        if EVENT_LINE_RE.search(line):
+            latest_event = line
+
+    latest = latest_progress or latest_event
+    if completed is not None and total:
+        pct = min(100.0, max(0.0, completed / total * 100))
+        progress_text = f"{completed}/{total} ({pct:.0f}%)"
+    else:
+        progress_text = "等待首条进度"
+        latest = latest or text.splitlines()[-1].strip()
+
+    return {
+        "completed": completed,
+        "total": total,
+        "progress_text": progress_text,
+        "latest": _shorten_line(latest or "暂无可读进度"),
+    }
+
+
+def format_reviewer_progress(
+    *,
+    key: str,
+    status: str,
+    log_path: Path,
+    started_at: float,
+    exit_code: int | None = None,
+) -> str:
+    snapshot = progress_snapshot(log_path)
+    elapsed = format_duration(time.monotonic() - started_at)
+    exit_text = "" if exit_code is None else f", exit={exit_code}"
+    return (
+        f"    - {key}: {status}{exit_text}, elapsed={elapsed}, "
+        f"progress={snapshot['progress_text']}, latest={snapshot['latest']}"
+    )
+
+
+def log_grouped_progress(runtimes: dict[str, ReviewerRuntime], *, attempt: int) -> None:
+    if not runtimes:
+        return
+    log_event("PROGRESS", f"多模型复评进度 attempt={attempt}")
+    groups: dict[str, list[tuple[str, ReviewerRuntime]]] = {}
+    for key, runtime in sorted(runtimes.items()):
+        groups.setdefault(reviewer_group(key), []).append((key, runtime))
+    for group, items in sorted(groups.items()):
+        print(f"  [{group}]", flush=True)
+        for key, runtime in items:
+            print(
+                format_reviewer_progress(
+                    key=key,
+                    status="running",
+                    log_path=runtime.log_path,
+                    started_at=runtime.started_at,
+                ),
+                flush=True,
+            )
 
 
 def read_failure_info(log_path: Path, *, max_lines: int = 160, max_chars: int = 6000) -> dict[str, str]:
@@ -192,15 +377,16 @@ def prepare_reviewer_config(
 def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str], attempt: int = 1) -> dict[str, dict[str, Any]]:
     logs_dir = run_dir / "multi_model_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    processes: dict[str, tuple[subprocess.Popen[bytes], Any, Path]] = {}
+    processes: dict[str, ReviewerRuntime] = {}
     for spec in run_specs:
         key = str(spec["model_key"])
         log_path = logs_dir / f"{safe_log_name(key, attempt=attempt)}.log"
         log_file = open(log_path, "wb")
         cmd = [sys.executable, str(spec["script"]), "--config", str(spec["config"])]
         attempt_label = f" attempt={attempt}" if attempt > 1 else ""
-        print(f"[INFO] 启动 {key}{attempt_label}: {' '.join(cmd)}")
-        print(f"[INFO] {key} log: {log_path}")
+        log_event("START", f"[{reviewer_group(key)}] 启动 {key}{attempt_label}")
+        log_event("COMMAND", " ".join(cmd))
+        log_event("LOG", f"{key} -> {log_path}")
         proc = subprocess.Popen(
             cmd,
             cwd=str(ROOT),
@@ -208,27 +394,45 @@ def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, en
             stderr=subprocess.STDOUT,
             env=env,
         )
-        processes[key] = (proc, log_file, log_path)
+        processes[key] = ReviewerRuntime(
+            spec=spec,
+            proc=proc,
+            log_file=log_file,
+            log_path=log_path,
+            started_at=time.monotonic(),
+        )
 
     results: dict[str, dict[str, Any]] = {}
     last_notice = 0.0
     while processes:
-        for key, (proc, log_file, log_path) in list(processes.items()):
-            code = proc.poll()
+        for key, runtime in list(processes.items()):
+            code = runtime.proc.poll()
             if code is None:
                 continue
-            log_file.close()
+            runtime.log_file.close()
+            duration_seconds = max(0.0, time.monotonic() - runtime.started_at)
             results[key] = {
                 "attempt": attempt,
                 "exit_code": int(code),
-                "log_path": str(log_path),
+                "log_path": str(runtime.log_path),
+                "duration_seconds": round(duration_seconds, 3),
             }
-            print(f"[INFO] {key} 结束，exit={code}，log={log_path}")
+            log_event("DONE", f"[{reviewer_group(key)}] {key} 结束")
+            print(
+                format_reviewer_progress(
+                    key=key,
+                    status="finished",
+                    log_path=runtime.log_path,
+                    started_at=runtime.started_at,
+                    exit_code=int(code),
+                ),
+                flush=True,
+            )
+            print(f"      log={runtime.log_path}", flush=True)
             del processes[key]
         now = time.monotonic()
         if processes and now - last_notice >= 30:
-            running = ", ".join(sorted(processes))
-            print(f"[INFO] 多模型复评仍在运行：{running}")
+            log_grouped_progress(processes, attempt=attempt)
             last_notice = now
         if processes:
             time.sleep(2)
@@ -265,7 +469,10 @@ def main() -> int:
         batch_id=str(args.batch_id or multi_cfg.get("batch_id") or ""),
         strict=bool(multi_cfg.get("strict_batch", True)) and not args.allow_incomplete_batch,
     )
-    print(f"[INFO] review_batch={manifest['batch_id']} pick_date={manifest['pick_date']} candidates={manifest['candidate_count']}")
+    log_event(
+        "INFO",
+        f"review_batch={manifest['batch_id']} pick_date={manifest['pick_date']} candidates={manifest['candidate_count']}",
+    )
 
     review_runs_dir = resolve_path(multi_cfg.get("review_runs_dir", "data/review_runs"))
     consensus_root = resolve_path(multi_cfg.get("consensus_dir", "data/review_consensus"))
@@ -282,7 +489,7 @@ def main() -> int:
             run_dir=run_dir,
             review_runs_dir=review_runs_dir,
         )
-        print(f"[INFO] reviewer config: {run_spec['model_key']} -> {runtime_path}")
+        log_event("CONFIG", f"{run_spec['model_key']} -> {runtime_path}")
         run_specs.append(run_spec)
 
     run_specs_path = review_runs_dir / str(manifest["batch_id"]) / "review_runs.json"
@@ -309,7 +516,7 @@ def main() -> int:
     ]
     if failed_specs and _truthy(multi_cfg.get("rerun_failed_models_once"), default=True):
         failed_keys = ", ".join(str(spec["model_key"]) for spec in failed_specs)
-        print(f"[WARN] 以下模型首轮失败，将按原模型重跑一次（skip_existing 会跳过已完成结果）：{failed_keys}")
+        log_event("WARN", f"以下模型首轮失败，将按原模型重跑一次（skip_existing 会跳过已完成结果）：{failed_keys}")
         second_results = run_reviewers_parallel(failed_specs, run_dir=run_dir, env=env, attempt=2)
         for spec in failed_specs:
             key = str(spec["model_key"])
@@ -342,18 +549,29 @@ def main() -> int:
         threshold=float(multi_cfg.get("suggest_min_score", 4.0)),
         review_scoring=multi_cfg.get("review_scoring"),
     )
+    z_summary = run_z_quality_postprocess(multi_cfg, summary)
+    if z_summary:
+        summary["z_quality"] = {
+            "summary": z_summary["files"]["summary"],
+            "decisions": z_summary["files"]["decisions"],
+            "processed_count": z_summary.get("processed_count"),
+            "verdict_counts": z_summary.get("verdict_counts", {}),
+            "result_mode": z_summary.get("result_mode"),
+        }
+        refresh_latest_json(Path(summary["files"]["summary"]), summary, default_root=consensus_root)
     write_json(run_specs_path, {"batch_id": manifest["batch_id"], "reviewers": run_specs, "summary": summary})
 
-    print(f"[INFO] 共识汇总已写入: {summary['files']['summary']}")
-    print(
-        "[INFO] 决策统计: "
-        + ", ".join(f"{key}={value}" for key, value in sorted(summary.get("decision_bucket_counts", {}).items()))
+    log_event("INFO", f"共识汇总已写入: {summary['files']['summary']}")
+    log_event(
+        "INFO",
+        "决策统计: "
+        + ", ".join(f"{key}={value}" for key, value in sorted(summary.get("decision_bucket_counts", {}).items())),
     )
     failed_models = [key for key, code in exit_codes.items() if code not in (0, None)]
     if failed_models:
-        print(f"[ERROR] 以下模型进程失败: {failed_models}")
+        log_event("ERROR", f"以下模型进程失败: {failed_models}")
     if not summary.get("complete"):
-        print("[ERROR] 共识汇总不完整：存在模型缺失评分，可断点重跑多模型复评。")
+        log_event("ERROR", "共识汇总不完整：存在模型缺失评分，可断点重跑多模型复评。")
     return 1 if failed_models or not summary.get("complete") else 0
 
 

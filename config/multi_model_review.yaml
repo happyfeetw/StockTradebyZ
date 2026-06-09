@@ -20,21 +20,26 @@ skip_existing: true
 classic_pattern_enabled: true
 group_review_by_strategy: true
 
+# 命令行 reviewer 必须只运行本配置声明的模型；不可用/失败时记录原因，
+# 最后一轮按原模型重跑一次，不允许自动替换成其它模型。
+no_model_substitution: true
+rerun_failed_models_once: true
+
 review_scoring:
   enabled: true
   common_gate:
     enabled: true
-    pass_min: 3.0
-    watch_min: 2.4
-    hard_fail_below: 2.0
+    pass_min: 3.2
+    watch_min: 2.6
+    hard_fail_below: 2.2
     watch_caps_strategy_pass: true
   strategy_profiles:
     b1:
-      pass_min: 4.0
-      watch_min: 3.3
-    b2:
       pass_min: 4.1
       watch_min: 3.4
+    b2:
+      pass_min: 4.2
+      watch_min: 3.5
     brick:
       pass_min: 4.2
       watch_min: 3.5

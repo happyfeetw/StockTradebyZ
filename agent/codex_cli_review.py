@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model_profile": FIXED_MODEL_PROFILE,
     "reasoning_effort": FIXED_REASONING_EFFORT,
     "speed_tier": FIXED_SPEED_TIER,
+    "force_fixed_model": True,
     "timeout_seconds": 900,
     "request_delay": 1,
     "batch_size": DEFAULT_BATCH_SIZE,
@@ -124,10 +125,16 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["max_items"] = _optional_int(cfg.get("max_items"))
     cfg["retry_backoff_seconds"] = _float_list(cfg.get("retry_backoff_seconds", [30, 90]))
 
-    cfg["model"] = FIXED_MODEL
-    cfg["model_profile"] = FIXED_MODEL_PROFILE
-    cfg["reasoning_effort"] = FIXED_REASONING_EFFORT
-    cfg["speed_tier"] = FIXED_SPEED_TIER
+    if bool(cfg.get("force_fixed_model", True)):
+        cfg["model"] = FIXED_MODEL
+        cfg["model_profile"] = FIXED_MODEL_PROFILE
+        cfg["reasoning_effort"] = FIXED_REASONING_EFFORT
+        cfg["speed_tier"] = FIXED_SPEED_TIER
+    else:
+        cfg["model"] = str(cfg.get("model") or FIXED_MODEL)
+        cfg["model_profile"] = str(cfg.get("model_profile") or cfg["model"])
+        cfg["reasoning_effort"] = str(cfg.get("reasoning_effort") or FIXED_REASONING_EFFORT)
+        cfg["speed_tier"] = str(cfg.get("speed_tier") or FIXED_SPEED_TIER)
     return cfg
 
 
@@ -280,6 +287,10 @@ class CodexCliReviewer(BaseReviewer):
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
         self.codex_bin = str(config.get("codex_bin", "codex"))
+        self.model = str(config.get("model") or FIXED_MODEL)
+        self.model_profile = str(config.get("model_profile") or self.model)
+        self.reasoning_effort = str(config.get("reasoning_effort") or FIXED_REASONING_EFFORT)
+        self.speed_tier = str(config.get("speed_tier") or FIXED_SPEED_TIER)
         self.timeout_seconds = int(config.get("timeout_seconds", 900))
         self.raw_log_root: Path | None = None
         self.cli_call_index = 0
@@ -353,11 +364,11 @@ class CodexCliReviewer(BaseReviewer):
             "--ignore-user-config",
             "--ignore-rules",
             "-c",
-            f'model_reasoning_effort="{FIXED_REASONING_EFFORT}"',
+            f'model_reasoning_effort="{self.reasoning_effort}"',
             "-c",
             "fast_default_opt_out=true",
             "--model",
-            FIXED_MODEL,
+            self.model,
             "--sandbox",
             "read-only",
             "--ephemeral",
@@ -402,11 +413,11 @@ class CodexCliReviewer(BaseReviewer):
             )
             print(
                 "[Command] Codex CLI 实际命令: "
-                f"{self.codex_bin} exec --model {FIXED_MODEL} "
-                f"-c model_reasoning_effort={FIXED_REASONING_EFFORT} "
+                f"{self.codex_bin} exec --model {self.model} "
+                f"-c model_reasoning_effort={self.reasoning_effort} "
                 f"-c fast_default_opt_out=true --image <{len(image_paths)} files> --output-schema <schema> <prompt>"
             )
-            print(f"[INFO] Codex model: {FIXED_MODEL}, reasoning={FIXED_REASONING_EFFORT}, speed={FIXED_SPEED_TIER}")
+            print(f"[INFO] Codex model: {self.model}, reasoning={self.reasoning_effort}, speed={self.speed_tier}")
             if raw_dir is not None:
                 print(f"[INFO] Codex CLI raw log: {raw_dir}")
                 self._write_json(
@@ -417,10 +428,10 @@ class CodexCliReviewer(BaseReviewer):
                         "command": cmd,
                         "codes": codes,
                         "image_paths": [str(path) for path in image_paths],
-                        "model": FIXED_MODEL,
-                        "model_profile": FIXED_MODEL_PROFILE,
-                        "reasoning_effort": FIXED_REASONING_EFFORT,
-                        "speed_tier": FIXED_SPEED_TIER,
+                        "model": self.model,
+                        "model_profile": self.model_profile,
+                        "reasoning_effort": self.reasoning_effort,
+                        "speed_tier": self.speed_tier,
                         "timeout_seconds": self.timeout_seconds,
                     },
                 )
@@ -454,10 +465,10 @@ class CodexCliReviewer(BaseReviewer):
                         "codes": codes,
                         "image_paths": [str(path) for path in image_paths],
                         "exit_code": result.returncode,
-                        "model": FIXED_MODEL,
-                        "model_profile": FIXED_MODEL_PROFILE,
-                        "reasoning_effort": FIXED_REASONING_EFFORT,
-                        "speed_tier": FIXED_SPEED_TIER,
+                        "model": self.model,
+                        "model_profile": self.model_profile,
+                        "reasoning_effort": self.reasoning_effort,
+                        "speed_tier": self.speed_tier,
                         "timeout_seconds": self.timeout_seconds,
                     },
                 )
@@ -525,10 +536,10 @@ class CodexCliReviewer(BaseReviewer):
             payload["code"] = code
             payload["strategy"] = strategy or payload.get("strategy", "")
             payload["reviewer"] = REVIEWER_KEY
-            payload["model"] = FIXED_MODEL
-            payload["model_profile"] = FIXED_MODEL_PROFILE
-            payload["reasoning_effort"] = FIXED_REASONING_EFFORT
-            payload["speed_tier"] = FIXED_SPEED_TIER
+            payload["model"] = self.model
+            payload["model_profile"] = self.model_profile
+            payload["reasoning_effort"] = self.reasoning_effort
+            payload["speed_tier"] = self.speed_tier
             payload["json_output_mode"] = "output-schema"
             payload["json_schema_valid"] = True
             normalized.append(payload)
@@ -600,7 +611,7 @@ class CodexCliReviewer(BaseReviewer):
                     time.sleep(delay)
                 right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
                 return left_results + right_results, left_failed + right_failed
-            print("[INFO] Codex 小批量失败，降级为逐只复评。")
+            print("[INFO] Codex 小批量失败，使用同一模型逐只复评。")
             results: list[dict[str, Any]] = []
             failed: list[str] = []
             for item in items:
@@ -622,7 +633,7 @@ class CodexCliReviewer(BaseReviewer):
             candidates = candidates[: int(max_items)]
         batch_size = int(self.config.get("batch_size", DEFAULT_BATCH_SIZE))
         print(f"[INFO] pick_date={pick_date}，Codex 复评股票数={len(candidates)}，batch_size={batch_size}")
-        print(f"[INFO] Codex reviewer 固定模型：{FIXED_MODEL} / reasoning={FIXED_REASONING_EFFORT} / speed={FIXED_SPEED_TIER}")
+        print(f"[INFO] Codex reviewer 模型：{self.model} / reasoning={self.reasoning_effort} / speed={self.speed_tier}")
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -695,7 +706,7 @@ class CodexCliReviewer(BaseReviewer):
             print(f"[WARN] 未处理股票：{failed_codes}")
         if not all_results:
             print("[ERROR] 没有可用的 Codex 复评结果，跳过汇总。")
-            return
+            raise SystemExit(1)
 
         suggestion = self.generate_suggestion(
             pick_date=pick_date,
@@ -708,10 +719,10 @@ class CodexCliReviewer(BaseReviewer):
         suggestion.update(
             {
                 "reviewer": REVIEWER_KEY,
-                "model": FIXED_MODEL,
-                "model_profile": FIXED_MODEL_PROFILE,
-                "reasoning_effort": FIXED_REASONING_EFFORT,
-                "speed_tier": FIXED_SPEED_TIER,
+                "model": self.model,
+                "model_profile": self.model_profile,
+                "reasoning_effort": self.reasoning_effort,
+                "speed_tier": self.speed_tier,
                 "review_complete": not failed_codes and not pending,
                 "total_candidates": len(candidates),
                 "failed_or_skipped": failed_codes,
@@ -721,6 +732,8 @@ class CodexCliReviewer(BaseReviewer):
         suggestion_file = out_dir / "suggestion.json"
         self._write_json(suggestion_file, suggestion)
         print(f"[INFO] Codex 汇总已写入: {suggestion_file}")
+        if not suggestion["review_complete"]:
+            raise SystemExit(1)
 
 
 def main() -> None:

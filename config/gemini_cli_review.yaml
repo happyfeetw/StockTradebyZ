@@ -40,7 +40,7 @@ save_raw_cli_io: true
 # 原始调用日志目录；留空时使用 data/review/{pick_date}/gemini_cli_runs
 raw_log_dir: ""
 
-# 批量返回解析失败、超时或流式连接中断时，是否自动拆批并最终降级逐只复评
+# 批量返回解析失败、超时或流式连接中断时，是否使用同一模型自动拆批并最终逐只复评
 fallback_to_single_on_batch_error: true
 
 # 遇到 429/RESOURCE_EXHAUSTED/No capacity available/Premature close 等错误时的退避序列（秒）
@@ -55,8 +55,8 @@ retry_backoff_seconds:
 retry_jitter_ratio: 0.2
 
 # 单次运行最多新发起多少次 Gemini CLI 请求；null 表示不限制
-# 注意：如果批量请求持续失败并降级逐只复评，请同步提高该值或分多次断点续跑
-max_requests_per_run: 50
+# 注意：如果批量请求持续失败并拆到逐只复评，请同步提高该值或分多次断点续跑
+max_requests_per_run: 2000
 
 # 项目侧每日请求预算；null 表示不限制
 daily_request_budget: 2000

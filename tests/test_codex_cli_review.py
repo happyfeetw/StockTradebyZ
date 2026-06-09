@@ -42,7 +42,7 @@ def valid_review_payload(**overrides):
 
 
 class CodexCliReviewerTests(unittest.TestCase):
-    def make_reviewer(self, tmp_path: Path) -> codex_cli_review.CodexCliReviewer:
+    def make_reviewer(self, tmp_path: Path, **config_overrides) -> codex_cli_review.CodexCliReviewer:
         prompt_path = tmp_path / "prompt.md"
         prompt_path.write_text("评分规则", encoding="utf-8")
         config = {
@@ -51,6 +51,7 @@ class CodexCliReviewerTests(unittest.TestCase):
             "prompt_path": prompt_path,
             "kline_dir": tmp_path,
             "output_dir": tmp_path / "review",
+            **config_overrides,
         }
         return codex_cli_review.CodexCliReviewer(config)
 
@@ -101,6 +102,46 @@ class CodexCliReviewerTests(unittest.TestCase):
         self.assertEqual(parsed[0]["reasoning_effort"], "high")
         self.assertEqual(parsed[0]["speed_tier"], "standard")
         self.assertEqual(parsed[0]["json_output_mode"], "output-schema")
+
+    def test_explicit_unfixed_model_override_updates_command_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(
+                Path(tmp),
+                model="gpt-5.4",
+                model_profile="gpt-5.4-medium-standard",
+                reasoning_effort="medium",
+                speed_tier="standard",
+                force_fixed_model=False,
+            )
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+            result = subprocess.CompletedProcess(
+                args=["codex"],
+                returncode=0,
+                stdout=json.dumps({"reviews": [valid_review_payload()]}, ensure_ascii=False),
+                stderr="",
+            )
+            parsed = reviewer._parse_result(
+                result,
+                items=[{"code": "000001", "strategy": "b1"}],
+            )
+
+        self.assertIn("gpt-5.4", cmd)
+        self.assertIn('model_reasoning_effort="medium"', cmd)
+        self.assertEqual(parsed[0]["model"], "gpt-5.4")
+        self.assertEqual(parsed[0]["model_profile"], "gpt-5.4-medium-standard")
+        self.assertEqual(parsed[0]["reasoning_effort"], "medium")
 
     def test_output_schema_is_strict_for_codex_structured_output(self) -> None:
         schema = codex_cli_review.output_schema(2)
@@ -167,6 +208,35 @@ class CodexCliReviewerTests(unittest.TestCase):
 
         self.assertEqual(cfg["model"], "gpt-5.5")
         self.assertEqual(cfg["reasoning_effort"], "high")
+        self.assertEqual(cfg["speed_tier"], "standard")
+
+    def test_load_config_allows_model_override_when_explicitly_unfixed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "codex.yaml"
+            prompt = Path(tmp) / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    [
+                        f"prompt_path: {prompt}",
+                        f"kline_dir: {tmp}",
+                        f"output_dir: {tmp}/review",
+                        "candidates: data/candidates/candidates_latest.json",
+                        "force_fixed_model: false",
+                        "model: gpt-5.4",
+                        "model_profile: gpt-5.4-medium-standard",
+                        "reasoning_effort: medium",
+                        "speed_tier: standard",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = codex_cli_review.load_config(path)
+
+        self.assertEqual(cfg["model"], "gpt-5.4")
+        self.assertEqual(cfg["model_profile"], "gpt-5.4-medium-standard")
+        self.assertEqual(cfg["reasoning_effort"], "medium")
         self.assertEqual(cfg["speed_tier"], "standard")
 
 

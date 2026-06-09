@@ -12,6 +12,8 @@
 
 推荐阈值不再使用单一全局 `4.0`。评分归一化仍由 `BaseReviewer.normalize_scores()` 完成，但现在分成三层：公共条件 gate、策略 profile 评分、共识汇总评分。
 
+当前默认策略是“模型不替换”：配置中声明哪个模型，就只运行哪个模型。模型不可用、超时、配额失败或位置限制失败时，系统记录失败原因，并按同一模型断点重跑一次；不会自动换成更便宜、更快或其它供应商模型。
+
 ## Flow
 
 ```mermaid
@@ -54,6 +56,15 @@ python agent/multi_model_review.py --run-dir data/runs/<run_id>
 
 多模型之间并行执行；每个工具内部按批串行处理，默认 `batch_size: 5`。各 reviewer 会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。各 reviewer 写入独立目录，不覆盖正式 Gemini CLI 结果。
 
+`config/multi_model_review.yaml` 中的模型声明是复评边界：
+
+- `no_model_substitution: true`：禁止 `fallback_model`、`substitute_model`、`fallback_reviewer` 等替换配置。
+- `rerun_failed_models_once: true`：所有模型首轮结束后，只对失败模型按原模型再跑一次。
+- `skip_existing: true`：重跑时跳过已经写好的单股结果，用于补齐失败或缺失项。
+- Codex 正式路径默认锁定 `gpt-5.5`、`reasoning_effort=high`、标准速度；如需临时试验非 5.5，必须显式 `force_fixed_model: false`，并且不能作为正式降级替换。
+
+进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。任一正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。
+
 ## Strategy Review Scoring
 
 评分体系主要落在 AI 复评环节，前置 `fetch_kline -> run_preselect -> code+strategy 去重` 不改变。
@@ -64,13 +75,33 @@ python agent/multi_model_review.py --run-dir data/runs/<run_id>
 2. 策略 profile：公共 gate 通过后，按来源策略解释同名字段和权重。`b1` 偏回调建仓质量，`b2` 偏确认强度和量价接管，`brick` 偏绿转红后 1-4 日超短延续。
 3. 本地归一化：模型仍输出统一 JSON，但 `total_score`、`verdict` 会由本地程序按 `config/multi_model_review.yaml` 中的 `review_scoring` 和默认 profile 重算。
 
+默认公共 gate：
+
+| 项目 | 数值 |
+|---|---:|
+| PASS | 3.2 |
+| WATCH | 2.6 |
+| hard_fail_below | 2.2 |
+
+公共 gate 中 `trend_qualification`、`support_stop_loss_control`、`overhead_room`、`volume_health` 任一项 `<= 1` 会硬否决；任一核心项 `<= 2` 时，即使平均分较高，公共 gate 也最多 WATCH。
+
 默认策略门槛：
 
 | strategy | PASS | WATCH | 目标 |
 |---|---:|---:|---|
-| `b1` | 4.0 | 3.3 | 回调建仓是否值得跟踪/试仓 |
-| `b2` | 4.1 | 3.4 | B1 后确认是否足够强 |
+| `b1` | 4.1 | 3.4 | 回调建仓是否值得跟踪/试仓 |
+| `b2` | 4.2 | 3.5 | B1 后确认是否足够强 |
 | `brick` | 4.2 | 3.5 | 绿转红后 1-4 日延续概率 |
+
+默认策略权重：
+
+| strategy | trend_structure | price_position | volume_behavior | previous_abnormal_move | classic_pattern_match |
+|---|---:|---:|---:|---:|---:|
+| `b1` | 20% | 35% | 25% | 10% | 10% |
+| `b2` | 15% | 20% | 40% | 10% | 15% |
+| `brick` | 10% | 25% | 25% | 10% | 30% |
+
+策略 profile 也包含低分上限：例如 B1 的 `price_position` 或 `volume_behavior` 只有 2 分时，即使总分达到 PASS，也会被压到 WATCH；Brick 的 `classic_pattern_match` 只有 1 分时会硬否决。
 
 每个复评 JSON 会保留：
 
@@ -131,11 +162,28 @@ Workbench 新增：
 - 复评配置 -> `Codex GPT-5.5`
 - 复评配置 -> `多模型复评`
 - 侧边栏 -> `共识结果`
+- 共识结果 -> `导入通达信`
 
 `共识结果` 包含两个视图：
 
 - 决策结果集：按策略和决策分组查看最终股票集合。
 - 模型评分明细：按策略、模型和推荐状态查看每个模型的评分与意见。
+
+共识结果导入通达信时，可以使用快捷方案或自定义筛选：
+
+- 共同推荐：所有模型均 PASS。
+- 多模型推荐：推荐模型数达到多数。
+- 单模型推荐：仅一个模型 PASS，适合复盘分歧。
+- 共同观察、多模型观察、单模型观察：用于跟踪 WATCH 样本。
+- 分歧样本：至少一个模型推荐且至少一个模型不推荐。
+
+导入前会按策略分组生成板块，板块名前缀区分来源，例如多数推荐使用 `CM`，共同推荐使用 `CA`。导入链路复用正式结果中心的通达信导出能力，支持下载 `.bat`、浏览器写入和本地路径直写。
+
+## Cleanup Notes
+
+多模型探索阶段可能在 `data/review_runs/{batch_id}` 或 `data/runs/<run_id>/multi_model_logs` 留下历史试验模型目录，例如临时的 2.5/5.4/Claude 路径。判断某个批次的当前有效口径时，以 `data/review_consensus/{batch_id}/summary.json` 中的 `models`、`generated_at` 和 `complete` 为准，而不是目录下所有曾经出现过的模型文件。
+
+`data/review_consensus/latest.json` 只表示最近一次成功写出的共识 summary。若 workbench pid 文件存在但进程已退出，该 pid 文件只是历史启动记录，不代表工作台仍在运行。
 
 ## Backtest Plan
 

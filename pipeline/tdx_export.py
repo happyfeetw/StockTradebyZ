@@ -69,7 +69,32 @@ def import_bat_filename(pick_date: str) -> str:
 
 
 def import_html_filename(pick_date: str, mode_label: str) -> str:
-    mode_suffix = "recommended" if mode_label == "仅推荐" else "all"
+    if mode_label == "仅推荐":
+        mode_suffix = "recommended"
+    elif mode_label == "全部候选":
+        mode_suffix = "all"
+    else:
+        text = str(mode_label or "")
+        if "共同推荐" in text:
+            mode_suffix = "consensus_all_recommended"
+        elif "多模型推荐" in text:
+            mode_suffix = "consensus_multi_recommended"
+        elif "单模型推荐" in text:
+            mode_suffix = "consensus_single_recommended"
+        elif "共同观察" in text:
+            mode_suffix = "consensus_all_watch"
+        elif "多模型观察" in text:
+            mode_suffix = "consensus_multi_watch"
+        elif "单模型观察" in text:
+            mode_suffix = "consensus_single_watch"
+        elif "观察" in text:
+            mode_suffix = "consensus_watch"
+        elif "分歧" in text:
+            mode_suffix = "consensus_divergent"
+        elif "共识" in text:
+            mode_suffix = "consensus"
+        else:
+            mode_suffix = re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_").lower() or "custom"
     return f"tdx_import_{date_suffix(pick_date)}_{mode_suffix}.html"
 
 
@@ -128,20 +153,24 @@ def to_tdx_code(code: str) -> str | None:
     return None
 
 
-def _block_name(pick_date: str, strategy: str) -> str:
-    """生成板块文件名：MMDD + Q + 策略名，如 0529QB1"""
+def _date_mmdd(pick_date: str) -> str:
     try:
         dt = pick_date.strip()
         if len(dt) == 10 and dt[4] == "-":
-            mmdd = dt[5:7] + dt[8:10]
-        else:
-            mmdd = dt[4:6] + dt[6:8] if len(dt) >= 8 else dt
+            return dt[5:7] + dt[8:10]
+        return dt[4:6] + dt[6:8] if len(dt) >= 8 else dt
     except (IndexError, ValueError):
-        mmdd = pick_date.replace("-", "")[-4:]
+        return pick_date.replace("-", "")[-4:]
+
+
+def _block_name(pick_date: str, strategy: str, prefix: str = "Q") -> str:
+    """生成板块文件名：MMDD + 前缀 + 策略名，如 0529QB1。"""
+    mmdd = _date_mmdd(pick_date)
+    safe_prefix = re.sub(r"[^0-9A-Za-z]+", "", str(prefix or "Q"))[:4] or "Q"
     strategy_display = {"b1": "B1", "b2": "B2", "brick": "Brick"}.get(
         strategy.lower(), strategy
     )
-    return f"{mmdd}Q{strategy_display}"
+    return f"{mmdd}{safe_prefix}{strategy_display}"
 
 
 def _strategy_label(strategy: str) -> str:
@@ -232,7 +261,13 @@ def _items_from_latest_candidates(pick_date: str, recommendations: dict[str, dic
     return items
 
 
-def _build_block_payload(pick_date: str, strategy: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _build_block_payload(
+    pick_date: str,
+    strategy: str,
+    items: list[dict[str, Any]],
+    *,
+    name_prefix: str = "Q",
+) -> dict[str, Any] | None:
     lines: list[str] = []
     samples: list[str] = []
     skipped = 0
@@ -248,7 +283,7 @@ def _build_block_payload(pick_date: str, strategy: str, items: list[dict[str, An
             samples.append(code.zfill(6))
     if not lines:
         return None
-    name = _block_name(pick_date, strategy)
+    name = _block_name(pick_date, strategy, prefix=name_prefix)
     content_bytes = ("\r\n".join(lines) + "\r\n").encode("gbk")
     return {
         "name": name,
@@ -341,6 +376,58 @@ def build_blocks(
         if block:
             blocks.append(block)
 
+    return blocks
+
+
+def build_blocks_from_items(
+    pick_date: str,
+    source_items: list[dict[str, Any]],
+    *,
+    name_prefix: str = "C",
+) -> list[dict[str, Any]]:
+    """从已筛选条目生成按策略分组的通达信板块。
+
+    `source_items` 至少需要包含 code、strategy，可选 score/recommended/rank。
+    该 helper 供共识结果等非正式 Gemini 来源复用导入链路。
+    """
+    if not pick_date:
+        raise ValueError("无法确定选股日期")
+
+    strategy_groups: dict[str, list[dict[str, Any]]] = {}
+    for item in source_items:
+        code = str(item.get("code") or "")
+        strategy_raw = str(item.get("strategy") or "")
+        if not code or not strategy_raw:
+            continue
+        strategy = _strategy_label(strategy_raw)
+        strategy_groups.setdefault(strategy, []).append(
+            {
+                "code": code,
+                "score": item.get("score"),
+                "recommended": bool(item.get("recommended")),
+                "rank": item.get("rank"),
+            }
+        )
+
+    for items in strategy_groups.values():
+        items.sort(
+            key=lambda x: (
+                not bool(x.get("recommended")),
+                -(float(x.get("score") or 0)),
+                str(x.get("code") or ""),
+            )
+        )
+
+    blocks: list[dict[str, Any]] = []
+    for strategy in sorted(strategy_groups.keys()):
+        block = _build_block_payload(
+            pick_date,
+            strategy,
+            strategy_groups[strategy],
+            name_prefix=name_prefix,
+        )
+        if block:
+            blocks.append(block)
     return blocks
 
 

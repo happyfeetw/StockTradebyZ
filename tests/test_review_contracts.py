@@ -84,9 +84,9 @@ class ReviewContractTests(unittest.TestCase):
 
         self.assertEqual(normalized["scores"]["previous_abnormal_move"], 2.0)
         self.assertEqual(normalized["scores"]["classic_pattern_match"], 5.0)
-        self.assertEqual(normalized["strategy_score"], 4.25)
-        self.assertEqual(normalized["total_score"], 4.25)
-        self.assertEqual(normalized["verdict"], "PASS")
+        self.assertEqual(normalized["strategy_score"], 4.1)
+        self.assertEqual(normalized["total_score"], 4.1)
+        self.assertEqual(normalized["verdict"], "WATCH")
         self.assertEqual(normalized["common_gate_status"], "PASS")
 
     def test_strategy_profile_non_match_lowers_strategy_score(self) -> None:
@@ -143,7 +143,7 @@ class ReviewContractTests(unittest.TestCase):
 
         normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
 
-        self.assertLess(normalized["total_score"], 4.0)
+        self.assertLess(normalized["total_score"], normalized["score_profile"]["pass_min"])
         self.assertEqual(normalized["verdict"], "FAIL")
         self.assertEqual(normalized["score_before_hard_veto"], 4.0)
         self.assertIn("common_gate.volume_health <= 1", normalized["hard_veto_reason"])
@@ -177,10 +177,72 @@ class ReviewContractTests(unittest.TestCase):
         normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
 
         self.assertEqual(normalized["strategy_score"], 5.0)
-        self.assertLess(normalized["total_score"], 4.0)
+        self.assertLess(normalized["total_score"], normalized["score_profile"]["pass_min"])
         self.assertEqual(normalized["verdict"], "FAIL")
         self.assertEqual(normalized["common_gate_status"], "FAIL")
         self.assertIn("上方标准压力过近", normalized["hard_veto_reason"])
+
+    def test_common_gate_core_two_caps_strategy_pass_to_watch(self) -> None:
+        result = {
+            "strategy": "b1",
+            "total_score": 5.0,
+            "common_gate": {
+                "scores": {
+                    "trend_qualification": 2,
+                    "support_stop_loss_control": 5,
+                    "overhead_room": 5,
+                    "volume_health": 5,
+                    "post_entry_discipline": 5,
+                }
+            },
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 5,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 5,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
+
+        self.assertEqual(normalized["strategy_score"], 5.0)
+        self.assertEqual(normalized["common_gate_status"], "WATCH")
+        self.assertEqual(normalized["common_gate"]["watch_cap_reasons"], ["common_gate.trend_qualification <= 2"])
+        self.assertEqual(normalized["verdict"], "WATCH")
+        self.assertEqual(normalized["total_score"], 4.09)
+        self.assertEqual(normalized["score_before_common_gate_cap"], 5.0)
+
+    def test_strategy_profile_core_two_caps_strategy_pass_to_watch(self) -> None:
+        result = {
+            "strategy": "b2",
+            "total_score": 5.0,
+            "common_gate": {
+                "scores": {
+                    "trend_qualification": 5,
+                    "support_stop_loss_control": 5,
+                    "overhead_room": 5,
+                    "volume_health": 5,
+                    "post_entry_discipline": 5,
+                }
+            },
+            "scores": {
+                "trend_structure": 5,
+                "price_position": 2,
+                "volume_behavior": 5,
+                "previous_abnormal_move": 5,
+                "classic_pattern_match": 5,
+            },
+        }
+
+        normalized = BaseReviewer.normalize_scores(result, {"classic_pattern_enabled": True})
+
+        self.assertEqual(normalized["strategy_score"], 4.4)
+        self.assertEqual(normalized["common_gate_status"], "PASS")
+        self.assertEqual(normalized["verdict"], "WATCH")
+        self.assertEqual(normalized["total_score"], 4.19)
+        self.assertEqual(normalized["score_before_strategy_cap"], 4.4)
+        self.assertEqual(normalized["watch_cap_reasons"], ["strategy_profile.price_position <= 2"])
 
     def test_composite_strategy_uses_base_four_dimension_weight(self) -> None:
         result = {
@@ -233,8 +295,8 @@ class ReviewContractTests(unittest.TestCase):
         disabled = BaseReviewer.normalize_scores(deepcopy(brick_result), {"classic_pattern_enabled": False})
         unknown = BaseReviewer.normalize_scores(deepcopy(unknown_result), {"classic_pattern_enabled": True})
 
-        self.assertEqual(enabled["total_score"], 4.25)
-        self.assertEqual(disabled["total_score"], 3.75)
+        self.assertEqual(enabled["total_score"], 4.1)
+        self.assertEqual(disabled["total_score"], 3.71)
         self.assertEqual(disabled["scores"]["classic_pattern_match"], 0.0)
         self.assertEqual(unknown["total_score"], 3.8)
         self.assertEqual(unknown["scores"]["classic_pattern_match"], 0.0)

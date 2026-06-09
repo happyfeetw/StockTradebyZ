@@ -1470,7 +1470,7 @@ def render_review_config() -> None:
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
             cfg["save_raw_cli_io"] = st.toggle("保存 Codex 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
             cfg["fallback_to_single_on_batch_error"] = st.toggle(
-                "批量失败后降级逐只复评",
+                "批量失败后拆小批/逐只复评（同一模型）",
                 value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
             )
             codex_path = shutil.which(str(cfg.get("codex_bin", "codex")))
@@ -1507,6 +1507,16 @@ def render_review_config() -> None:
             cfg["batch_size"] = st.number_input("默认批处理大小", min_value=1, max_value=20, value=int(cfg.get("batch_size", 5)))
             cfg["strict_batch"] = st.toggle("批次完整性严格校验", value=bool(cfg.get("strict_batch", True)))
             cfg["skip_existing"] = st.toggle("各模型断点续跑", value=bool(cfg.get("skip_existing", True)))
+            cfg["no_model_substitution"] = st.toggle(
+                "禁止模型替换/降级",
+                value=bool(cfg.get("no_model_substitution", True)),
+                help="模型不可用或失败时只记录原因，并按同一模型重跑；不会自动替换成其它模型。",
+            )
+            cfg["rerun_failed_models_once"] = st.toggle(
+                "失败模型结束后重跑一次",
+                value=bool(cfg.get("rerun_failed_models_once", True)),
+                help="多模型首轮完成后，仅对失败模型按原模型再跑一次；已完成结果通过 skip_existing 跳过。",
+            )
             cfg["classic_pattern_enabled"] = st.toggle(
                 "统一启用经典图形匹配",
                 value=bool(cfg.get("classic_pattern_enabled", True)),
@@ -1539,7 +1549,7 @@ def render_review_config() -> None:
                 )
         cfg["reviewers"] = reviewers
         st.markdown(
-            "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动各 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>，最后生成 <code>data/review_consensus/{batch_id}</code>。</div>",
+            "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动配置中声明的 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>；失败模型会记录日志和失败原因，可按原模型断点重跑，不会自动替换模型。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.multi_model_review_cfg = cfg
@@ -1582,7 +1592,7 @@ def render_review_config() -> None:
         cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
         cfg["save_raw_cli_io"] = st.toggle("保存 CLI 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
         cfg["fallback_to_single_on_batch_error"] = st.toggle(
-            "批量失败后降级逐只复评",
+            "批量失败后拆小批/逐只复评（同一模型）",
             value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
         )
         cfg["stop_on_rate_limit"] = st.toggle("重试耗尽后命中限流则停止", value=bool(cfg.get("stop_on_rate_limit", False)))
@@ -1932,6 +1942,115 @@ def render_tdx_browser_import(blocks: list[dict[str, Any]], pick_date: str, mode
     components.html(launcher, height=96)
 
 
+def render_tdx_blocks_preview(blocks: list[dict[str, Any]]) -> None:
+    total = sum(b["count"] for b in blocks)
+    st.caption(f"共 {len(blocks)} 个板块，{total} 只股票 — 板块名：{'、'.join(b['name'] for b in blocks)}")
+    st.table(
+        [
+            {
+                "板块名称": b["name"],
+                "股票数量": f"{b['count']}只",
+                "示例代码": "、".join(b.get("samples") or []),
+            }
+            for b in blocks
+        ]
+    )
+
+
+def render_tdx_import_tabs(
+    blocks: list[dict[str, Any]],
+    pick_date: str,
+    mode_label: str,
+    *,
+    key_suffix: str,
+) -> None:
+    tab_download, tab_browser, tab_local = st.tabs([
+        "下载一键导入脚本（推荐）",
+        "独立页面写入 .blk（诊断/备用）",
+        "直接写入本地路径（服务与软件在同台电脑）",
+    ])
+    safe_key = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(key_suffix or mode_label or "tdx"))
+
+    with tab_download:
+        st.write("##### **使用说明：**")
+        st.markdown(
+            "1. 点击下方按钮下载 `.bat` 脚本文件。\n"
+            "2. 将文件保存到 Windows 电脑上的**任意位置**。\n"
+            "3. **双击运行**该脚本，它会自动检测通达信目录，写入 `.blk` 板块数据并更新 `blocknew.cfg` 索引。\n"
+            "4. 运行完成后**重启通达信**即可在自定义板块中看到新板块。\n\n"
+            "> 说明：Chrome/Edge 会限制网页创建或按名称访问 `.cfg` 文件，`blocknew.cfg` 注册必须优先使用 Windows 本地脚本完成。"
+        )
+        try:
+            bat_content = tdx_export.generate_import_bat(blocks)
+            bat_bytes = bat_content.encode("ascii", errors="ignore")
+            bat_filename = tdx_export.import_bat_filename(pick_date)
+            st.caption(f"将下载：`{bat_filename}`")
+            st.download_button(
+                label="下载一键导入脚本 (.bat)",
+                data=bat_bytes,
+                file_name=bat_filename,
+                mime="application/octet-stream",
+                width="stretch",
+                key=f"tdx_bat_download_{tdx_export.date_suffix(pick_date)}_{safe_key}",
+            )
+        except Exception as e:
+            st.error(f"生成脚本失败: {e}")
+
+    with tab_browser:
+        st.markdown(
+            "这个页面只适合验证浏览器是否能写入 Windows 本机 `T0002\\blocknew` 目录下的 `.blk` 文件。"
+            "由于 Chrome/Edge 会限制 `.cfg` 文件访问，它不再作为完整导入路径。"
+        )
+        st.caption(
+            "如果这里写入成功但通达信不显示板块，仍需使用上方 `.bat` 脚本完成 blocknew.cfg 注册。"
+        )
+        render_tdx_browser_import(blocks, pick_date, mode_label)
+
+    with tab_local:
+        settings_path = ROOT / "config" / "tdx_settings.json"
+        settings = load_json(settings_path)
+        saved_path = settings.get("blocknew_dir", "")
+        blocknew_dir = st.text_input(
+            "通达信 blocknew 目录绝对路径",
+            value=saved_path,
+            key=f"blocknew_dir_input_{safe_key}",
+            help="请输入您通达信安装目录下的 T0002/blocknew 目录。例如：\n"
+                 "Windows: C:\\new_tdx\\T0002\\blocknew\n"
+                 "macOS (Wine/CrossOver): /Users/用户名/Library/Application Support/CrossOver/Bottles/.../drive_c/new_tdx/T0002/blocknew\n"
+                 "macOS (原生版): /Users/用户名/Library/Application Support/通达信/T0002/blocknew"
+        )
+        if not blocknew_dir:
+            st.info("💡 请先输入通达信 `blocknew` 目录的绝对路径。")
+
+        if st.button("🚀 一键写入", type="primary", disabled=not blocknew_dir, width="stretch", key=f"tdx_write_{safe_key}"):
+            path_obj = Path(blocknew_dir.strip())
+            if not path_obj.exists():
+                st.error("❌ 输入的路径不存在，请检查是否输入正确。")
+            elif not path_obj.is_dir():
+                st.error("❌ 输入的路径不是一个文件夹，请输入 blocknew 目录本身。")
+            else:
+                settings["blocknew_dir"] = str(path_obj.resolve())
+                try:
+                    settings_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(settings_path, "w", encoding="utf-8") as f:
+                        json.dump(settings, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.error("保存 tdx_settings.json 失败: %s", e)
+
+                with st.spinner("正在写入文件..."):
+                    res = tdx_export.export_to_tdx(path_obj, blocks)
+
+                if res["succeeded"] > 0:
+                    st.success(f"✅ 成功导入 {res['succeeded']} 个板块的文件！")
+                    if res["cfg_ok"]:
+                        st.success("✅ 成功在 blocknew.cfg 索引文件中完成板块注册！")
+                    else:
+                        st.warning(f"⚠️ 板块文件已写入，但在 blocknew.cfg 注册失败: {res['error']}")
+                    st.info("📌 **重要提示**：如果您的通达信软件已经打开，请**重新启动通达信软件**，以便重新加载自定义板块列表。")
+                else:
+                    st.error(f"❌ 导入失败: {res.get('error', '未知错误')}")
+
+
 @st.dialog("导入通达信")
 def render_tdx_import_dialog(pick_date: str) -> None:
     suggestion = load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
@@ -1948,112 +2067,8 @@ def render_tdx_import_dialog(pick_date: str) -> None:
         st.warning("没有可导入的板块数据")
         return
 
-    total = sum(b["count"] for b in blocks)
-    st.caption(f"共 {len(blocks)} 个板块，{total} 只股票 — 板块名：{'、'.join(b['name'] for b in blocks)}")
-
-    # ── 预览板块 ──
-    preview_data = []
-    for b in blocks:
-        preview_data.append({
-            "板块名称": b["name"],
-            "股票数量": f"{b['count']}只",
-        })
-    st.table(preview_data)
-
-    # ── 使用 Tabs ──
-    tab_download, tab_browser, tab_local = st.tabs([
-        "下载一键导入脚本（推荐）",
-        "独立页面写入 .blk（诊断/备用）",
-        "直接写入本地路径（服务与软件在同台电脑）",
-    ])
-
-    with tab_download:
-        st.write("##### **使用说明：**")
-        st.markdown(
-            "1. 点击下方按钮下载 `.bat` 脚本文件。\n"
-            "2. 将文件保存到 Windows 电脑上的**任意位置**。\n"
-            "3. **双击运行**该脚本，它会自动检测通达信目录，写入 `.blk` 板块数据并更新 `blocknew.cfg` 索引。\n"
-            "4. 运行完成后**重启通达信**即可在自定义板块中看到新板块。\n\n"
-            "> 说明：Chrome/Edge 会限制网页创建或按名称访问 `.cfg` 文件，`blocknew.cfg` 注册必须优先使用 Windows 本地脚本完成。"
-        )
-
-        try:
-            bat_content = tdx_export.generate_import_bat(blocks)
-            # bat 文件本身是纯 ASCII（PowerShell 脚本通过 base64 编码嵌入）
-            bat_bytes = bat_content.encode("ascii", errors="ignore")
-            bat_filename = tdx_export.import_bat_filename(pick_date)
-            st.caption(f"将下载：`{bat_filename}`")
-            st.download_button(
-                label="下载一键导入脚本 (.bat)",
-                data=bat_bytes,
-                file_name=bat_filename,
-                mime="application/octet-stream",
-                width="stretch",
-                key=f"tdx_bat_download_{tdx_export.date_suffix(pick_date)}_{mode_key}",
-            )
-        except Exception as e:
-            st.error(f"生成脚本失败: {e}")
-
-    with tab_browser:
-        st.markdown(
-            "这个页面只适合验证浏览器是否能写入 Windows 本机 `T0002\\blocknew` 目录下的 `.blk` 文件。"
-            "由于 Chrome/Edge 会限制 `.cfg` 文件访问，它不再作为完整导入路径。"
-        )
-        st.caption(
-            "如果这里写入成功但通达信不显示板块，仍需使用上方 `.bat` 脚本完成 blocknew.cfg 注册。"
-        )
-        render_tdx_browser_import(blocks, pick_date, mode)
-
-    with tab_local:
-        # ── 读取保存的通达信目录 ──
-        settings_path = ROOT / "config" / "tdx_settings.json"
-        settings = load_json(settings_path)
-        saved_path = settings.get("blocknew_dir", "")
-
-        # ── 输入通达信目录路径 ──
-        blocknew_dir = st.text_input(
-            "通达信 blocknew 目录绝对路径",
-            value=saved_path,
-            key="blocknew_dir_input",
-            help="请输入您通达信安装目录下的 T0002/blocknew 目录。例如：\n"
-                 "Windows: C:\\new_tdx\\T0002\\blocknew\n"
-                 "macOS (Wine/CrossOver): /Users/用户名/Library/Application Support/CrossOver/Bottles/.../drive_c/new_tdx/T0002/blocknew\n"
-                 "macOS (原生版): /Users/用户名/Library/Application Support/通达信/T0002/blocknew"
-        )
-
-        if not blocknew_dir:
-            st.info("💡 请先输入通达信 `blocknew` 目录的绝对路径。")
-
-        if st.button("🚀 一键写入", type="primary", disabled=not blocknew_dir, width="stretch"):
-            path_obj = Path(blocknew_dir.strip())
-            if not path_obj.exists():
-                st.error("❌ 输入的路径不存在，请检查是否输入正确。")
-            elif not path_obj.is_dir():
-                st.error("❌ 输入的路径不是一个文件夹，请输入 blocknew 目录本身。")
-            else:
-                # 保存有效路径
-                settings["blocknew_dir"] = str(path_obj.resolve())
-                try:
-                    settings_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(settings_path, "w", encoding="utf-8") as f:
-                        json.dump(settings, f, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    logger.error("保存 tdx_settings.json 失败: %s", e)
-
-                # 开始写入
-                with st.spinner("正在写入文件..."):
-                    res = tdx_export.export_to_tdx(path_obj, blocks)
-
-                if res["succeeded"] > 0:
-                    st.success(f"✅ 成功导入 {res['succeeded']} 个板块的文件！")
-                    if res["cfg_ok"]:
-                        st.success("✅ 成功在 blocknew.cfg 索引文件中完成板块注册！")
-                    else:
-                        st.warning(f"⚠️ 板块文件已写入，但在 blocknew.cfg 注册失败: {res['error']}")
-
-                    st.info("📌 **重要提示**：如果您的通达信软件已经打开，请**重新启动通达信软件**，以便重新加载自定义板块列表。")
-                else:
-                    st.error(f"❌ 导入失败: {res.get('error', '未知错误')}")
+    render_tdx_blocks_preview(blocks)
+    render_tdx_import_tabs(blocks, pick_date, mode, key_suffix=f"formal_{pick_date}_{mode_key}")
 
 def render_result_center() -> None:
     st.title("结果中心")
@@ -2130,6 +2145,20 @@ DECISION_BUCKET_LABELS = {
     "incomplete": "评分不完整",
 }
 
+CONSENSUS_TDX_PRESETS = {
+    "共同推荐": {"prefix": "CA"},
+    "多模型推荐": {"prefix": "CM"},
+    "单模型推荐": {"prefix": "CS"},
+    "共同观察": {"prefix": "CWA"},
+    "多模型观察": {"prefix": "CW"},
+    "单模型观察": {"prefix": "CSW"},
+    "分歧样本": {"prefix": "CD"},
+    "全部自定义": {"prefix": "C"},
+}
+
+MODEL_STATE_OPTIONS = ["推荐", "观察", "不推荐", "缺失"]
+CONSENSUS_VERDICT_OPTIONS = ["PASS", "WATCH", "FAIL", "INCOMPLETE"]
+
 
 def consensus_summary_files() -> list[Path]:
     if not CONSENSUS_DIR.exists():
@@ -2200,6 +2229,334 @@ def consensus_detail_table_rows(details: list[dict[str, Any]]) -> list[dict[str,
     return rows
 
 
+def consensus_model_state(decision: dict[str, Any], model: str) -> str:
+    recommended = decision.get("recommended_by_model") or {}
+    verdicts = decision.get("verdicts_by_model") or {}
+    missing_models = set(decision.get("missing_models") or [])
+    verdict = str(verdicts.get(model) or "").upper()
+    if model in missing_models or not verdict:
+        return "缺失"
+    if bool(recommended.get(model)) and verdict == "PASS":
+        return "推荐"
+    if verdict == "WATCH":
+        return "观察"
+    return "不推荐"
+
+
+def consensus_export_rows(decisions: list[dict[str, Any]], models: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for decision in decisions:
+        model_states = {model: consensus_model_state(decision, model) for model in models}
+        scores = decision.get("scores_by_model") or {}
+        score_values = [
+            float(scores.get(model))
+            for model in models
+            if scores.get(model) not in {"", None}
+        ]
+        pass_count = sum(1 for state in model_states.values() if state == "推荐")
+        watch_count = sum(1 for state in model_states.values() if state == "观察")
+        fail_count = sum(1 for state in model_states.values() if state == "不推荐")
+        missing_count = sum(1 for state in model_states.values() if state == "缺失")
+        consensus_score = decision.get("consensus_score")
+        rows.append(
+            {
+                "code": str(decision.get("code") or ""),
+                "strategy": str(decision.get("strategy") or ""),
+                "rank": decision.get("rank"),
+                "decision_bucket": str(decision.get("decision_bucket") or ""),
+                "decision_bucket_label": DECISION_BUCKET_LABELS.get(
+                    str(decision.get("decision_bucket") or ""),
+                    decision.get("decision_bucket"),
+                ),
+                "consensus_verdict": str(decision.get("consensus_verdict") or ""),
+                "consensus_score": float(consensus_score) if consensus_score not in {"", None} else None,
+                "agreement_score": float(decision.get("agreement_score") or 0),
+                "pass_count": pass_count,
+                "watch_count": watch_count,
+                "fail_count": fail_count,
+                "missing_count": missing_count,
+                "completed_count": int(decision.get("completed_count") or 0),
+                "model_count": int(decision.get("total_models") or len(models)),
+                "score_spread": round(max(score_values) - min(score_values), 3) if len(score_values) >= 2 else 0.0,
+                "model_states": model_states,
+            }
+        )
+    return rows
+
+
+def apply_consensus_tdx_preset(rows: list[dict[str, Any]], preset: str) -> list[dict[str, Any]]:
+    if preset == "共同推荐":
+        return [row for row in rows if int(row["pass_count"]) == int(row["model_count"])]
+    if preset == "多模型推荐":
+        return [row for row in rows if int(row["pass_count"]) >= max(1, int(row["model_count"]) // 2 + 1)]
+    if preset == "单模型推荐":
+        return [row for row in rows if int(row["pass_count"]) == 1]
+    if preset == "共同观察":
+        return [
+            row
+            for row in rows
+            if int(row["pass_count"]) == 0 and int(row["watch_count"]) == int(row["model_count"])
+        ]
+    if preset == "多模型观察":
+        return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) >= 2]
+    if preset == "单模型观察":
+        return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) == 1]
+    if preset == "分歧样本":
+        return [row for row in rows if int(row["pass_count"]) >= 1 and int(row["fail_count"]) >= 1]
+    return rows
+
+
+def filter_consensus_tdx_rows(
+    rows: list[dict[str, Any]],
+    *,
+    strategies: list[str],
+    verdicts: list[str],
+    bucket_labels: list[str],
+    selected_models: list[str],
+    selected_model_states: list[str],
+    model_match: str,
+    pass_range: tuple[int, int],
+    watch_range: tuple[int, int],
+    fail_range: tuple[int, int],
+    score_range: tuple[float, float],
+    complete_only: bool,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if strategies and row["strategy"] not in strategies:
+            continue
+        if verdicts and row["consensus_verdict"] not in verdicts:
+            continue
+        if bucket_labels and row["decision_bucket_label"] not in bucket_labels:
+            continue
+        if complete_only and int(row["missing_count"]) > 0:
+            continue
+        if not (pass_range[0] <= int(row["pass_count"]) <= pass_range[1]):
+            continue
+        if not (watch_range[0] <= int(row["watch_count"]) <= watch_range[1]):
+            continue
+        if not (fail_range[0] <= int(row["fail_count"]) <= fail_range[1]):
+            continue
+        score = row["consensus_score"]
+        if score is not None and not (score_range[0] <= float(score) <= score_range[1]):
+            continue
+        if selected_models and selected_model_states:
+            states = [row["model_states"].get(model, "缺失") for model in selected_models]
+            if model_match == "所有选中模型满足":
+                if any(state not in selected_model_states for state in states):
+                    continue
+            elif not any(state in selected_model_states for state in states):
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def sort_consensus_tdx_rows(rows: list[dict[str, Any]], sort_by: str, limit: int) -> list[dict[str, Any]]:
+    sorters = {
+        "共识分": lambda row: float(row["consensus_score"] or 0),
+        "推荐模型数": lambda row: int(row["pass_count"]),
+        "观察模型数": lambda row: int(row["watch_count"]),
+        "最高分歧": lambda row: float(row["score_spread"] or 0),
+        "原始排名": lambda row: -int(row["rank"] or 10**9),
+    }
+    key_fn = sorters.get(sort_by, sorters["共识分"])
+    sorted_rows = sorted(rows, key=key_fn, reverse=True)
+    return sorted_rows[:limit] if limit > 0 else sorted_rows
+
+
+@st.dialog("导入通达信 - 共识结果")
+def render_consensus_tdx_import_dialog(
+    summary: dict[str, Any],
+    decisions: list[dict[str, Any]],
+    models: list[str],
+) -> None:
+    pick_date = str(summary.get("pick_date") or "")
+    batch_id = str(summary.get("batch_id") or "")
+    model_count = max(1, int(summary.get("model_count") or len(models) or 1))
+    all_rows = consensus_export_rows(decisions, models)
+
+    st.caption(f"复评批次：**{batch_id}**；选股日期：**{pick_date}**")
+    if not summary.get("complete"):
+        st.warning("当前批次存在缺失模型结果，导入前建议先补跑缺失项。")
+
+    preset = st.selectbox(
+        "快捷方案",
+        list(CONSENSUS_TDX_PRESETS.keys()),
+        key=f"consensus_tdx_preset_{batch_id}",
+    )
+    preset_rows = apply_consensus_tdx_preset(all_rows, preset)
+
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        strategy_options = sorted({row["strategy"] for row in all_rows if row["strategy"]})
+        strategies = st.multiselect(
+            "策略",
+            strategy_options,
+            default=strategy_options,
+            key=f"consensus_tdx_strategy_{batch_id}",
+        )
+    with f2:
+        verdicts = st.multiselect(
+            "共识结论",
+            CONSENSUS_VERDICT_OPTIONS,
+            default=CONSENSUS_VERDICT_OPTIONS,
+            key=f"consensus_tdx_verdict_{batch_id}",
+        )
+    with f3:
+        complete_only = st.toggle(
+            "排除缺失模型",
+            value=True,
+            key=f"consensus_tdx_complete_{batch_id}",
+        )
+
+    bucket_options = sorted({row["decision_bucket_label"] for row in all_rows if row["decision_bucket_label"]})
+    bucket_labels = st.multiselect(
+        "决策分组",
+        bucket_options,
+        default=bucket_options,
+        key=f"consensus_tdx_bucket_{batch_id}",
+    )
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        selected_models = st.multiselect(
+            "指定模型",
+            models,
+            default=models,
+            key=f"consensus_tdx_models_{batch_id}",
+        )
+    with m2:
+        selected_model_states = st.multiselect(
+            "模型状态",
+            MODEL_STATE_OPTIONS,
+            default=MODEL_STATE_OPTIONS,
+            key=f"consensus_tdx_model_states_{batch_id}",
+        )
+    with m3:
+        model_match = st.radio(
+            "模型条件",
+            ["任一选中模型满足", "所有选中模型满足"],
+            horizontal=True,
+            key=f"consensus_tdx_model_match_{batch_id}",
+        )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        pass_range = st.slider(
+            "推荐模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_pass_range_{batch_id}",
+        )
+    with c2:
+        watch_range = st.slider(
+            "观察模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_watch_range_{batch_id}",
+        )
+    with c3:
+        fail_range = st.slider(
+            "不推荐模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_fail_range_{batch_id}",
+        )
+
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        score_range = st.slider(
+            "共识分",
+            0.0,
+            5.0,
+            (0.0, 5.0),
+            step=0.05,
+            key=f"consensus_tdx_score_range_{batch_id}",
+        )
+    with s2:
+        sort_by = st.selectbox(
+            "排序",
+            ["共识分", "推荐模型数", "观察模型数", "最高分歧", "原始排名"],
+            key=f"consensus_tdx_sort_{batch_id}",
+        )
+    with s3:
+        limit = st.number_input(
+            "最多导入",
+            min_value=0,
+            max_value=max(1, len(all_rows)),
+            value=0,
+            step=1,
+            help="0 表示不限制",
+            key=f"consensus_tdx_limit_{batch_id}",
+        )
+
+    filtered_rows = filter_consensus_tdx_rows(
+        preset_rows,
+        strategies=strategies,
+        verdicts=verdicts,
+        bucket_labels=bucket_labels,
+        selected_models=selected_models,
+        selected_model_states=selected_model_states,
+        model_match=model_match,
+        pass_range=pass_range,
+        watch_range=watch_range,
+        fail_range=fail_range,
+        score_range=score_range,
+        complete_only=complete_only,
+    )
+    filtered_rows = sort_consensus_tdx_rows(filtered_rows, sort_by, int(limit))
+
+    st.caption(f"当前筛选结果：{len(filtered_rows)} / {len(all_rows)} 条")
+    if filtered_rows:
+        preview = pd.DataFrame(
+            [
+                {
+                    "代码": row["code"],
+                    "策略": row["strategy"],
+                    "共识结论": row["consensus_verdict"],
+                    "共识分": row["consensus_score"],
+                    "推荐": row["pass_count"],
+                    "观察": row["watch_count"],
+                    "不推荐": row["fail_count"],
+                    "分歧": row["score_spread"],
+                }
+                for row in filtered_rows[:80]
+            ]
+        )
+        st.dataframe(preview, width="stretch", hide_index=True)
+
+    if not filtered_rows:
+        st.warning("当前筛选条件没有可导入股票")
+        return
+
+    block_items = [
+        {
+            "code": row["code"],
+            "strategy": row["strategy"],
+            "score": row["consensus_score"],
+            "recommended": int(row["pass_count"]) > 0,
+            "rank": row["rank"],
+        }
+        for row in filtered_rows
+    ]
+    prefix = CONSENSUS_TDX_PRESETS.get(preset, CONSENSUS_TDX_PRESETS["全部自定义"])["prefix"]
+    blocks = tdx_export.build_blocks_from_items(pick_date, block_items, name_prefix=prefix)
+    if not blocks:
+        st.warning("筛选结果没有可转换为通达信代码的股票")
+        return
+
+    render_tdx_blocks_preview(blocks)
+    render_tdx_import_tabs(
+        blocks,
+        pick_date,
+        f"共识结果-{preset}",
+        key_suffix=f"consensus_{batch_id}_{prefix}",
+    )
+
+
 def render_consensus_center() -> None:
     st.title("共识结果")
     summary_files = consensus_summary_files()
@@ -2229,6 +2586,16 @@ def render_consensus_center() -> None:
         st.warning("存在 score>=阈值 但 verdict!=PASS 的历史结果，请查看 summary.json 的 invariant_violations。")
     if not summary.get("complete"):
         st.warning("当前批次存在模型缺失评分，不能作为最终全票推荐结果；可断点重跑多模型复评。")
+
+    with st.columns([0.7, 0.3])[1]:
+        if st.button(
+            "📊 导入通达信",
+            width="stretch",
+            disabled=not decisions,
+            help="按共识结果筛选股票并导入通达信自定义板块",
+            key=f"consensus_tdx_import_open_{summary.get('batch_id')}",
+        ):
+            render_consensus_tdx_import_dialog(summary, decisions, models)
 
     tab_decision, tab_detail = st.tabs(["决策结果集", "模型评分明细"])
     with tab_decision:

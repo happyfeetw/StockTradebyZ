@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -74,6 +75,59 @@ def model_key(spec: dict[str, Any]) -> str:
     return f"{spec.get('reviewer_key')}/{model_profile(spec)}"
 
 
+def _truthy(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def enforce_no_model_substitution(spec: dict[str, Any], *, profile: str, multi_cfg: dict[str, Any]) -> None:
+    if not _truthy(multi_cfg.get("no_model_substitution"), default=True):
+        return
+    forbidden = sorted(key for key in spec if key.startswith("fallback_model") or key in {"fallback_reviewer", "substitute_model"})
+    if forbidden:
+        raise RuntimeError(f"{model_key(spec)} 禁止配置模型降级/替换字段：{forbidden}")
+    if not str(spec.get("model") or "").strip():
+        raise RuntimeError(f"{model_key(spec)} 启用 no_model_substitution 时必须显式声明 model")
+    if not profile:
+        raise RuntimeError(f"{model_key(spec)} 启用 no_model_substitution 时必须显式声明 model_profile")
+    if str(spec.get("reviewer_key") or "") == "codex-cli":
+        model = str(spec.get("model") or "").strip()
+        if model != "gpt-5.5" and spec.get("force_fixed_model") is not False:
+            raise RuntimeError(
+                f"{model_key(spec)} 声明了 {model}，但 codex_cli_review 默认锁定 gpt-5.5；"
+                "如需非 5.5 测试，必须显式 force_fixed_model: false，且不能作为正式降级替换。"
+            )
+
+
+def safe_log_name(key: str, *, attempt: int) -> str:
+    name = key.replace("/", "__")
+    if attempt > 1:
+        name = f"{name}__attempt{attempt}"
+    return name
+
+
+def read_failure_info(log_path: Path, *, max_lines: int = 160, max_chars: int = 6000) -> dict[str, str]:
+    if not log_path.exists():
+        return {"summary": f"日志文件不存在：{log_path}", "log_tail": ""}
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()[-max_lines:]
+    tail = "\n".join(lines)[-max_chars:]
+    patterns = re.compile(
+        r"(ERROR|WARN|Traceback|Exception|失败|错误|timeout|timed out|FAILED_PRECONDITION|"
+        r"ModelNotFound|OAuth|unauthori[sz]ed|permission|not supported|rate limit|quota)",
+        re.IGNORECASE,
+    )
+    matched = [line.strip() for line in lines if patterns.search(line)]
+    nonempty = [line.strip() for line in lines if line.strip()]
+    summary = (matched[-1] if matched else (nonempty[-1] if nonempty else "")).strip()
+    return {"summary": summary[:1000] or f"模型进程失败，详见日志：{log_path}", "log_tail": tail}
+
+
 def prepare_reviewer_config(
     *,
     spec: dict[str, Any],
@@ -84,6 +138,7 @@ def prepare_reviewer_config(
 ) -> tuple[dict[str, Any], Path, dict[str, Any]]:
     reviewer_key = str(spec["reviewer_key"])
     profile = model_profile(spec)
+    enforce_no_model_substitution(spec, profile=profile, multi_cfg=multi_cfg)
     base_cfg = load_yaml(config_path_for_spec(spec, run_dir))
     output_dir = review_runs_dir / str(manifest["batch_id"]) / reviewer_key / profile
     runtime_cfg = {
@@ -103,8 +158,12 @@ def prepare_reviewer_config(
         runtime_cfg["review_scoring"] = multi_cfg["review_scoring"]
     if spec.get("model"):
         runtime_cfg["model"] = spec["model"]
+    runtime_cfg["model_profile"] = profile
     if spec.get("output_format"):
         runtime_cfg["output_format"] = spec["output_format"]
+    for key in ("reasoning_effort", "speed_tier", "force_fixed_model"):
+        if key in spec:
+            runtime_cfg[key] = spec[key]
     if "max_requests_per_run" in multi_cfg:
         runtime_cfg["max_requests_per_run"] = multi_cfg.get("max_requests_per_run")
 
@@ -120,6 +179,9 @@ def prepare_reviewer_config(
         "reviewer_key": reviewer_key,
         "model": str(spec.get("model") or runtime_cfg.get("model") or ""),
         "model_profile": profile,
+        "declared_model": str(spec.get("model") or ""),
+        "declared_model_profile": profile,
+        "model_substitution_allowed": not _truthy(multi_cfg.get("no_model_substitution"), default=True),
         "output_dir": str(output_dir),
         "config": str(runtime_config_path),
         "script": str(resolve_path(spec["script"])),
@@ -127,16 +189,17 @@ def prepare_reviewer_config(
     return runtime_cfg, runtime_config_path, run_spec
 
 
-def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str]) -> dict[str, int]:
+def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str], attempt: int = 1) -> dict[str, dict[str, Any]]:
     logs_dir = run_dir / "multi_model_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     processes: dict[str, tuple[subprocess.Popen[bytes], Any, Path]] = {}
     for spec in run_specs:
         key = str(spec["model_key"])
-        log_path = logs_dir / f"{key.replace('/', '__')}.log"
+        log_path = logs_dir / f"{safe_log_name(key, attempt=attempt)}.log"
         log_file = open(log_path, "wb")
         cmd = [sys.executable, str(spec["script"]), "--config", str(spec["config"])]
-        print(f"[INFO] 启动 {key}: {' '.join(cmd)}")
+        attempt_label = f" attempt={attempt}" if attempt > 1 else ""
+        print(f"[INFO] 启动 {key}{attempt_label}: {' '.join(cmd)}")
         print(f"[INFO] {key} log: {log_path}")
         proc = subprocess.Popen(
             cmd,
@@ -147,7 +210,7 @@ def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, en
         )
         processes[key] = (proc, log_file, log_path)
 
-    exit_codes: dict[str, int] = {}
+    results: dict[str, dict[str, Any]] = {}
     last_notice = 0.0
     while processes:
         for key, (proc, log_file, log_path) in list(processes.items()):
@@ -155,7 +218,11 @@ def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, en
             if code is None:
                 continue
             log_file.close()
-            exit_codes[key] = int(code)
+            results[key] = {
+                "attempt": attempt,
+                "exit_code": int(code),
+                "log_path": str(log_path),
+            }
             print(f"[INFO] {key} 结束，exit={code}，log={log_path}")
             del processes[key]
         now = time.monotonic()
@@ -165,7 +232,7 @@ def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, en
             last_notice = now
         if processes:
             time.sleep(2)
-    return exit_codes
+    return results
 
 
 def parse_args() -> argparse.Namespace:
@@ -229,9 +296,44 @@ def main() -> int:
     )
 
     env = {**os.environ, "NO_COLOR": "1"}
-    exit_codes = run_reviewers_parallel(run_specs, run_dir=run_dir, env=env)
+    first_results = run_reviewers_parallel(run_specs, run_dir=run_dir, env=env, attempt=1)
     for spec in run_specs:
-        spec["exit_code"] = exit_codes.get(str(spec["model_key"]))
+        key = str(spec["model_key"])
+        attempt_info = first_results.get(key)
+        spec["attempts"] = [attempt_info] if attempt_info else []
+
+    failed_specs = [
+        spec
+        for spec in run_specs
+        if (spec.get("attempts") or [{}])[-1].get("exit_code") not in (0, None)
+    ]
+    if failed_specs and _truthy(multi_cfg.get("rerun_failed_models_once"), default=True):
+        failed_keys = ", ".join(str(spec["model_key"]) for spec in failed_specs)
+        print(f"[WARN] 以下模型首轮失败，将按原模型重跑一次（skip_existing 会跳过已完成结果）：{failed_keys}")
+        second_results = run_reviewers_parallel(failed_specs, run_dir=run_dir, env=env, attempt=2)
+        for spec in failed_specs:
+            key = str(spec["model_key"])
+            attempt_info = second_results.get(key)
+            if attempt_info:
+                spec.setdefault("attempts", []).append(attempt_info)
+
+    exit_codes: dict[str, int | None] = {}
+    for spec in run_specs:
+        attempts = [attempt for attempt in (spec.get("attempts") or []) if isinstance(attempt, dict)]
+        last_attempt = attempts[-1] if attempts else {}
+        exit_code = last_attempt.get("exit_code")
+        spec["exit_code"] = exit_code
+        exit_codes[str(spec["model_key"])] = exit_code
+        if last_attempt.get("log_path"):
+            spec["log_path"] = last_attempt["log_path"]
+        failed_attempts = [attempt for attempt in attempts if attempt.get("exit_code") not in (0, None)]
+        if failed_attempts and exit_code == 0:
+            spec["recovered_after_rerun"] = True
+        if exit_code not in (0, None):
+            log_path = Path(str(last_attempt.get("log_path") or ""))
+            failure = read_failure_info(log_path)
+            spec["failure_reason"] = failure["summary"]
+            spec["failure_log_tail"] = failure["log_tail"]
 
     summary = build_consensus(
         batch_manifest=manifest,
@@ -247,7 +349,7 @@ def main() -> int:
         "[INFO] 决策统计: "
         + ", ".join(f"{key}={value}" for key, value in sorted(summary.get("decision_bucket_counts", {}).items()))
     )
-    failed_models = [key for key, code in exit_codes.items() if code != 0]
+    failed_models = [key for key, code in exit_codes.items() if code not in (0, None)]
     if failed_models:
         print(f"[ERROR] 以下模型进程失败: {failed_models}")
     if not summary.get("complete"):

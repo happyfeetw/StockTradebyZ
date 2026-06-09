@@ -28,43 +28,53 @@
 
 ## 权重方案
 
-未启用经典图形匹配环节的策略沿用通用四维权重：
+当前默认使用评分体系 V3。AI 仍输出统一字段，但本地程序会按来源策略选择 profile 重算 `strategy_score`、`total_score` 和 `verdict`，不信任模型自己给出的总分。
+
+公共条件 gate 先于策略评分执行：
 
 | 维度 | 权重 |
-| --- | --- |
+| --- | ---: |
+| `trend_qualification` | 25% |
+| `support_stop_loss_control` | 25% |
+| `overhead_room` | 20% |
+| `volume_health` | 20% |
+| `post_entry_discipline` | 10% |
+
+公共 gate 默认 PASS 门槛 3.2，WATCH 门槛 2.6。`trend_qualification`、`support_stop_loss_control`、`overhead_room`、`volume_health` 任一项 `<= 1` 会硬否决；任一核心项 `<= 2` 时，公共 gate 最多 WATCH。
+
+策略 profile 权重：
+
+| strategy | PASS | WATCH | trend_structure | price_position | volume_behavior | previous_abnormal_move | classic_pattern_match |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `b1` | 4.1 | 3.4 | 20% | 35% | 25% | 10% | 10% |
+| `b2` | 4.2 | 3.5 | 15% | 20% | 40% | 10% | 15% |
+| `brick` | 4.2 | 3.5 | 10% | 25% | 25% | 10% | 30% |
+
+经典图形不再作为统一的独立 bonus 叠加到所有策略上，而是进入策略 profile 的 `classic_pattern_match` 权重。这样 B1、B2、砖型图可以按各自战法目标使用不同权重：B1 更看重位置和止损，B2 更看重量价确认，砖型图更看重绿转红定势完成度。
+
+策略 profile 同时包含低分上限：
+
+- B1：`price_position <= 1` 或 `volume_behavior <= 1` 硬否决；任一项 `<= 2` 最多 WATCH。
+- B2：`volume_behavior <= 1` 硬否决；`price_position <= 2` 或 `volume_behavior <= 2` 最多 WATCH。
+- Brick：`price_position <= 1`、`volume_behavior <= 1` 或 `classic_pattern_match <= 1` 硬否决；任一项 `<= 2` 最多 WATCH。
+
+未启用评分体系、复合策略、或没有 profile 的策略，仍可回退到通用四维权重：
+
+| 维度 | 权重 |
+| --- | ---: |
 | `trend_structure` | 20% |
 | `price_position` | 20% |
 | `volume_behavior` | 30% |
 | `previous_abnormal_move` | 30% |
-
-启用经典图形匹配环节的策略仍先使用通用四维权重计算基础分：
-
-| 维度 | 权重 |
-| --- | --- |
-| `trend_structure` | 20% |
-| `price_position` | 20% |
-| `volume_behavior` | 30% |
-| `previous_abnormal_move` | 30% |
-
-再按经典图形匹配度计算额外加分：
-
-```text
-classic_bonus = max(0, classic_pattern_match - 1) * 0.10
-total_score = min(5.0, base_score + classic_bonus)
-```
-
-`classic_pattern_match = 1` 表示无经典图形加分，因此不会降低基础四维分数；`classic_pattern_match = 5` 时最多额外加 0.4 分。
-
-代码层会根据策略是否启用经典图形匹配环节选择算法：未启用、复合策略、没有经典图形定义的策略按基础四维重算；启用时先按基础四维重算，再叠加经典图形 bonus，避免模型自己算错总分。
 
 ## 实施方案
 
 1. Prompt 输出契约新增 `scores.classic_pattern_match`。
 2. `previous_abnormal_move` 只保留原始成交量异动含义，不混入经典图形分。
 3. 复评配置通过 `classic_pattern_enabled` 控制是否启用经典图形匹配总开关，默认开启。
-4. 启用经典图形匹配环节的复评结果如果包含五个评分字段，复评器先按 20% / 20% / 30% / 30% 重算基础分，再按 `(classic_pattern_match - 1) * 0.10` 加分，最高封顶 5.0。
-5. 未启用经典图形匹配环节的策略、复合策略如果包含基础四个评分字段，复评器按 20% / 20% / 30% / 30% 重算总分，并把 `classic_pattern_match` 归零。
-6. 结果中心展示 `classic_pattern_type` 和 `classic_pattern_match`，用于区分图形类别与匹配强度。
+4. 启用评分体系时，复评器按策略 profile 重算策略分，并应用公共 gate、硬否决和低分上限。
+5. 未启用经典图形匹配环节、复合策略或没有 profile 的策略，按通用四维权重重算，并把 `classic_pattern_match` 归零。
+6. 结果中心和共识结果展示 `classic_pattern_type` 和 `classic_pattern_match`，用于区分图形类别与匹配强度。
 
 兼容说明：旧运行快照中的 `classic_pattern_strategies` 仍可读取；新配置和页面只写入 `classic_pattern_enabled`。
 
@@ -268,7 +278,7 @@ total_score = min(5.0, base_score + classic_bonus)
 - 转折点已经远离关键支撑、处于明显高位追涨，最高 3 分。
 - 转折 K 线是长上影失败、放量冲高回落或阴线，最高 2 分。
 
-砖型图的经典图形匹配仍然只作为基础四维之外的加分项，不改变基础四维权重。即使砖型图更强调转折爆发力，也不能让经典图匹配替代趋势、位置、量价或历史异动。
+砖型图的经典图形匹配在 V3 中是策略 profile 的重要权重项，但仍不能单独定生死。即使砖型图更强调转折爆发力，也不能让经典图匹配替代公共交易资格、转折点位置、量价呼吸或买后纪律。
 
 ## 不加分和硬扣分
 

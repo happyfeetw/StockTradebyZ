@@ -1,31 +1,45 @@
 # AgentTrader
 
-一个面向 A 股的半自动选股项目：
+一个面向 A 股的半自动选股与 AI 复评工作台：
 
 - 使用 Tushare 拉取股票日线数据
-- 用量化规则做初选（目前只实现了B1选股）
+- 用量化规则做初选，当前主策略为 `b1`、`b2`、`brick`
 - 导出候选股票 K 线图
-- 调用 Gemini CLI 对图表进行 AI 复评打分
+- 调用 Gemini CLI、AGY CLI、Codex CLI 对图表进行 AI 复评打分
+- 用策略化评分和多模型共识筛出高质量候选
+- 在本地 Workbench 中复盘、筛选，并导出到通达信自定义板块
 
 ---
 
 ## 更新说明
 
-- 推翻了旧版选股模式（各式各样的B1太麻烦了）
-- 新加入了AI看图打分精选功能（是的，不用再自己看图了）
-- 目前只支持B1选股，后续Z哥讲了砖型图10张图后，会更新砖型图精选
+- 主线从“单 Gemini 复评”升级为“候选冻结 -> 多模型复评 -> 共识结果 -> 通达信导入”。
+- AI 复评使用评分体系 V3：公共交易 gate + 分策略 profile + 本地归一化。
+- 多模型复评默认使用 Gemini 3.1 Pro Preview、AGY Gemini 3.5 Flash High、Codex GPT-5.5 High Standard。
+- 多模型模式禁止模型静默替换或降级；模型失败时记录原因，并按原模型断点重跑一次。
+- `run_all.py` 仍保留轻量单 reviewer 流程；完整多模型流程建议使用 Workbench 或 `agent/multi_model_review.py`。
 
 ---
 
 ## 1. 项目流程
 
-完整流程对应 [run_all.py](run_all.py)：
+单 reviewer 快速流程对应 [run_all.py](run_all.py)：
 
 1. 下载 K 线数据（pipeline.fetch_kline）
 2. 量化初选（pipeline.cli preselect）
 3. 导出候选图表（dashboard/export_kline_charts.py）
-4. Gemini CLI 复评（agent/gemini_cli_review.py）
+4. 单 reviewer 图表复评（默认 Gemini CLI）
 5. 打印推荐结果（读取 suggestion.json）
+
+Workbench 多模型流程：
+
+1. 下载或增量更新 K 线数据
+2. 运行 `b1/b2/brick` 初选并生成候选
+3. 导出候选图表
+4. 冻结候选批次到 `data/review_batches/{batch_id}`
+5. 并行运行 Gemini、AGY、Codex 三路 reviewer
+6. 汇总到 `data/review_consensus/{batch_id}`
+7. 在“共识结果”页面筛选并导入通达信
 
 输出主链路：
 
@@ -33,18 +47,24 @@
 - data/candidates：初选候选列表
 - data/kline/日期：候选图表
 - data/review/日期：AI 单股评分与汇总建议
+- data/review_batches：冻结后的多模型复评批次
+- data/review_runs：各模型独立复评结果
+- data/review_consensus：多模型共识结果
 
 ---
 
 ## 2. 目录说明
 
-- [pipeline](pipeline)：数据抓取与量化初选
+- [pipeline](pipeline)：数据抓取、量化初选、共识汇总、通达信导出
 - [dashboard](dashboard)：看盘界面与图表导出
-- [agent](agent)：LLM 评审逻辑（Gemini）
-- [config](config)：抓取、初选、Gemini 复评配置
+- [agent](agent)：LLM 复评逻辑（Gemini、AGY、Codex、多模型调度）
+- [workbench](workbench)：本地 Streamlit 工作台
+- [config](config)：抓取、初选、复评、多模型配置
+- [paper_trading](paper_trading)：纸上交易子系统
 - [data](data)：运行数据与结果
 - [docs](docs)：方案文档
-- [run_all.py](run_all.py)：全流程一键入口
+- [run_all.py](run_all.py)：单 reviewer 一键入口
+- [start_workbench](start_workbench)：本地工作台启动脚本
 
 ---
 
@@ -63,6 +83,8 @@ cd StockTradebyZ
 pip install -r requirements.txt
 ~~~
 
+如果本机没有 `python` 命令，可把下文命令中的 `python` 替换为 `python3`。
+
 ### 3.3 设置环境变量
 
 Windows PowerShell（永久写入）：
@@ -74,6 +96,7 @@ Windows PowerShell（永久写入）：
 写入后请重开终端，环境变量才会在新会话中生效。
 Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧的 Gemini API
 复评方式，再额外设置 `GEMINI_API_KEY`。
+AGY reviewer 需要本机已安装并登录 `agy`。Codex reviewer 需要本机可执行 `codex` CLI。
 
 ### 3.4 运行一键脚本
 
@@ -89,6 +112,7 @@ python run_all.py
 python run_all.py --skip-fetch
 python run_all.py --start-from 3
 python run_all.py --reviewer gemini-api
+python run_all.py --reviewer agy-cli-experimental
 python run_all.py --skip-review
 ~~~
 
@@ -96,8 +120,24 @@ python run_all.py --skip-review
 
 - --skip-fetch：跳过数据下载，直接进入初选
 - --start-from N：从第 N 步开始执行（1 到 4）
-- --reviewer：选择复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY
-- --skip-review：跳过 Gemini 复评，直接打印已有 suggestion.json
+- --reviewer：选择单 reviewer 复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY
+- --skip-review：跳过复评，直接打印已有 suggestion.json
+
+### 3.5 启动 Workbench
+
+~~~bash
+bash start_workbench
+~~~
+
+默认访问 `https://localhost:8601`。脚本使用 `.certs/cert.pem` 和 `.certs/key.pem` 启动 HTTPS；如果证书不存在，可参考 [docs/tdx-import-design.md](docs/tdx-import-design.md) 生成自签名证书。
+
+Workbench 适合日常使用：
+
+- 运行中心：配置并执行抓取、初选、导图、复评
+- 复评配置：选择 Gemini、AGY、Codex 或多模型复评
+- 结果中心：查看正式单 reviewer 结果
+- 共识结果：查看多模型共识、分歧和模型明细
+- 通达信导入：导出正式结果或共识筛选结果
 
 ---
 
@@ -155,17 +195,24 @@ python agent/gemini_cli_review.py
 python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
 python agent/gemini_review.py --config config/gemini_review.yaml
 python agent/agy_cli_review.py --config config/agy_cli_review.yaml --limit 1
+python agent/codex_cli_review.py --config config/codex_cli_review.yaml
+python agent/multi_model_review.py --config config/multi_model_review.yaml
 ~~~
 
 Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
 旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
 AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认输出到隔离目录 `data/review/agy_cli_experimental`。AGY 1.0.5 目前没有 `--output-format json/stream-json`，实验路径使用 prompt 级 JSON、本地 schema 校验和一次 JSON repair，不作为默认生产复评入口。
-在 workbench 的“复评配置”页面，AGY 模型下拉候选通过“加载/刷新 AGY 模型列表”手动执行 `agy models` 后缓存，名称不做改写；“实验复评上限 max_items”表示本次最多复评前 N 个候选。结果中心和单票复盘可以通过“复评结果源”选择“AGY 实验”查看隔离结果；通达信导入仍只使用正式 Gemini 推荐。
+Codex CLI 配置见 [config/codex_cli_review.yaml](config/codex_cli_review.yaml)，默认固定 `gpt-5.5`、`reasoning_effort=high`、标准速度路径。
+多模型配置见 [config/multi_model_review.yaml](config/multi_model_review.yaml)，会冻结候选批次并生成共识结果。
+在 workbench 的“复评配置”页面，AGY 模型下拉候选通过“加载/刷新 AGY 模型列表”手动执行 `agy models` 后缓存，名称不做改写；“实验复评上限 max_items”表示本次最多复评前 N 个候选。结果中心和单票复盘可以通过“复评结果源”选择“AGY 实验”查看隔离结果。
 
 读取候选与图表后，输出：
 
 - data/review/日期/代码.json
 - data/review/日期/suggestion.json
+- data/review_consensus/批次/summary.json
+- data/review_consensus/批次/decisions.json
+- data/review_consensus/批次/details.json
 
 ---
 
@@ -179,7 +226,7 @@ AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yam
 ### 5.2 初选层
 
 - top_m 决定流动性股票池大小
-- b1.enabled、brick.enabled 控制策略开关
+- b1.enabled、b2.enabled、brick.enabled 控制策略开关
 - 可先只开一个策略做回放验证
 
 ### 5.3 复评层
@@ -191,14 +238,23 @@ AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yam
 - request_delay：调用间隔（防限流）
 - idle_timeout_seconds：CLI 无 stdout/stderr 输出时的空闲超时，默认 0 关闭，仅保留 900 秒总超时
 - batch_size：每次 Gemini CLI 请求最多提交几张图，默认 5
-- fallback_to_single_on_batch_error：批量 JSON 解析失败时是否自动降级逐只复评
+- fallback_to_single_on_batch_error：批量 JSON 解析失败时是否使用同一模型拆批并最终逐只复评
 - save_raw_cli_io / raw_log_dir：保存每次 CLI 调用的原始 prompt、stdout、stderr 和 meta
 - max_requests_per_run：单次运行最多请求数；batch_size=5 时，1 次请求最多覆盖 5 支股票
 - daily_request_budget：项目侧每日请求预算
 - skip_existing：是否断点续跑
 - suggest_min_score：推荐分数门槛
 
-AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前可用 `run_all.py --reviewer agy-cli-experimental` 或工作台复评配置中的 “AGY CLI（实验）” 显式运行；默认复评方式仍是 Gemini CLI。
+多模型复评关键配置：
+
+- expected_strategies：严格模式下要求候选批次包含的策略，默认 `b1/b2/brick`
+- strict_batch：缺少策略或缺少图表时是否中止
+- no_model_substitution：禁止模型替换或降级，默认开启
+- rerun_failed_models_once：失败模型按原模型重跑一次，默认开启
+- review_scoring：公共 gate、策略 profile 和 PASS/WATCH 门槛
+- reviewers：声明要运行的 reviewer、模型和输出 profile
+
+AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前可用 `run_all.py --reviewer agy-cli-experimental` 或工作台复评配置中的 “AGY CLI（实验）” 显式运行；默认单 reviewer 复评方式仍是 Gemini CLI。
 
 ---
 
@@ -218,6 +274,32 @@ data/review/日期/suggestion.json
 - recommendations：最终推荐（按分数排序）
 - excluded：未达门槛代码
 - min_score_threshold：推荐门槛
+
+### 多模型共识
+
+data/review_consensus/批次/summary.json
+
+- complete：所有模型是否都完成评分
+- models：本批实际纳入共识的模型
+- decision_bucket_counts：共同推荐、多数推荐、单模型推荐、无推荐、缺失的数量
+- invariant_violations：共识构建时发现的数据一致性问题
+
+data/review_consensus/批次/decisions.json
+
+- code、strategy：按股票和来源策略对齐
+- consensus_score：平均分和推荐一致性加权后的共识分
+- consensus_verdict：PASS / WATCH / FAIL / INCOMPLETE
+- recommended_by_model：各模型是否推荐
+- scores_by_model、verdicts_by_model：各模型分数和结论
+
+`incomplete` 不应作为最终决策依据，应断点重跑补齐缺失模型。
+
+### 运行产物清理口径
+
+- `data/` 下的 raw、review、runs、analysis、consensus 都是本地运行产物，默认不应提交。
+- 多模型探索过程中可能留下旧模型目录或旧日志；判断当前有效口径时，以 `data/review_consensus/latest.json` 里的 `models` 和 `generated_at` 为准。
+- Workbench 的 pid 文件只能作为启动记录；如果进程不存在，应以实际进程状态为准。
+- 需要给通达信导入时，优先从 Workbench 的“结果中心”或“共识结果”页面发起，避免手工复制 `.blk` 内容。
 
 ---
 

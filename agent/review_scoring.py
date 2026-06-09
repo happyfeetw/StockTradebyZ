@@ -25,52 +25,68 @@ DEFAULT_REVIEW_SCORING: dict[str, Any] = {
     "enabled": True,
     "common_gate": {
         "enabled": True,
-        "pass_min": 3.0,
-        "watch_min": 2.4,
-        "hard_fail_below": 2.0,
+        "pass_min": 3.2,
+        "watch_min": 2.6,
+        "hard_fail_below": 2.2,
         "watch_caps_strategy_pass": True,
         "weights": {
-            "trend_qualification": 0.20,
+            "trend_qualification": 0.25,
             "support_stop_loss_control": 0.25,
             "overhead_room": 0.20,
-            "volume_health": 0.25,
+            "volume_health": 0.20,
             "post_entry_discipline": 0.10,
         },
         "hard_veto_score_max": {
             "support_stop_loss_control": 1.0,
             "volume_health": 1.0,
+            "trend_qualification": 1.0,
+            "overhead_room": 1.0,
+        },
+        "watch_cap_score_max": {
+            "trend_qualification": 2.0,
+            "support_stop_loss_control": 2.0,
+            "overhead_room": 2.0,
+            "volume_health": 2.0,
         },
     },
     "strategy_profiles": {
         "b1": {
             "label": "B1 回调建仓",
-            "pass_min": 4.0,
-            "watch_min": 3.3,
+            "pass_min": 4.1,
+            "watch_min": 3.4,
             "weights": {
                 "trend_structure": 0.20,
-                "price_position": 0.30,
+                "price_position": 0.35,
                 "volume_behavior": 0.25,
-                "previous_abnormal_move": 0.15,
+                "previous_abnormal_move": 0.10,
                 "classic_pattern_match": 0.10,
             },
             "hard_veto_score_max": {
                 "price_position": 1.0,
                 "volume_behavior": 1.0,
             },
+            "watch_cap_score_max": {
+                "price_position": 2.0,
+                "volume_behavior": 2.0,
+            },
         },
         "b2": {
             "label": "B2 突破确认",
-            "pass_min": 4.1,
-            "watch_min": 3.4,
+            "pass_min": 4.2,
+            "watch_min": 3.5,
             "weights": {
                 "trend_structure": 0.15,
                 "price_position": 0.20,
-                "volume_behavior": 0.35,
-                "previous_abnormal_move": 0.15,
+                "volume_behavior": 0.40,
+                "previous_abnormal_move": 0.10,
                 "classic_pattern_match": 0.15,
             },
             "hard_veto_score_max": {
                 "volume_behavior": 1.0,
+            },
+            "watch_cap_score_max": {
+                "price_position": 2.0,
+                "volume_behavior": 2.0,
             },
         },
         "brick": {
@@ -80,14 +96,19 @@ DEFAULT_REVIEW_SCORING: dict[str, Any] = {
             "weights": {
                 "trend_structure": 0.10,
                 "price_position": 0.25,
-                "volume_behavior": 0.20,
-                "previous_abnormal_move": 0.05,
-                "classic_pattern_match": 0.40,
+                "volume_behavior": 0.25,
+                "previous_abnormal_move": 0.10,
+                "classic_pattern_match": 0.30,
             },
             "hard_veto_score_max": {
                 "price_position": 1.0,
                 "volume_behavior": 1.0,
                 "classic_pattern_match": 1.0,
+            },
+            "watch_cap_score_max": {
+                "price_position": 2.0,
+                "volume_behavior": 2.0,
+                "classic_pattern_match": 2.0,
             },
         },
     },
@@ -247,6 +268,12 @@ def normalize_common_gate(result: dict[str, Any], config: Any = None) -> dict[st
 
     pass_min = float(gate_cfg.get("pass_min", 3.0))
     watch_min = float(gate_cfg.get("watch_min", 2.4))
+    watch_cap_reasons: list[str] = []
+    for field, max_score in (gate_cfg.get("watch_cap_score_max") or {}).items():
+        score = normalized_scores.get(str(field))
+        if score is not None and score <= float(max_score):
+            watch_cap_reasons.append(f"common_gate.{field} <= {float(max_score):g}")
+
     if veto_reasons:
         status = "FAIL"
     elif gate_score >= pass_min:
@@ -255,6 +282,8 @@ def normalize_common_gate(result: dict[str, Any], config: Any = None) -> dict[st
         status = "WATCH"
     else:
         status = "FAIL"
+    if status == "PASS" and watch_cap_reasons:
+        status = "WATCH"
 
     comment = ""
     if isinstance(raw_gate, Mapping):
@@ -267,6 +296,8 @@ def normalize_common_gate(result: dict[str, Any], config: Any = None) -> dict[st
         "status": status,
         "hard_veto": bool(veto_reasons),
         "hard_veto_reasons": veto_reasons,
+        "watch_cap": bool(watch_cap_reasons),
+        "watch_cap_reasons": watch_cap_reasons,
         "comment": comment,
         "market_timing": "manual",
     }
@@ -283,11 +314,11 @@ def build_prompt_context(strategy: str = "", config: Any = None) -> str:
 
     return (
         "\n\n---\n\n"
-        "# 评分体系 V2（本节优先于旧通用权重）\n\n"
+        "# 评分体系 V3（本节优先于旧通用权重）\n\n"
         f"本批来源策略：{strategy or '未指定'}；策略评分档案：{strategy_label}。\n\n"
         "## 公共条件 gate\n\n"
         "先判断所有战法共用的交易前提，活跃市值/大盘择时由用户人工确认，本轮不要臆测。\n"
-        "公共条件分数越高越好，必须输出 common_gate。明显出货、止损不可控、上方空间不足、白黄线/支撑结构失效时，必须给出硬否决或显著降分。\n\n"
+        "公共条件不是宽松加权平均。明显出货、止损不可控、上方空间不足、白黄线/支撑结构失效时，必须给出硬否决或显著降分；任一核心公共项只能到 2 分时，公共 gate 最多 WATCH。\n\n"
         "common_gate.scores 必须包含：trend_qualification、support_stop_loss_control、overhead_room、volume_health、post_entry_discipline。\n"
         f"公共 gate PASS 门槛 {float(gate.get('pass_min', 3.0)):.2f}，WATCH 门槛 {float(gate.get('watch_min', 2.4)):.2f}；公共 gate 不通过时不能给策略 PASS。\n\n"
         "## 策略专项权重\n\n"

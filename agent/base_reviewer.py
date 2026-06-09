@@ -308,13 +308,20 @@ class BaseReviewer:
             if score is not None and score <= float(max_score):
                 hard_veto_reasons.append(f"strategy_profile.{field} <= {float(max_score):g}")
 
+        strategy_watch_cap_reasons: list[str] = []
+        for field, max_score in (profile.get("watch_cap_score_max") or {}).items():
+            if str(field) in disabled_fields:
+                continue
+            score = cls._numeric_score(merged_scores.get(str(field)))
+            if score is not None and score <= float(max_score):
+                strategy_watch_cap_reasons.append(f"strategy_profile.{field} <= {float(max_score):g}")
+
         pass_min = float(profile.get("pass_min", 4.0))
         watch_min = float(profile.get("watch_min", 3.2))
         total_score = strategy_score
         verdict = "FAIL"
         if hard_veto_reasons:
-            if total_score >= pass_min:
-                result["score_before_hard_veto"] = total_score
+            result["score_before_hard_veto"] = total_score
             total_score = min(total_score, pass_min - 0.01)
             verdict = "FAIL"
         elif common_gate["status"] == "FAIL":
@@ -322,6 +329,10 @@ class BaseReviewer:
             verdict = "FAIL"
         elif common_gate["status"] == "WATCH" and scoring_config(classic_pattern_config)["common_gate"].get("watch_caps_strategy_pass", True):
             result["score_before_common_gate_cap"] = total_score
+            total_score = min(total_score, pass_min - 0.01)
+            verdict = "WATCH" if total_score >= watch_min else "FAIL"
+        elif strategy_watch_cap_reasons and total_score >= pass_min:
+            result["score_before_strategy_cap"] = total_score
             total_score = min(total_score, pass_min - 0.01)
             verdict = "WATCH" if total_score >= watch_min else "FAIL"
         elif total_score >= pass_min:
@@ -334,6 +345,9 @@ class BaseReviewer:
         if hard_veto_reasons:
             result["hard_veto_reason"] = "; ".join(hard_veto_reasons)
             result["hard_veto_reasons"] = hard_veto_reasons
+        elif strategy_watch_cap_reasons:
+            result["watch_cap_reason"] = "; ".join(strategy_watch_cap_reasons)
+            result["watch_cap_reasons"] = strategy_watch_cap_reasons
         return result
 
     def generate_suggestion(

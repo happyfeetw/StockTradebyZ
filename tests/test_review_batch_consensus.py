@@ -8,7 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "agent"))
 
+import multi_model_review  # noqa: E402
 from pipeline.review_batch import freeze_review_batch  # noqa: E402
 from pipeline.review_consensus import build_consensus  # noqa: E402
 
@@ -214,6 +216,54 @@ class ReviewBatchConsensusTests(unittest.TestCase):
             self.assertEqual(decisions[0]["strategy_watch_min"], 3.8)
             self.assertEqual(decisions[0]["recommended_count"], 1)
             self.assertEqual(decisions[0]["decision_bucket"], "single_model_recommended")
+
+    def test_prepare_reviewer_config_rejects_model_substitution_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            base_config = project / "reviewer.yaml"
+            base_config.write_text("skip_existing: true\n", encoding="utf-8")
+            manifest = {
+                "batch_id": "batch1",
+                "candidates_file": str(project / "candidates.json"),
+                "kline_dir": str(project / "kline"),
+                "prompt_path": str(project / "prompt.md"),
+            }
+            spec = {
+                "reviewer_key": "gemini-cli",
+                "script": "agent/gemini_cli_review.py",
+                "config": str(base_config),
+                "model": "gemini-3.1-pro-preview",
+                "model_profile": "gemini-3.1-pro-preview",
+                "fallback_model": "gemini-2.5-pro",
+            }
+
+            with self.assertRaises(RuntimeError):
+                multi_model_review.prepare_reviewer_config(
+                    spec=spec,
+                    multi_cfg={"no_model_substitution": True},
+                    manifest=manifest,
+                    run_dir=project,
+                    review_runs_dir=project / "review_runs",
+                )
+
+    def test_read_failure_info_extracts_reason_from_log_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.log"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[INFO] start",
+                        "Traceback: ignored older line",
+                        "[ERROR] FAILED_PRECONDITION: User location is not supported for the API use.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            info = multi_model_review.read_failure_info(path)
+
+        self.assertIn("FAILED_PRECONDITION", info["summary"])
+        self.assertIn("User location is not supported", info["log_tail"])
 
 
 if __name__ == "__main__":

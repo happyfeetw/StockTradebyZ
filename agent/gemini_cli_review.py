@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fallback_to_single_on_batch_error": True,
     "retry_backoff_seconds": [30, 90, 180, 480, 900],
     "retry_jitter_ratio": 0.2,
-    "max_requests_per_run": 50,
+    "max_requests_per_run": 2000,
     "daily_request_budget": 2000,
     "usage_file": "data/review/.gemini_cli_usage.json",
     "stop_on_rate_limit": False,
@@ -1128,10 +1128,10 @@ class GeminiCliReviewer(BaseReviewer):
             return left_results + right_results, left_failed + right_failed, right_reason
 
         if delay:
-            print(f"[INFO] 小批量仍失败，{delay} 秒后降级为逐只复评。")
+            print(f"[INFO] 小批量仍失败，{delay} 秒后使用同一模型逐只复评。")
             time.sleep(delay)
         else:
-            print("[INFO] 小批量仍失败，降级为逐只复评。")
+            print("[INFO] 小批量仍失败，使用同一模型逐只复评。")
         return self._review_single_items(items, total_candidates)
 
     def run(self):
@@ -1291,7 +1291,7 @@ class GeminiCliReviewer(BaseReviewer):
 
         if not all_results:
             print("[ERROR] 没有可用的评分结果，跳过汇总。")
-            return
+            raise SystemExit(1)
 
         min_score = self.config.get("suggest_min_score", 4.0)
         suggestion = self.generate_suggestion(
@@ -1323,6 +1323,8 @@ class GeminiCliReviewer(BaseReviewer):
 
         print("\n✅ 全部完成。")
         print(f"   输出目录: {out_dir}")
+        if not suggestion["review_complete"]:
+            raise SystemExit(1)
 
 
 def main():

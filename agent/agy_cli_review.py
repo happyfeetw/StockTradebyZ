@@ -639,7 +639,7 @@ class AgyCliReviewer(BaseReviewer):
             right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
             return left_results + right_results, left_failed + right_failed
 
-        print("[INFO] AGY 小批量失败，降级为逐只复评。")
+        print("[INFO] AGY 小批量失败，使用同一模型逐只复评。")
         return self._review_single_items(items, total_candidates)
 
     def _review_single_items(
@@ -754,7 +754,7 @@ class AgyCliReviewer(BaseReviewer):
             print(f"[WARN] 未处理股票：{failed_codes}")
         if not all_results:
             print("[ERROR] 没有可用的 AGY 实验复评结果，跳过汇总。")
-            return
+            raise SystemExit(1)
 
         suggestion = self.generate_suggestion(
             pick_date=pick_date,
@@ -770,6 +770,8 @@ class AgyCliReviewer(BaseReviewer):
         suggestion_file = out_dir / "suggestion.json"
         self._write_json(suggestion_file, suggestion)
         print(f"[INFO] AGY 实验汇总已写入: {suggestion_file}")
+        if not suggestion["review_complete"]:
+            raise SystemExit(1)
 
 
 def main() -> None:

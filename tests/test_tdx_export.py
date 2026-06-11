@@ -32,6 +32,10 @@ class TdxExportTests(unittest.TestCase):
             tdx_export.import_html_filename("2026-06-03", "共识结果-多模型推荐"),
             "tdx_import_20260603_consensus_multi_recommended.html",
         )
+        self.assertEqual(
+            tdx_export.import_html_filename("2026-06-03", "共识结果-Z精选+观察"),
+            "tdx_import_20260603_z_select_watch.html",
+        )
 
     def test_cfg_record_merge_is_fixed_width_and_deduped(self) -> None:
         record = tdx_export.cfg_record_bytes("0602QB1")

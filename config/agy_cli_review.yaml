@@ -19,16 +19,24 @@ agy_bin: agy
 # AGY 1.0.5 支持 per-call --model；workbench 下拉候选直接来自 `agy models`。
 model: "Gemini 3.5 Flash (Medium)"
 
-# AGY print mode 超时
-print_timeout: 10m
+# AGY print mode 超时。AGY 是实验 reviewer，默认快速失败，避免拖住全流程。
+print_timeout: 3m
 
 # Python 子进程总超时（秒）
-timeout_seconds: 900
+timeout_seconds: 180
+
+# 非交互 --print 默认关闭 stdin，避免 agy 等待 EOF 导致挂起。
+# 如必须向活跃 AGY 子进程粘贴 authorization code，可临时改为 pipe。
+stdin_mode: devnull
+
+# 是否传入 agy --dangerously-skip-permissions。
+# 默认关闭；只有明确接受自动批准工具权限请求时再打开。
+dangerously_skip_permissions: false
 
 # 相邻 CLI 调用间隔（秒）
 request_delay: 10
 
-# 单次 AGY CLI 请求最多提交几张图；批量失败会使用同一模型拆批并最终逐只复评。
+# 单次 AGY CLI 请求最多提交几张图；普通批量 JSON 失败会使用同一模型拆批并最终逐只复评。
 batch_size: 5
 
 # 本次 AGY 实验最多复评前 N 个候选；默认只跑 1 支，避免误跑完整批次。
@@ -51,6 +59,26 @@ raw_log_dir: ""
 json_repair_enabled: true
 json_repair_prompt_max_chars: 12000
 fallback_to_single_on_batch_error: true
+
+# AGY 子进程达到 timeout_seconds 时按模型级失败处理，交给多模型编排按原模型重跑一次；
+# 不再拆批/单股 fallback，避免每个拆分批次继续长时间等待。
+stop_on_cli_timeout: true
+
+# AGY/OAuth 运行时恢复：
+# 如果 agy --print 过程中要求重新登录，reviewer 会暂停当前批次，
+# 等你在浏览器完成登录后用同一模型重试当前批次。
+auth_recovery_enabled: true
+auth_recovery_wait_seconds: 900
+auth_recovery_check_interval: 15
+auth_recovery_probe_timeout_seconds: 90
+auth_recovery_probe_prompt: "只输出 OK 两个字母，不要解释。"
+
+# 如果活跃 AGY 子进程提示粘贴 authorization code，且 stdin_mode: pipe，
+# 可把浏览器返回的 code 写入此文件。
+# 留空时默认使用 raw_log_dir/auth_code.txt；读取后会自动删除。
+auth_code_file: ""
+auth_code_wait_seconds: 25
+auth_code_poll_interval: 1
 
 # settings 仅作为辅助证据读取；实际模型由上面的 model 通过 --model 指定。
 settings_path: ~/.gemini/antigravity-cli/settings.json

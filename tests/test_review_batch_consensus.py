@@ -336,8 +336,31 @@ class ReviewBatchConsensusTests(unittest.TestCase):
 
         self.assertEqual(snapshot["completed"], 10)
         self.assertEqual(snapshot["total"], 104)
-        self.assertEqual(snapshot["progress_text"], "10/104 (10%)")
+        self.assertEqual(snapshot["progress_text"], "处理到 10/104 (10%)")
         self.assertIn("Gemini CLI 批量分析", snapshot["latest"])
+
+    def test_progress_snapshot_prefers_success_failure_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.log"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[131-136/136] 300001_b1 — Gemini CLI 批量分析 6 张图 ...",
+                        "[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
+                        "[INFO] 汇总已写入: suggestion.json",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = multi_model_review.progress_snapshot(path)
+
+        self.assertEqual(snapshot["completed"], 136)
+        self.assertEqual(snapshot["total"], 136)
+        self.assertEqual(snapshot["success_count"], 107)
+        self.assertEqual(snapshot["failed_count"], 29)
+        self.assertEqual(snapshot["progress_text"], "成功 107/136，失败/跳过 29 (100%)")
+        self.assertIn("评分完成", snapshot["latest"])
 
     def test_grouped_progress_output_groups_by_reviewer_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

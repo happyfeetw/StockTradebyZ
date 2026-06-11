@@ -29,6 +29,7 @@ from pipeline.review_consensus import build_consensus
 DEFAULT_CONFIG_PATH = ROOT / "config" / "multi_model_review.yaml"
 PROGRESS_LINE_RE = re.compile(r"^\[(\d+)(?:-(\d+))?/(\d+)\]\s*(.+)$")
 EVENT_LINE_RE = re.compile(r"(\[ERROR\]|\[WARN\]|\[STOP\]|\[INFO\]|失败|错误|限流|重试|完成|已存在|缺少)")
+SUMMARY_LINE_RE = re.compile(r"(?:评分完成|复评完成).*?成功\s*(\d+)\s*支[，,]\s*失败/跳过\s*(\d+)\s*支")
 
 
 @dataclass
@@ -224,11 +225,21 @@ def progress_snapshot(log_path: Path) -> dict[str, Any]:
 
     latest_progress = ""
     latest_event = ""
+    latest_summary = ""
     completed: int | None = None
     total: int | None = None
+    success_count: int | None = None
+    failed_count: int | None = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
+            continue
+        summary_match = SUMMARY_LINE_RE.search(line)
+        if summary_match:
+            success_count = int(summary_match.group(1))
+            failed_count = int(summary_match.group(2))
+            latest_summary = line
+            latest_event = line
             continue
         match = PROGRESS_LINE_RE.match(line)
         if match:
@@ -242,10 +253,16 @@ def progress_snapshot(log_path: Path) -> dict[str, Any]:
         if EVENT_LINE_RE.search(line):
             latest_event = line
 
-    latest = latest_progress or latest_event
-    if completed is not None and total:
+    latest = latest_summary or latest_progress or latest_event
+    if success_count is not None and failed_count is not None:
+        attempted = success_count + failed_count
+        total = total or attempted
+        completed = attempted
+        pct = min(100.0, max(0.0, attempted / total * 100)) if total else 0.0
+        progress_text = f"成功 {success_count}/{total}，失败/跳过 {failed_count} ({pct:.0f}%)"
+    elif completed is not None and total:
         pct = min(100.0, max(0.0, completed / total * 100))
-        progress_text = f"{completed}/{total} ({pct:.0f}%)"
+        progress_text = f"处理到 {completed}/{total} ({pct:.0f}%)"
     else:
         progress_text = "等待首条进度"
         latest = latest or text.splitlines()[-1].strip()
@@ -253,6 +270,8 @@ def progress_snapshot(log_path: Path) -> dict[str, Any]:
     return {
         "completed": completed,
         "total": total,
+        "success_count": success_count,
+        "failed_count": failed_count,
         "progress_text": progress_text,
         "latest": _shorten_line(latest or "暂无可读进度"),
     }

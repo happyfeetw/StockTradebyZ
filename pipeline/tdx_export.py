@@ -87,6 +87,14 @@ def import_html_filename(pick_date: str, mode_label: str) -> str:
             mode_suffix = "consensus_multi_watch"
         elif "单模型观察" in text:
             mode_suffix = "consensus_single_watch"
+        elif "Z精选+观察" in text:
+            mode_suffix = "z_select_watch"
+        elif "Z精选" in text:
+            mode_suffix = "z_select"
+        elif "Z观察" in text:
+            mode_suffix = "z_watch"
+        elif "Z复盘" in text:
+            mode_suffix = "z_review_only"
         elif "观察" in text:
             mode_suffix = "consensus_watch"
         elif "分歧" in text:

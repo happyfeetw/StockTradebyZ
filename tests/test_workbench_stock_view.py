@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import logging
+import os
 import sys
 import tempfile
 import unittest
@@ -269,6 +271,315 @@ class WorkbenchStockViewTests(unittest.TestCase):
             self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "agy-cli-experimental")
         finally:
             workbench_app.st = old_st
+
+    def test_codex_auth_mode_defaults_to_local_oauth(self) -> None:
+        cfg = workbench_app.apply_codex_auth_mode({}, workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+
+        self.assertEqual(workbench_app.normalize_codex_auth_mode(cfg), workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+        self.assertEqual(cfg["auth_mode"], workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+        self.assertFalse(cfg["env_provider_enabled"])
+        self.assertFalse(cfg["ignore_user_config"])
+
+    def test_codex_auth_mode_supports_env_provider(self) -> None:
+        cfg = workbench_app.apply_codex_auth_mode({}, workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+
+        self.assertEqual(workbench_app.normalize_codex_auth_mode(cfg), workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+        self.assertEqual(cfg["auth_mode"], workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+        self.assertTrue(cfg["env_provider_enabled"])
+        self.assertTrue(cfg["ignore_user_config"])
+
+    def test_codex_auth_mode_infers_legacy_provider_flag(self) -> None:
+        mode = workbench_app.normalize_codex_auth_mode({"env_provider_enabled": True})
+
+        self.assertEqual(mode, workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+
+    def test_latest_run_dir_after_refresh_restores_active_disk_run(self) -> None:
+        old_runs_dir = workbench_app.RUNS_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            invalid = runs_dir / "multi_model_20260607_111604"
+            invalid.mkdir()
+            older = runs_dir / "2026-06-11_173502"
+            older.mkdir()
+            (older / "run_state.json").write_text(
+                json.dumps({"status": "finished", "runner_pid": 999999}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            active = runs_dir / "2026-06-11_173519"
+            active.mkdir()
+            (active / "run_state.json").write_text(
+                json.dumps({"status": "running", "runner_pid": os.getpid()}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (active / "run.log").write_text("[Step] 多模型复评与共识汇总\n", encoding="utf-8")
+            session = SessionDict()
+            try:
+                workbench_app.RUNS_DIR = runs_dir
+                workbench_app.st = SimpleNamespace(session_state=session)
+                listed = workbench_app.list_run_dirs()
+                latest = workbench_app.latest_run_dir()
+            finally:
+                workbench_app.RUNS_DIR = old_runs_dir
+                workbench_app.st = old_st
+
+        self.assertNotIn(invalid, listed)
+        self.assertEqual(latest, active)
+        self.assertEqual(session["last_run_dir"], str(active))
+
+    def test_latest_run_dir_prefers_newer_disk_run_over_stale_session_run(self) -> None:
+        old_runs_dir = workbench_app.RUNS_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            stale = runs_dir / "2026-06-11_173519"
+            stale.mkdir()
+            (stale / "run_state.json").write_text(
+                json.dumps({"status": "failed", "runner_pid": 999999}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (stale / "run.log").write_text("[ERROR] old failure\n", encoding="utf-8")
+
+            newer = runs_dir / "2026-06-12_agy_resume_consensus"
+            logs = newer / "multi_model_logs"
+            logs.mkdir(parents=True)
+            (logs / "agy-cli-experimental__gemini-3.5-flash-high.log").write_text(
+                "[INFO] AGY 实验复评完成：成功 136 支，失败/跳过 0 支\n",
+                encoding="utf-8",
+            )
+            os.utime(stale / "run.log", (1000, 1000))
+            os.utime(stale / "run_state.json", (1000, 1000))
+            os.utime(stale, (1000, 1000))
+            os.utime(logs / "agy-cli-experimental__gemini-3.5-flash-high.log", (2000, 2000))
+            os.utime(newer, (2000, 2000))
+
+            session = SessionDict({"last_run_dir": str(stale)})
+            try:
+                workbench_app.RUNS_DIR = runs_dir
+                workbench_app.st = SimpleNamespace(session_state=session)
+                listed = workbench_app.list_run_dirs()
+                latest = workbench_app.latest_run_dir()
+            finally:
+                workbench_app.RUNS_DIR = old_runs_dir
+                workbench_app.st = old_st
+
+        self.assertIn(newer, listed)
+        self.assertEqual(latest, newer)
+        self.assertEqual(session["last_run_dir"], str(newer))
+
+    def test_websocket_close_filter_only_suppresses_known_streamlit_disconnect_noise(self) -> None:
+        filter_obj = workbench_app._ClosedWorkbenchWebSocketFilter()
+        record = logging.LogRecord(
+            name="asyncio",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="Task exception was never retrieved",
+            args=(),
+            exc_info=None,
+        )
+        normal_error = RuntimeError("boom")
+        record.exc_info = (RuntimeError, normal_error, None)
+        self.assertTrue(filter_obj.filter(record))
+
+        websocket_error_cls = workbench_app._TornadoWebSocketClosedError
+        if websocket_error_cls is not None:
+            record.exc_info = (websocket_error_cls, websocket_error_cls(), None)
+            self.assertFalse(filter_obj.filter(record))
+
+    def test_multi_model_progress_rows_keep_latest_status_per_model(self) -> None:
+        log_text = "\n".join(
+            [
+                "[2026-06-11 10:00:00] [CONFIG] gemini-cli/gemini-3.1-pro-preview -> /tmp/gemini.yaml",
+                "[2026-06-11 10:00:00] [CONFIG] codex-cli/gpt-5.5-high-standard -> /tmp/codex.yaml",
+                "[2026-06-11 10:00:01] [START] [gemini-cli] 启动 gemini-cli/gemini-3.1-pro-preview",
+                "[2026-06-11 10:00:01] [START] [codex-cli] 启动 codex-cli/gpt-5.5-high-standard",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [codex-cli]",
+                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=30s, progress=处理到 5/104 (5%), latest=[1-5/104] codex batch",
+                "  [gemini-cli]",
+                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [codex-cli]",
+                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=1m00s, progress=处理到 15/104 (14%), latest=[11-15/104] codex batch",
+                "  [gemini-cli]",
+                "    - gemini-cli/gemini-3.1-pro-preview: finished, exit=0, elapsed=1m00s, progress=成功 107/136，失败/跳过 29 (100%), latest=[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
+            ]
+        )
+
+        rows = workbench_app.multi_model_progress_rows(log_text)
+        by_key = {row["key"]: row for row in rows}
+
+        self.assertEqual(rows[0]["key"], "gemini-cli/gemini-3.1-pro-preview")
+        self.assertEqual(rows[1]["key"], "codex-cli/gpt-5.5-high-standard")
+        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["status_label"], "完成")
+        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["count_text"], "成功 107/136，失败/跳过 29")
+        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["percent"], 100)
+        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["status_label"], "运行中")
+        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["count_text"], "处理到 15/104")
+        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["percent"], 14)
+
+    def test_compact_run_log_for_display_removes_repeated_multi_model_progress_blocks(self) -> None:
+        log_text = "\n".join(
+            [
+                "[Step] 多模型复评与共识汇总",
+                "[2026-06-11 10:00:01] [START] [gemini-cli] 启动 gemini-cli/gemini-3.1-pro-preview",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gemini-cli]",
+                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gemini-cli]",
+                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=1m00s, progress=处理到 20/104 (19%), latest=[16-20/104] gemini batch",
+                "[2026-06-11 10:01:02] [DONE] [gemini-cli] gemini-cli/gemini-3.1-pro-preview 结束",
+            ]
+        )
+
+        compacted = workbench_app.compact_run_log_for_display(log_text)
+
+        self.assertIn("[Step] 多模型复评与共识汇总", compacted)
+        self.assertIn("[DONE] [gemini-cli] gemini-cli/gemini-3.1-pro-preview 结束", compacted)
+        self.assertNotIn("多模型复评进度 attempt=1", compacted)
+        self.assertNotIn("progress=处理到 10/104", compacted)
+        self.assertNotIn("progress=处理到 20/104", compacted)
+
+    def test_multi_model_progress_html_does_not_indent_rows_as_markdown_code(self) -> None:
+        html = workbench_app.multi_model_progress_html(
+            [
+                {
+                    "key": "gemini-cli/gemini-3.1-pro-preview",
+                    "status_label": "运行中",
+                    "count_text": "5/136",
+                    "percent": 4,
+                    "elapsed": "30s",
+                }
+            ]
+        )
+
+        self.assertIn('<div class="review-progress-row">', html)
+        self.assertNotRegex(html, r"\n\s{4,}<div class=\"review-progress-row\"")
+        self.assertNotIn("&lt;div class=&quot;review-progress-row&quot;", html)
+
+    def test_consensus_rows_merge_z_quality_decisions(self) -> None:
+        models = ["m1", "m2", "m3"]
+        decisions = [
+            {
+                "code": "600000",
+                "strategy": "b1",
+                "review_key": "600000_b1",
+                "rank": 1,
+                "decision_bucket": "single_model_recommended",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 3.1,
+                "agreement_score": 0.3,
+                "recommended_by_model": {"m1": True, "m2": False, "m3": False},
+                "verdicts_by_model": {"m1": "PASS", "m2": "FAIL", "m3": "FAIL"},
+                "scores_by_model": {"m1": 4.4, "m2": 2.5, "m3": 2.4},
+                "missing_models": [],
+                "completed_count": 3,
+                "total_models": 3,
+            }
+        ]
+        z_by_key = {
+            "600000_b1": {
+                "z_quality_verdict": "A_SELECT",
+                "z_quality_score": 4.7,
+                "quality_reasons": ["结构亮点", "贴近支撑"],
+                "quality_risks": ["次日不能追高"],
+                "hard_vetoes": [],
+                "watch_caps": ["support_too_far"],
+            }
+        }
+
+        table_rows = workbench_app.consensus_decision_table_rows(decisions, models, z_by_key)
+        export_rows = workbench_app.consensus_export_rows(decisions, models, z_by_key)
+
+        self.assertEqual(table_rows[0]["Z裁决"], "A精选")
+        self.assertEqual(table_rows[0]["Z分"], 4.7)
+        self.assertEqual(table_rows[0]["Z观察限制"], "support_too_far")
+        self.assertEqual(export_rows[0]["z_quality_verdict"], "A_SELECT")
+        self.assertEqual(export_rows[0]["z_quality_label"], "A精选")
+        self.assertEqual(export_rows[0]["z_quality_score"], 4.7)
+        self.assertEqual(export_rows[0]["z_watch_caps"], ["support_too_far"])
+
+    def test_consensus_tdx_z_presets_and_filters(self) -> None:
+        rows = [
+            {
+                "code": "600000",
+                "strategy": "b1",
+                "decision_bucket_label": "单模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 3.1,
+                "pass_count": 1,
+                "watch_count": 0,
+                "fail_count": 2,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "推荐", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "A_SELECT",
+                "z_quality_score": 4.7,
+                "z_hard_vetoes": [],
+                "z_watch_caps": [],
+            },
+            {
+                "code": "000001",
+                "strategy": "b1",
+                "decision_bucket_label": "无模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 2.2,
+                "pass_count": 0,
+                "watch_count": 1,
+                "fail_count": 2,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "观察", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "B_WATCH",
+                "z_quality_score": 3.8,
+                "z_hard_vetoes": [],
+                "z_watch_caps": ["support_too_far"],
+            },
+            {
+                "code": "300001",
+                "strategy": "brick",
+                "decision_bucket_label": "无模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 1.8,
+                "pass_count": 0,
+                "watch_count": 0,
+                "fail_count": 3,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "不推荐", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "REJECT",
+                "z_quality_score": 2.4,
+                "z_hard_vetoes": ["centipede_like"],
+                "z_watch_caps": [],
+            },
+        ]
+
+        z_select = workbench_app.apply_consensus_tdx_preset(rows, "Z精选")
+        z_select_watch = workbench_app.apply_consensus_tdx_preset(rows, "Z精选+观察")
+        filtered = workbench_app.filter_consensus_tdx_rows(
+            rows,
+            strategies=["b1"],
+            verdicts=["FAIL"],
+            bucket_labels=["单模型推荐", "无模型推荐"],
+            selected_models=[],
+            selected_model_states=[],
+            model_match="任一选中模型满足",
+            pass_range=(0, 3),
+            watch_range=(0, 3),
+            fail_range=(0, 3),
+            score_range=(0.0, 5.0),
+            z_verdicts=["A_SELECT", "B_WATCH"],
+            z_score_range=(3.5, 5.0),
+            exclude_z_hard_veto=True,
+            exclude_z_watch_cap=True,
+            complete_only=True,
+        )
+
+        self.assertEqual([row["code"] for row in z_select], ["600000"])
+        self.assertEqual([row["code"] for row in z_select_watch], ["600000", "000001"])
+        self.assertEqual([row["code"] for row in filtered], ["600000"])
 
     def test_parse_agy_models_output_preserves_exact_names(self) -> None:
         output = "\n".join(

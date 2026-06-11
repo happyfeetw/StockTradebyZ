@@ -15,9 +15,10 @@
 
 - 主线从“单 Gemini 复评”升级为“候选冻结 -> 多模型复评 -> 共识结果 -> 通达信导入”。
 - AI 复评使用评分体系 V3：公共交易 gate + 分策略 profile + 本地归一化。
-- 多模型复评默认使用 Gemini 3.1 Pro Preview、AGY Gemini 3.5 Flash High、Codex GPT-5.5 High Standard。
+- 多模型复评默认运行 Gemini 3.1 Pro Preview、AGY Gemini 3.5 Flash High、Codex GPT-5.5 High Standard，三路都作为正式必需模型参与共识。
 - 多模型模式禁止模型静默替换或降级；模型失败时记录原因，并按原模型断点重跑一次。
 - `run_all.py` 仍保留轻量单 reviewer 流程；完整多模型流程建议使用 Workbench 或 `agent/multi_model_review.py`。
+- 当前分支改动总览见 [docs/review-system-change-summary-2026-06-11.md](docs/review-system-change-summary-2026-06-11.md)。
 
 ---
 
@@ -244,6 +245,7 @@ Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yam
 - idle_timeout_seconds：CLI 无 stdout/stderr 输出时的空闲超时，默认 0 关闭，仅保留 900 秒总超时
 - batch_size：每次 Gemini CLI 请求最多提交几张图，默认 5
 - fallback_to_single_on_batch_error：批量 JSON 解析失败时是否使用同一模型拆批并最终逐只复评
+- AGY 的 `print_timeout` / `timeout_seconds` 默认是 `3m` / `180`：子进程总超时按模型级失败记录，交给多模型编排按原模型重跑一次，不进入拆批/单股 fallback
 - save_raw_cli_io / raw_log_dir：保存每次 CLI 调用的原始 prompt、stdout、stderr 和 meta
 - max_requests_per_run：单次运行最多请求数；batch_size=5 时，1 次请求最多覆盖 5 支股票
 - daily_request_budget：项目侧每日请求预算
@@ -261,6 +263,8 @@ Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yam
 - reviewers：声明要运行的 reviewer、模型和输出 profile
 
 AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前可用 `run_all.py --reviewer agy-cli-experimental` 或工作台复评配置中的 “AGY CLI（实验）” 显式运行；默认单 reviewer 复评方式仍是 Gemini CLI。
+
+AGY 运行中如果触发 OAuth/Keychain 认证抖动，`auth_recovery_enabled` 默认会暂停当前批次并等待登录态恢复。AGY 非交互 `--print` 默认使用 `stdin_mode: devnull`，避免子进程等待 stdin EOF 导致挂起；只有临时改为 `stdin_mode: pipe` 时，才会把 `auth_recovery_status.json` 中提示的 `auth_code_file` 转发到 AGY stdin。恢复后使用同一模型重试当前批次，不做模型降级。可在 [config/agy_cli_review.yaml](config/agy_cli_review.yaml) 调整等待时长、探测间隔和权限开关。
 
 ---
 
@@ -285,8 +289,8 @@ data/review/日期/suggestion.json
 
 data/review_consensus/批次/summary.json
 
-- complete：所有模型是否都完成评分
-- models：本批实际纳入共识的模型
+- complete：所有正式必需模型是否都完成评分
+- models：本批实际纳入正式共识的模型
 - decision_bucket_counts：共同推荐、多数推荐、单模型推荐、无推荐、缺失的数量
 - invariant_violations：共识构建时发现的数据一致性问题
 - z_quality：若已运行 Z 层，记录 Z summary、decisions、裁决统计和 result_mode
@@ -298,8 +302,9 @@ data/review_consensus/批次/decisions.json
 - consensus_verdict：PASS / WATCH / FAIL / INCOMPLETE
 - recommended_by_model：各模型是否推荐
 - scores_by_model、verdicts_by_model：各模型分数和结论
+- Workbench 共识结果页会合并展示 Z 裁决，可在决策结果集按 Z 裁决筛选，也可在“Z质量裁决”页签查看 Z 分、硬否决、观察限制、理由和风险。
 
-`incomplete` 不应作为最终决策依据，应断点重跑补齐缺失模型。
+`incomplete` 不应作为最终决策依据，应断点重跑补齐 Gemini、AGY、Codex 三路正式模型。
 
 ### Z 精选池
 
@@ -312,12 +317,18 @@ data/z_quality/批次/decisions.json
 - next_day_plan：次日条件化观察预案，不是自动买入指令
 - hold_plan：买后观察纪律，供人工参考
 
+共识结果导入通达信支持 Z 层快捷方案和自定义筛选：
+
+- `Z精选`、`Z观察`、`Z精选+观察`、`Z复盘样本`
+- Z 裁决、Z 质量分、排除 Z 硬否决、排除 Z 观察限制
+- 仍按策略分板块生成 `.blk`，板块名前缀分别使用 `ZA`、`ZW`、`ZQ`、`ZR`
+
 当前 Z 层是共识后的后处理器，不绕过多模型复评直接处理原始初选池。
 
 ### 运行产物清理口径
 
 - `data/` 下的 raw、review、runs、analysis、consensus、z_quality 都是本地运行产物，默认不应提交。
-- 多模型探索过程中可能留下旧模型目录或旧日志；判断当前有效口径时，以 `data/review_consensus/latest.json` 里的 `models` 和 `generated_at` 为准。
+- 多模型探索过程中可能留下旧模型目录或旧日志；判断当前有效口径时，以 `data/review_consensus/latest.json` 里的 `models`、`complete` 和 `generated_at` 为准。
 - Workbench 的 pid 文件只能作为启动记录；如果进程不存在，应以实际进程状态为准。
 - 需要给通达信导入时，优先从 Workbench 的“结果中心”或“共识结果”页面发起，避免手工复制 `.blk` 内容。
 

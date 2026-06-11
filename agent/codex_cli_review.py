@@ -33,6 +33,21 @@ FIXED_MODEL_PROFILE = "gpt-5.5-high-standard"
 FIXED_REASONING_EFFORT = "high"
 FIXED_SPEED_TIER = "standard"
 DEFAULT_BATCH_SIZE = 5
+AUTH_MODE_LOCAL_OAUTH = "local_oauth"
+AUTH_MODE_ENV_PROVIDER = "env_provider"
+AUTH_MODE_ALIASES = {
+    "oauth": AUTH_MODE_LOCAL_OAUTH,
+    "local": AUTH_MODE_LOCAL_OAUTH,
+    "local_oauth": AUTH_MODE_LOCAL_OAUTH,
+    "codex_oauth": AUTH_MODE_LOCAL_OAUTH,
+    "native": AUTH_MODE_LOCAL_OAUTH,
+    "env": AUTH_MODE_ENV_PROVIDER,
+    "env_provider": AUTH_MODE_ENV_PROVIDER,
+    "local_proxy": AUTH_MODE_ENV_PROVIDER,
+    "proxy": AUTH_MODE_ENV_PROVIDER,
+    "apikey": AUTH_MODE_ENV_PROVIDER,
+    "api_key": AUTH_MODE_ENV_PROVIDER,
+}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -45,8 +60,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "reasoning_effort": FIXED_REASONING_EFFORT,
     "speed_tier": FIXED_SPEED_TIER,
     "force_fixed_model": True,
-    "ignore_user_config": True,
-    "env_provider_enabled": True,
+    "auth_mode": AUTH_MODE_LOCAL_OAUTH,
+    "ignore_user_config": False,
+    "env_provider_enabled": False,
     "codex_provider_name": "env_custom",
     "codex_base_url": "",
     "base_url_env_vars": ["CODEX_OPENAI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"],
@@ -148,6 +164,15 @@ def _safe_provider_name(value: Any) -> str:
     return safe
 
 
+def _normalize_auth_mode(cfg: dict[str, Any]) -> str:
+    raw = str(cfg.get("auth_mode") or cfg.get("codex_auth_mode") or "").strip().lower().replace("-", "_")
+    if raw:
+        return AUTH_MODE_ALIASES.get(raw, AUTH_MODE_LOCAL_OAUTH)
+    if _bool_value(cfg.get("env_provider_enabled"), default=False):
+        return AUTH_MODE_ENV_PROVIDER
+    return AUTH_MODE_LOCAL_OAUTH
+
+
 def _is_auth_error(text: str) -> bool:
     lowered = text.lower()
     return any(
@@ -172,6 +197,9 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
         raw = yaml.safe_load(f) or {}
 
     cfg = {**DEFAULT_CONFIG, **raw}
+    ignore_user_config_configured = "ignore_user_config" in raw
+    if "auth_mode" not in raw and "codex_auth_mode" not in raw:
+        cfg.pop("auth_mode", None)
     for key in ("candidates", "kline_dir", "output_dir", "prompt_path"):
         cfg[key] = _resolve_cfg_path(cfg[key])
     cfg["raw_log_dir"] = _resolve_cfg_path(cfg["raw_log_dir"]) if str(cfg.get("raw_log_dir") or "").strip() else None
@@ -180,8 +208,16 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["batch_size"] = max(1, int(cfg.get("batch_size", DEFAULT_BATCH_SIZE)))
     cfg["max_items"] = _optional_int(cfg.get("max_items"))
     cfg["retry_backoff_seconds"] = _float_list(cfg.get("retry_backoff_seconds", [30, 90]))
-    cfg["ignore_user_config"] = _bool_value(cfg.get("ignore_user_config"), default=True)
-    cfg["env_provider_enabled"] = _bool_value(cfg.get("env_provider_enabled"), default=True)
+    cfg["auth_mode"] = _normalize_auth_mode(cfg)
+    if cfg["auth_mode"] == AUTH_MODE_ENV_PROVIDER:
+        cfg["env_provider_enabled"] = True
+        cfg["ignore_user_config"] = _bool_value(
+            cfg.get("ignore_user_config") if ignore_user_config_configured else None,
+            default=True,
+        )
+    else:
+        cfg["env_provider_enabled"] = False
+        cfg["ignore_user_config"] = False
     cfg["codex_provider_name"] = _safe_provider_name(cfg.get("codex_provider_name"))
     cfg["codex_base_url"] = str(cfg.get("codex_base_url") or "").strip()
     cfg["base_url_env_vars"] = _string_list(cfg.get("base_url_env_vars"))
@@ -411,7 +447,7 @@ class CodexCliReviewer(BaseReviewer):
         return "", ""
 
     def _provider_override_meta(self) -> dict[str, Any]:
-        enabled = _bool_value(self.config.get("env_provider_enabled"), default=True)
+        enabled = _bool_value(self.config.get("env_provider_enabled"), default=False)
         source, base_url = self._base_url_source()
         provider_name = _safe_provider_name(self.config.get("codex_provider_name"))
         return {
@@ -444,12 +480,31 @@ class CodexCliReviewer(BaseReviewer):
 
     def _codex_env(self) -> tuple[dict[str, str], dict[str, Any]]:
         env = {**os.environ, "NO_COLOR": "1"}
-        api_key_env_var, api_key = self._api_key_env_source()
-        if api_key:
-            env["OPENAI_API_KEY"] = api_key
+        provider_meta = self._provider_override_meta()
+        api_key_env_var = ""
+        api_key = ""
+        stripped_env_vars: list[str] = []
+        if provider_meta["enabled"]:
+            api_key_env_var, api_key = self._api_key_env_source()
+            if api_key:
+                env["OPENAI_API_KEY"] = api_key
+        else:
+            strip_names = {
+                *_string_list(self.config.get("base_url_env_vars")),
+                *_string_list(self.config.get("api_key_env_vars")),
+                "OPENAI_API_KEY",
+                "OPENAI_BASE_URL",
+                "OPENAI_API_BASE",
+            }
+            for env_name in sorted(name for name in strip_names if name):
+                if env_name in env:
+                    env.pop(env_name, None)
+                    stripped_env_vars.append(env_name)
         return env, {
             "api_key_env_var": api_key_env_var,
             "api_key_env_present": bool(api_key),
+            "api_key_forwarded": bool(api_key and provider_meta["enabled"]),
+            "stripped_env_vars": stripped_env_vars,
         }
 
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:

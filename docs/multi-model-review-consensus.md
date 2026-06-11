@@ -7,7 +7,7 @@
 多模型复评用于把同一批候选股票交给多个 reviewer 独立打分，最终优先选择所有模型都推荐的股票。当前默认模型组合：
 
 - Gemini CLI: `gemini-3.1-pro-preview`
-- AGY CLI: `Gemini 3.5 Flash (High)`
+- AGY CLI: `Gemini 3.5 Flash (High)`，默认 `required=true`，作为第三路正式复评模型
 - Codex CLI: `gpt-5.5`，`reasoning_effort=high`，标准速度路径
 
 推荐阈值不再使用单一全局 `4.0`。评分归一化仍由 `BaseReviewer.normalize_scores()` 完成，但现在分成三层：公共条件 gate、策略 profile 评分、共识汇总评分。
@@ -56,14 +56,17 @@ python agent/multi_model_review.py --run-dir data/runs/<run_id>
 
 多模型之间并行执行；每个工具内部按批串行处理，默认 `batch_size: 5`。各 reviewer 会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。各 reviewer 写入独立目录，不覆盖正式 Gemini CLI 结果。
 
+运行日志中的 `[x/y]` 表示“处理到第 x 个候选”，不等于成功生成了 x 个有效结果。模型日志出现最终汇总行后，多模型进度会优先展示 `成功 X/Y，失败/跳过 Z`，用于区分完成进度和有效结果数量。
+
 `config/multi_model_review.yaml` 中的模型声明是复评边界：
 
 - `no_model_substitution: true`：禁止 `fallback_model`、`substitute_model`、`fallback_reviewer` 等替换配置。
 - `rerun_failed_models_once: true`：所有模型首轮结束后，只对失败模型按原模型再跑一次。
 - `skip_existing: true`：重跑时跳过已经写好的单股结果，用于补齐失败或缺失项。
+- AGY 默认 `print_timeout=3m`、`timeout_seconds=180`。子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时在多个拆分批次上反复等待。
 - Codex 正式路径默认锁定 `gpt-5.5`、`reasoning_effort=high`、标准速度；如需临时试验非 5.5，必须显式 `force_fixed_model: false`，并且不能作为正式降级替换。
 
-进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。任一正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。
+进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。Gemini、AGY、Codex 任一路正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。
 
 ## Strategy Review Scoring
 
@@ -114,30 +117,32 @@ Codex reviewer 通过非交互命令执行：
 
 ```bash
 codex --ask-for-approval never exec \
-  --ignore-user-config --ignore-rules \
+  --ignore-rules \
   -c model_reasoning_effort=\"high\" \
   -c fast_default_opt_out=true \
-  -c model_provider=\"env_custom\" \
-  -c model_providers.env_custom.wire_api=\"responses\" \
-  -c model_providers.env_custom.requires_openai_auth=true \
-  -c model_providers.env_custom.base_url=\"${CODEX_OPENAI_BASE_URL}\" \
-  -c preferred_auth_method=\"apikey\" \
   --model gpt-5.5 \
   --sandbox read-only \
   --ephemeral \
   --output-schema schema.json
 ```
 
-默认保留 `--ignore-user-config`，避免临时复评子进程依赖用户当前 Codex 会话配置。为了兼容 CCSwitch 这类 OpenAI-compatible 本地代理，项目从环境变量读取 base URL 和 API key，并用命令级 `-c` 配置注入本次 Codex 调用。
+默认 `auth_mode: local_oauth`，读取本机 Codex CLI 用户配置和 OAuth 登录态（`~/.codex/config.toml` / `~/.codex/auth.json`），不注入 API key provider，也不强制 `preferred_auth_method="apikey"`。在默认 OAuth 模式下，reviewer 会从 Codex 子进程环境里剥离 `CODEX_OPENAI_*` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_API_BASE`，避免残留环境变量把复评带回 API-key 或本地代理路径。
 
-推荐环境变量：
+如果确实要兼容 CCSwitch 这类 OpenAI-compatible 本地代理，必须在 [config/codex_cli_review.yaml](../config/codex_cli_review.yaml) 显式打开：
+
+```yaml
+auth_mode: env_provider
+env_provider_enabled: true
+```
+
+并设置代理环境变量：
 
 ```bash
 export CODEX_OPENAI_BASE_URL=http://127.0.0.1:8317/v1
 export CODEX_OPENAI_API_KEY=<ccswitch-api-key>
 ```
 
-`CODEX_OPENAI_BASE_URL` 会被写入本次命令的 `model_providers.env_custom.base_url`。`CODEX_OPENAI_API_KEY` 只会映射到子进程环境变量 `OPENAI_API_KEY`，不会进入命令行或 raw log。如果当前 `CODEX_HOME/auth.json` 已有可被 CCSwitch 接受的 API key，也可以只设置 base URL；`codex exec --ignore-user-config` 仍会使用 `CODEX_HOME` 下的认证信息。
+打开后，`CODEX_OPENAI_BASE_URL` 会被写入本次命令的 `model_providers.env_custom.base_url`，`CODEX_OPENAI_API_KEY` 只会映射到子进程环境变量 `OPENAI_API_KEY`，不会进入命令行或 raw log。这个模式是旧兼容路径，不是默认推荐路径。
 
 ### Codex CLI 进度卡住排障
 
@@ -146,7 +151,9 @@ export CODEX_OPENAI_API_KEY=<ccswitch-api-key>
 - `data/review_runs/{batch_id}/codex-cli/{profile}/{pick_date}/codex_cli_runs/*/stderr.txt`
 - `data/runs/{run_id}/multi_model_logs/codex-cli__{profile}.log`
 
-如果 stderr 中出现 `401 Unauthorized`、`Incorrect API key provided`，且日志头部显示 `provider: openai`、请求地址为 `https://api.openai.com/v1/responses`，说明本次 Codex 子进程没有拿到 OpenAI-compatible provider 覆盖，通常是 `CODEX_OPENAI_BASE_URL` / `OPENAI_BASE_URL` 未设置，或运行入口没有继承这些环境变量。
+Workbench 的“复评配置”页在单独选择 Codex reviewer 时会显示完整 Codex 调用模式配置；在“多模型复评”模式下也会显示“Codex 子模型调用模式”，用于写入本次 run snapshot。
+
+如果 stderr 中出现 `401 Unauthorized`、`Invalid API key`、`Incorrect API key provided`，且请求地址是 `http://127.0.0.1:8317/v1/...`，说明本次 Codex 子进程仍在走旧的本地代理/API-key provider。先检查当前基础配置和 run snapshot 里的 `codex_cli_review.yaml`，确认 `auth_mode: local_oauth`、`env_provider_enabled: false`、`ignore_user_config: false`。如果错误来自原生 Codex OAuth 登录态，则重新执行 `codex login` 或在 Codex App 里重新登录后重跑。
 
 这类认证错误不是模型慢，也不是进度统计问题。没有单票 JSON 写出时，真实完成数就是 0；旧实现会把认证失败当成普通批量失败，继续重试、拆批、逐只 fallback，造成看起来一直卡住。当前实现会把 `401` / API key 错误归类为 `CodexCliAuthError` 并快速失败，由多模型编排保留其他 reviewer 的进度。
 
@@ -172,15 +179,15 @@ export CODEX_OPENAI_API_KEY=<ccswitch-api-key>
 - `consensus_verdict`: `PASS` / `WATCH` / `FAIL` / `INCOMPLETE`。
 - `strategy_pass_min` / `strategy_watch_min`: 当前策略门槛。
 
-决策分组：
+决策分组使用 Gemini、AGY、Codex 三路正式模型：
 
-- `all_models_recommended`: 所有模型都完成评分且都推荐
+- `all_models_recommended`: 所有正式模型都完成评分且都推荐
 - `majority_recommended`: 多数模型推荐
 - `single_model_recommended`: 仅一个模型推荐
 - `none_recommended`: 无模型推荐
-- `incomplete`: 至少一个模型缺失评分
+- `incomplete`: 至少一个正式模型缺失评分
 
-`incomplete` 不能作为最终决策依据。此时应断点重跑多模型复评，直到所有模型对所有候选完成评分。
+`incomplete` 不能作为最终决策依据。此时应断点重跑多模型复评，直到 Gemini、AGY、Codex 三路都对所有候选完成评分。
 
 ## Workbench Views
 
@@ -191,9 +198,10 @@ Workbench 新增：
 - 侧边栏 -> `共识结果`
 - 共识结果 -> `导入通达信`
 
-`共识结果` 包含两个视图：
+`共识结果` 包含三个视图：
 
-- 决策结果集：按策略和决策分组查看最终股票集合。
+- 决策结果集：按策略、决策分组和 Z 裁决查看最终股票集合。
+- Z质量裁决：查看 `A_SELECT`、`B_WATCH`、`C_REVIEW_ONLY`、`REJECT`、Z 分、硬否决、观察限制、理由和风险。
 - 模型评分明细：按策略、模型和推荐状态查看每个模型的评分与意见。
 
 共识结果导入通达信时，可以使用快捷方案或自定义筛选：
@@ -202,9 +210,10 @@ Workbench 新增：
 - 多模型推荐：推荐模型数达到多数。
 - 单模型推荐：仅一个模型 PASS，适合复盘分歧。
 - 共同观察、多模型观察、单模型观察：用于跟踪 WATCH 样本。
+- Z精选、Z观察、Z精选+观察、Z复盘样本：按 Z 质量层裁决导出精选池或观察池。
 - 分歧样本：至少一个模型推荐且至少一个模型不推荐。
 
-导入前会按策略分组生成板块，板块名前缀区分来源，例如多数推荐使用 `CM`，共同推荐使用 `CA`。导入链路复用正式结果中心的通达信导出能力，支持下载 `.bat`、浏览器写入和本地路径直写。
+导入前会按策略分组生成板块，板块名前缀区分来源，例如多数推荐使用 `CM`，共同推荐使用 `CA`，Z 精选使用 `ZA`，Z 观察使用 `ZW`。自定义筛选可叠加 Z 裁决、Z 质量分、排除 Z 硬否决、排除 Z 观察限制、模型状态、推荐/观察/不推荐数量和共识分。导入链路复用正式结果中心的通达信导出能力，支持下载 `.bat`、浏览器写入和本地路径直写。
 
 ## Cleanup Notes
 

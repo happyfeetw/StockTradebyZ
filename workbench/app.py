@@ -27,11 +27,40 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+try:
+    from tornado.iostream import StreamClosedError as _TornadoStreamClosedError
+    from tornado.websocket import WebSocketClosedError as _TornadoWebSocketClosedError
+except Exception:  # noqa: BLE001 - Streamlit may be stubbed in unit tests.
+    _TornadoStreamClosedError = None
+    _TornadoWebSocketClosedError = None
+
+
+class _ClosedWorkbenchWebSocketFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "Task exception was never retrieved" not in record.getMessage():
+            return True
+        exc = record.exc_info[1] if record.exc_info else None
+        if _TornadoWebSocketClosedError is not None and isinstance(exc, _TornadoWebSocketClosedError):
+            return False
+        if _TornadoStreamClosedError is not None and isinstance(exc, _TornadoStreamClosedError):
+            return False
+        return True
+
+
+def install_workbench_log_filters() -> None:
+    asyncio_logger = logging.getLogger("asyncio")
+    if not any(isinstance(item, _ClosedWorkbenchWebSocketFilter) for item in asyncio_logger.filters):
+        asyncio_logger.addFilter(_ClosedWorkbenchWebSocketFilter())
+
+
+install_workbench_log_filters()
+
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
 HISTORY_DIR = ROOT / "data" / "history"
 CONSENSUS_DIR = ROOT / "data" / "review_consensus"
+Z_QUALITY_DIR = ROOT / "data" / "z_quality"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 FORMAL_REVIEW_SOURCE = "formal"
@@ -50,7 +79,30 @@ REVIEWER_OPTIONS = {
     "gemini-api": "Gemini API Key",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
+CODEX_AUTH_MODE_LOCAL_OAUTH = "local_oauth"
+CODEX_AUTH_MODE_ENV_PROVIDER = "env_provider"
+CODEX_AUTH_MODE_OPTIONS = {
+    CODEX_AUTH_MODE_LOCAL_OAUTH: "本机 Codex OAuth（默认）",
+    CODEX_AUTH_MODE_ENV_PROVIDER: "OpenAI-compatible 本地代理/API key",
+}
 AGY_MODELS_CACHE_KEY = "agy_models_cache"
+MODEL_PROGRESS_ROW_RE = re.compile(
+    r"^\s*-\s+(?P<key>[^:]+):\s+(?P<status>[^,]+)"
+    r"(?:,\s+exit=(?P<exit>-?\d+))?,\s+elapsed=(?P<elapsed>[^,]+),\s+"
+    r"progress=(?P<progress>.*?),\s+latest=(?P<latest>.*)$"
+)
+MODEL_CONFIG_ROW_RE = re.compile(r"\[(?:CONFIG|INFO)\]\s+reviewer config:\s+(?P<key>\S+)\s+->")
+MODEL_RUNTIME_CONFIG_ROW_RE = re.compile(r"\[CONFIG\]\s+(?P<key>\S+)\s+->")
+MODEL_START_ROW_RE = re.compile(r"\[(?:START|INFO)\].*?启动\s+(?P<key>\S+?)(?:\s+attempt=\d+|:|\s|$)")
+MODEL_DONE_ROW_RE = re.compile(
+    r"\[(?:DONE|INFO)\].*?(?P<key>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\s+结束"
+    r"(?:[，,]\s*exit=(?P<exit>-?\d+))?"
+)
+MODEL_OLD_RUNNING_ROW_RE = re.compile(r"多模型复评仍在运行：(?P<keys>.+)$")
+MODEL_PROGRESS_TEXT_RE = re.compile(r"(?P<completed>\d+)\s*/\s*(?P<total>\d+)\s*\((?P<pct>\d+)%\)")
+MODEL_SUCCESS_PROGRESS_TEXT_RE = re.compile(
+    r"成功\s*(?P<success>\d+)\s*/\s*(?P<total>\d+)[，,]\s*失败/跳过\s*(?P<failed>\d+)\s*\((?P<pct>\d+)%\)"
+)
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -338,19 +390,52 @@ def ensure_session_state() -> None:
         st.session_state.last_run_dir = ""
 
 
+def has_run_artifacts(path: Path) -> bool:
+    return (
+        (path / "run_state.json").exists()
+        or (path / "run.log").exists()
+        or (path / "multi_model_logs").is_dir()
+    )
+
+
+def run_dir_updated_at(path: Path) -> float:
+    candidates = [path]
+    for name in ("run_state.json", "run.log"):
+        item = path / name
+        if item.exists():
+            candidates.append(item)
+    logs_dir = path / "multi_model_logs"
+    if logs_dir.is_dir():
+        candidates.extend(item for item in logs_dir.iterdir() if item.is_file())
+    return max(item.stat().st_mtime for item in candidates)
+
+
 def list_run_dirs() -> list[Path]:
     if not RUNS_DIR.exists():
         return []
-    return sorted([p for p in RUNS_DIR.iterdir() if p.is_dir()], reverse=True)
+
+    return sorted(
+        [p for p in RUNS_DIR.iterdir() if p.is_dir() and has_run_artifacts(p)],
+        key=run_dir_updated_at,
+        reverse=True,
+    )
 
 
 def latest_run_dir() -> Path | None:
+    for run_dir in list_run_dirs():
+        if is_run_active(run_dir):
+            st.session_state.last_run_dir = str(run_dir)
+            return run_dir
+    runs = list_run_dirs()
     if st.session_state.get("last_run_dir"):
         p = Path(str(st.session_state.last_run_dir))
-        if p.exists():
-            return p
-    runs = list_run_dirs()
-    return runs[0] if runs else None
+        if p.exists() and has_run_artifacts(p):
+            if not runs or p == runs[0] or run_dir_updated_at(p) >= run_dir_updated_at(runs[0]):
+                return p
+    latest = runs[0] if runs else None
+    if latest is not None:
+        st.session_state.last_run_dir = str(latest)
+    return latest
 
 
 def run_state(run_dir: Path | None = None) -> dict[str, Any]:
@@ -440,6 +525,56 @@ def make_run_id() -> str:
 
 def clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def config_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def normalize_codex_auth_mode(cfg: dict[str, Any] | None) -> str:
+    cfg = cfg or {}
+    raw = clean_text(cfg.get("auth_mode") or cfg.get("codex_auth_mode")).lower().replace("-", "_")
+    aliases = {
+        "oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "local": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "local_oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "codex_oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "native": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "env": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "env_provider": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "local_proxy": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "proxy": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "apikey": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "api_key": CODEX_AUTH_MODE_ENV_PROVIDER,
+    }
+    if raw:
+        return aliases.get(raw, CODEX_AUTH_MODE_LOCAL_OAUTH)
+    if config_bool(cfg.get("env_provider_enabled"), default=False):
+        return CODEX_AUTH_MODE_ENV_PROVIDER
+    return CODEX_AUTH_MODE_LOCAL_OAUTH
+
+
+def apply_codex_auth_mode(cfg: dict[str, Any], mode: str) -> dict[str, Any]:
+    previous_mode = normalize_codex_auth_mode(cfg)
+    mode = normalize_codex_auth_mode({"auth_mode": mode})
+    cfg["auth_mode"] = mode
+    if mode == CODEX_AUTH_MODE_ENV_PROVIDER:
+        cfg["env_provider_enabled"] = True
+        cfg["ignore_user_config"] = (
+            config_bool(cfg.get("ignore_user_config"), default=True)
+            if previous_mode == CODEX_AUTH_MODE_ENV_PROVIDER
+            else True
+        )
+    else:
+        cfg["env_provider_enabled"] = False
+        cfg["ignore_user_config"] = False
+    return cfg
 
 
 def normalize_reviewer(value: Any) -> str:
@@ -555,6 +690,73 @@ def render_classic_pattern_config(cfg: dict[str, Any], key_prefix: str) -> dict[
         f"当前已有经典图形定义：{', '.join(DEFAULT_CLASSIC_PATTERN_STRATEGIES)}。"
         "开启后由复评器按候选策略自动判断，页面不需要逐个选择策略。"
     )
+    return cfg
+
+
+def render_codex_auth_mode_config(cfg: dict[str, Any], key_prefix: str) -> dict[str, Any]:
+    mode = normalize_codex_auth_mode(cfg)
+    mode_keys = list(CODEX_AUTH_MODE_OPTIONS)
+    if mode not in mode_keys:
+        mode = CODEX_AUTH_MODE_LOCAL_OAUTH
+
+    selected_mode = st.radio(
+        "Codex 调用模式",
+        mode_keys,
+        index=mode_keys.index(mode),
+        format_func=lambda item: CODEX_AUTH_MODE_OPTIONS[item],
+        key=f"{key_prefix}_auth_mode",
+        help="默认使用本机 Codex CLI/App OAuth 登录态；只有明确需要本地 OpenAI-compatible 代理时才切换到 API key 模式。",
+    )
+    cfg = apply_codex_auth_mode(cfg, selected_mode)
+
+    if selected_mode == CODEX_AUTH_MODE_LOCAL_OAUTH:
+        st.info("默认模式：读取本机 Codex CLI OAuth 登录态和用户配置，不向子进程传递 API key 或本地 base URL 环境变量。")
+        return cfg
+
+    st.warning("本地代理/API key 是兼容模式；只有明确需要 CCSwitch 或其他 OpenAI-compatible 代理时使用。")
+    p1, p2 = st.columns(2)
+    with p1:
+        cfg["codex_provider_name"] = st.text_input(
+            "Provider 名称",
+            value=str(cfg.get("codex_provider_name", "env_custom")),
+            key=f"{key_prefix}_provider_name",
+        )
+        cfg["codex_base_url"] = st.text_input(
+            "固定 base URL",
+            value=str(cfg.get("codex_base_url", "")),
+            key=f"{key_prefix}_base_url",
+            help="留空时按下面的 base URL 环境变量顺序读取。",
+        )
+        cfg["ignore_user_config"] = st.toggle(
+            "忽略 ~/.codex/config.toml",
+            value=config_bool(cfg.get("ignore_user_config"), default=True),
+            key=f"{key_prefix}_ignore_user_config",
+            help="代理模式默认隔离用户配置，只使用本次命令注入的 provider。",
+        )
+    with p2:
+        base_vars = cfg.get("base_url_env_vars") or ["CODEX_OPENAI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"]
+        api_vars = cfg.get("api_key_env_vars") or ["CODEX_OPENAI_API_KEY", "OPENAI_API_KEY"]
+        base_vars_text = ",".join(str(item) for item in base_vars)
+        api_vars_text = ",".join(str(item) for item in api_vars)
+        cfg["base_url_env_vars"] = [
+            item.strip()
+            for item in st.text_input(
+                "base URL 环境变量",
+                value=base_vars_text,
+                key=f"{key_prefix}_base_url_env_vars",
+            ).split(",")
+            if item.strip()
+        ]
+        cfg["api_key_env_vars"] = [
+            item.strip()
+            for item in st.text_input(
+                "API key 环境变量",
+                value=api_vars_text,
+                key=f"{key_prefix}_api_key_env_vars",
+            ).split(",")
+            if item.strip()
+        ]
+    st.caption("代理模式会把 base URL 注入为 Codex CLI 的 model_provider，并把 API key 环境变量仅转发到子进程，不写入命令行。")
     return cfg
 
 
@@ -885,6 +1087,198 @@ def escape_log(lines: list[str] | str) -> str:
     )
 
 
+def _progress_status_label(status: str, exit_code: str | None = None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized == "finished":
+        return "完成" if exit_code in {None, "", "0"} else "失败"
+    if normalized == "running":
+        return "运行中"
+    if normalized in {"starting", "configured", "waiting"}:
+        return "等待"
+    return str(status or "等待")
+
+
+def _progress_row_defaults(key: str) -> dict[str, Any]:
+    return {
+        "key": key,
+        "status": "waiting",
+        "status_label": "等待",
+        "exit_code": "",
+        "elapsed": "",
+        "completed": None,
+        "total": None,
+        "percent": 0,
+        "count_text": "等待输出",
+        "progress_text": "等待输出",
+        "latest": "",
+    }
+
+
+def _parse_progress_text(progress_text: str) -> tuple[int | None, int | None, int, str]:
+    text = str(progress_text or "")
+    success_match = MODEL_SUCCESS_PROGRESS_TEXT_RE.search(text)
+    if success_match:
+        success = int(success_match.group("success"))
+        total = int(success_match.group("total"))
+        failed = int(success_match.group("failed"))
+        percent = int(success_match.group("pct"))
+        completed = min(total, success + failed)
+        return completed, total, max(0, min(100, percent)), f"成功 {success}/{total}，失败/跳过 {failed}"
+
+    match = MODEL_PROGRESS_TEXT_RE.search(text)
+    if not match:
+        text = text.strip() or "等待输出"
+        return None, None, 0, text
+    completed = int(match.group("completed"))
+    total = int(match.group("total"))
+    percent = int(match.group("pct"))
+    return completed, total, max(0, min(100, percent)), f"处理到 {completed}/{total}"
+
+
+def multi_model_progress_rows(log_text: str) -> list[dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def ensure_row(key: str) -> dict[str, Any]:
+        key = str(key or "").strip()
+        if not key:
+            key = "unknown"
+        if key not in rows:
+            rows[key] = _progress_row_defaults(key)
+            order.append(key)
+        return rows[key]
+
+    for raw_line in str(log_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        for pattern in (MODEL_CONFIG_ROW_RE, MODEL_RUNTIME_CONFIG_ROW_RE, MODEL_START_ROW_RE):
+            match = pattern.search(line)
+            if match:
+                row = ensure_row(match.group("key"))
+                if pattern is MODEL_START_ROW_RE:
+                    row["status"] = "running"
+                    row["status_label"] = "运行中"
+                break
+
+        running_match = MODEL_OLD_RUNNING_ROW_RE.search(line)
+        if running_match:
+            for key in running_match.group("keys").split(","):
+                row = ensure_row(key.strip())
+                if row.get("status") == "waiting":
+                    row["status"] = "running"
+                    row["status_label"] = "运行中"
+
+        done_match = MODEL_DONE_ROW_RE.search(line)
+        if done_match:
+            row = ensure_row(done_match.group("key"))
+            exit_code = (done_match.group("exit") or row.get("exit_code") or "").strip()
+            row["status"] = "finished"
+            row["exit_code"] = exit_code
+            row["status_label"] = _progress_status_label("finished", exit_code)
+
+        progress_match = MODEL_PROGRESS_ROW_RE.match(raw_line)
+        if not progress_match:
+            continue
+
+        key = progress_match.group("key").strip()
+        status = progress_match.group("status").strip()
+        exit_code = (progress_match.group("exit") or "").strip()
+        progress_text = progress_match.group("progress").strip()
+        completed, total, percent, count_text = _parse_progress_text(progress_text)
+        row = ensure_row(key)
+        row.update(
+            {
+                "status": status,
+                "status_label": _progress_status_label(status, exit_code),
+                "exit_code": exit_code,
+                "elapsed": progress_match.group("elapsed").strip(),
+                "completed": completed,
+                "total": total,
+                "percent": percent,
+                "count_text": count_text,
+                "progress_text": progress_text,
+                "latest": progress_match.group("latest").strip(),
+            }
+        )
+
+    return [rows[key] for key in order]
+
+
+def compact_run_log_for_display(log_text: str) -> str:
+    if not multi_model_progress_rows(log_text):
+        return log_text
+
+    compacted: list[str] = []
+    for raw_line in str(log_text or "").splitlines():
+        line = raw_line.strip()
+        if "多模型复评进度 attempt=" in line:
+            continue
+        if MODEL_PROGRESS_ROW_RE.match(raw_line):
+            continue
+        if re.match(r"^\s+\[[^\]]+\]\s*$", raw_line):
+            continue
+        if MODEL_OLD_RUNNING_ROW_RE.search(line):
+            continue
+        compacted.append(raw_line)
+    return "\n".join(compacted)
+
+
+def multi_model_progress_html(rows: list[dict[str, Any]]) -> str:
+    rendered_rows: list[str] = []
+    for row in rows:
+        status = str(row.get("status_label") or "等待")
+        status_class = "ok" if status == "完成" else "error" if status == "失败" else "running"
+        percent = int(row.get("percent") or 0)
+        key = escape_log(str(row.get("key") or ""))
+        count_text = escape_log(str(row.get("count_text") or row.get("progress_text") or "等待输出"))
+        elapsed = escape_log(str(row.get("elapsed") or ""))
+        rendered_rows.append(
+            "".join(
+                [
+                    '<div class="review-progress-row">',
+                    f'<div class="review-progress-model">{key}</div>',
+                    f'<div class="review-progress-status {status_class}">{escape_log(status)}</div>',
+                    f'<div class="review-progress-count">{count_text}</div>',
+                    f'<div class="review-progress-bar"><span style="width:{percent}%"></span></div>',
+                    f'<div class="review-progress-percent">{percent}%</div>',
+                    f'<div class="review-progress-elapsed">{elapsed}</div>',
+                    "</div>",
+                ]
+            )
+        )
+
+    return "\n".join(
+        [
+            "<style>",
+            ".review-progress-wrap { border: 1px solid #d9dee7; border-radius: 6px; margin: 0 0 10px; overflow: hidden; }",
+            ".review-progress-title { background: #f5f7fb; border-bottom: 1px solid #d9dee7; color: #273142; font-size: 13px; font-weight: 600; padding: 8px 10px; }",
+            ".review-progress-row { align-items: center; border-bottom: 1px solid #edf0f5; display: grid; gap: 10px; grid-template-columns: minmax(220px, 1.7fr) 64px 96px minmax(120px, 1fr) 48px 70px; min-height: 34px; padding: 7px 10px; }",
+            ".review-progress-row:last-child { border-bottom: 0; }",
+            '.review-progress-model, .review-progress-count, .review-progress-percent, .review-progress-elapsed { color: #2f3848; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+            ".review-progress-status { border-radius: 4px; font-size: 12px; line-height: 20px; text-align: center; }",
+            ".review-progress-status.running { background: #e8f1ff; color: #1f5da8; }",
+            ".review-progress-status.ok { background: #e8f6ef; color: #167044; }",
+            ".review-progress-status.error { background: #fdecec; color: #b42318; }",
+            ".review-progress-bar { background: #e6eaf0; border-radius: 999px; height: 7px; overflow: hidden; }",
+            ".review-progress-bar span { background: #2f6fec; display: block; height: 100%; }",
+            "@media (max-width: 760px) { .review-progress-row { grid-template-columns: minmax(0, 1fr) 58px 72px 42px; } .review-progress-bar, .review-progress-elapsed { display: none; } }",
+            "</style>",
+            '<div class="review-progress-wrap">',
+            '<div class="review-progress-title">多模型复评进度</div>',
+            *rendered_rows,
+            "</div>",
+        ]
+    )
+
+
+def render_multi_model_progress(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    st.markdown(multi_model_progress_html(rows), unsafe_allow_html=True)
+
+
 def render_log_console(log_text: str, *, storage_key: str) -> None:
     escaped_key = json.dumps(storage_key)
     components.html(
@@ -1022,8 +1416,11 @@ def render_run_log_panel(run_dir_str: str) -> None:
     state = run_state(run_dir)
     active = is_run_active(run_dir)
     status_label = "running" if active else display_run_status(run_dir)
+    log_text = read_run_log(run_dir)
+    progress_rows = multi_model_progress_rows(log_text)
     st.subheader(f"运行日志 · {status_label}")
-    render_log_console(read_run_log(run_dir), storage_key=str(run_dir or "default"))
+    render_multi_model_progress(progress_rows)
+    render_log_console(compact_run_log_for_display(log_text), storage_key=str(run_dir or "default"))
     if active:
         step = state.get("current_step") or "启动中"
         idx = state.get("step_index")
@@ -1408,8 +1805,8 @@ def render_review_config() -> None:
                     st.session_state.agy_review_cfg = cfg
                     st.rerun()
                 st.warning(f"读取 AGY 模型列表失败：{refresh_error or '未知错误'}")
-            cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "10m")))
-            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
+            cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "3m")))
+            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 180)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
             cfg["max_items"] = st.number_input(
                 "实验复评上限 max_items",
@@ -1476,6 +1873,9 @@ def render_review_config() -> None:
             codex_path = shutil.which(str(cfg.get("codex_bin", "codex")))
             st.caption(f"Codex CLI: {codex_path or '未找到'}")
 
+        with st.expander("Codex 调用模式", expanded=True):
+            cfg = render_codex_auth_mode_config(cfg, "codex_review")
+
         with st.expander("经典图形匹配", expanded=True):
             cfg = render_classic_pattern_config(cfg, "codex_review")
 
@@ -1490,7 +1890,7 @@ def render_review_config() -> None:
                 cfg["raw_log_dir"] = st.text_input("Codex 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/codex_cli_runs。")
 
         st.markdown(
-            "<div class='panel-note'>Codex reviewer 固定使用 <code>gpt-5.5</code>、<code>high</code> 思考强度，并通过 <code>--output-schema</code> 返回 JSON；默认输出到隔离目录。</div>",
+            "<div class='panel-note'>Codex reviewer 固定使用 <code>gpt-5.5</code>、<code>high</code> 思考强度，并通过 <code>--output-schema</code> 返回 JSON；默认走本机 Codex OAuth，输出到隔离目录。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.codex_review_cfg = cfg
@@ -1548,6 +1948,12 @@ def render_review_config() -> None:
                     key=f"multi_model_batch_{index}",
                 )
         cfg["reviewers"] = reviewers
+        with st.expander("Codex 子模型调用模式", expanded=True):
+            st.caption("多模型复评会把这里的 Codex 配置写入本次 run snapshot；默认走本机 Codex OAuth。")
+            st.session_state.codex_review_cfg = render_codex_auth_mode_config(
+                st.session_state.codex_review_cfg,
+                "multi_model_codex",
+            )
         st.markdown(
             "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动配置中声明的 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>；失败模型会记录日志和失败原因，可按原模型断点重跑，不会自动替换模型。</div>",
             unsafe_allow_html=True,
@@ -2145,6 +2551,13 @@ DECISION_BUCKET_LABELS = {
     "incomplete": "评分不完整",
 }
 
+Z_QUALITY_VERDICT_LABELS = {
+    "A_SELECT": "A精选",
+    "B_WATCH": "B观察",
+    "C_REVIEW_ONLY": "C复盘",
+    "REJECT": "剔除",
+}
+
 CONSENSUS_TDX_PRESETS = {
     "共同推荐": {"prefix": "CA"},
     "多模型推荐": {"prefix": "CM"},
@@ -2152,6 +2565,10 @@ CONSENSUS_TDX_PRESETS = {
     "共同观察": {"prefix": "CWA"},
     "多模型观察": {"prefix": "CW"},
     "单模型观察": {"prefix": "CSW"},
+    "Z精选": {"prefix": "ZA"},
+    "Z观察": {"prefix": "ZW"},
+    "Z精选+观察": {"prefix": "ZQ"},
+    "Z复盘样本": {"prefix": "ZR"},
     "分歧样本": {"prefix": "CD"},
     "全部自定义": {"prefix": "C"},
 }
@@ -2185,14 +2602,61 @@ def load_consensus_payload(summary_path: Path) -> tuple[dict[str, Any], list[dic
     return summary, decisions if isinstance(decisions, list) else [], details if isinstance(details, list) else []
 
 
-def consensus_decision_table_rows(decisions: list[dict[str, Any]], models: list[str]) -> list[dict[str, Any]]:
+def load_z_quality_decisions(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    z_quality = summary.get("z_quality") or {}
+    path_text = str(z_quality.get("decisions") or "")
+    if not path_text:
+        batch_id = str(summary.get("batch_id") or "")
+        if batch_id:
+            path_text = str(Z_QUALITY_DIR / batch_id / "decisions.json")
+    if not path_text:
+        return []
+    payload = load_json(Path(path_text))
+    return payload if isinstance(payload, list) else []
+
+
+def z_quality_by_key(z_decisions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in z_decisions:
+        key = str(item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or "")))
+        if key:
+            by_key[key] = item
+    return by_key
+
+
+def z_quality_label(verdict: str) -> str:
+    verdict = str(verdict or "")
+    return Z_QUALITY_VERDICT_LABELS.get(verdict, verdict)
+
+
+def _join_short(values: Any, *, limit: int = 3) -> str:
+    if not isinstance(values, list):
+        return ""
+    return "；".join(str(item) for item in values[:limit] if str(item))
+
+
+def consensus_decision_table_rows(
+    decisions: list[dict[str, Any]],
+    models: list[str],
+    z_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    z_by_key = z_by_key or {}
     for decision in decisions:
+        item_key = str(decision.get("review_key") or review_key(str(decision.get("code") or ""), str(decision.get("strategy") or "")))
+        z_item = z_by_key.get(item_key, {})
+        z_score = z_item.get("z_quality_score")
         row: dict[str, Any] = {
             "排名": decision.get("rank"),
             "代码": decision.get("code"),
             "策略": decision.get("strategy"),
             "决策分组": DECISION_BUCKET_LABELS.get(str(decision.get("decision_bucket")), decision.get("decision_bucket")),
+            "Z裁决": z_quality_label(str(z_item.get("z_quality_verdict") or "")),
+            "Z分": float(z_score) if z_score not in {"", None} else None,
+            "Z硬否决": "、".join(str(item) for item in (z_item.get("hard_vetoes") or [])),
+            "Z观察限制": "、".join(str(item) for item in (z_item.get("watch_caps") or [])),
+            "Z理由": _join_short(z_item.get("quality_reasons")),
+            "Z风险": _join_short(z_item.get("quality_risks")),
             "推荐模型数": decision.get("recommended_count"),
             "完成模型数": decision.get("completed_count"),
             "模型总数": decision.get("total_models"),
@@ -2207,6 +2671,31 @@ def consensus_decision_table_rows(decisions: list[dict[str, Any]], models: list[
             row[f"{model} 结论"] = verdicts.get(model, "")
             row[f"{model} 推荐"] = "是" if recommended.get(model) else "否"
         rows.append(row)
+    return rows
+
+
+def z_quality_table_rows(z_decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in z_decisions:
+        score = item.get("z_quality_score")
+        rows.append(
+            {
+                "排名": item.get("rank"),
+                "代码": item.get("code"),
+                "策略": item.get("strategy"),
+                "Z裁决": z_quality_label(str(item.get("z_quality_verdict") or "")),
+                "Z裁决代码": item.get("z_quality_verdict") or "",
+                "Z分": float(score) if score not in {"", None} else None,
+                "共识分组": DECISION_BUCKET_LABELS.get(str(item.get("decision_bucket")), item.get("decision_bucket")),
+                "共识结论": item.get("consensus_verdict") or "",
+                "共识分": item.get("consensus_score"),
+                "推荐模型数": item.get("recommended_count"),
+                "硬否决": "、".join(str(value) for value in (item.get("hard_vetoes") or [])),
+                "观察限制": "、".join(str(value) for value in (item.get("watch_caps") or [])),
+                "理由": _join_short(item.get("quality_reasons")),
+                "风险": _join_short(item.get("quality_risks")),
+            }
+        )
     return rows
 
 
@@ -2243,9 +2732,16 @@ def consensus_model_state(decision: dict[str, Any], model: str) -> str:
     return "不推荐"
 
 
-def consensus_export_rows(decisions: list[dict[str, Any]], models: list[str]) -> list[dict[str, Any]]:
+def consensus_export_rows(
+    decisions: list[dict[str, Any]],
+    models: list[str],
+    z_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    z_by_key = z_by_key or {}
     for decision in decisions:
+        item_key = str(decision.get("review_key") or review_key(str(decision.get("code") or ""), str(decision.get("strategy") or "")))
+        z_item = z_by_key.get(item_key, {})
         model_states = {model: consensus_model_state(decision, model) for model in models}
         scores = decision.get("scores_by_model") or {}
         score_values = [
@@ -2258,11 +2754,15 @@ def consensus_export_rows(decisions: list[dict[str, Any]], models: list[str]) ->
         fail_count = sum(1 for state in model_states.values() if state == "不推荐")
         missing_count = sum(1 for state in model_states.values() if state == "缺失")
         consensus_score = decision.get("consensus_score")
+        z_score = z_item.get("z_quality_score")
+        z_hard_vetoes = [str(item) for item in (z_item.get("hard_vetoes") or []) if str(item)]
+        z_watch_caps = [str(item) for item in (z_item.get("watch_caps") or []) if str(item)]
         rows.append(
             {
                 "code": str(decision.get("code") or ""),
                 "strategy": str(decision.get("strategy") or ""),
                 "rank": decision.get("rank"),
+                "review_key": item_key,
                 "decision_bucket": str(decision.get("decision_bucket") or ""),
                 "decision_bucket_label": DECISION_BUCKET_LABELS.get(
                     str(decision.get("decision_bucket") or ""),
@@ -2279,6 +2779,13 @@ def consensus_export_rows(decisions: list[dict[str, Any]], models: list[str]) ->
                 "model_count": int(decision.get("total_models") or len(models)),
                 "score_spread": round(max(score_values) - min(score_values), 3) if len(score_values) >= 2 else 0.0,
                 "model_states": model_states,
+                "z_quality_verdict": str(z_item.get("z_quality_verdict") or ""),
+                "z_quality_label": z_quality_label(str(z_item.get("z_quality_verdict") or "")),
+                "z_quality_score": float(z_score) if z_score not in {"", None} else None,
+                "z_hard_vetoes": z_hard_vetoes,
+                "z_watch_caps": z_watch_caps,
+                "z_quality_reasons": z_item.get("quality_reasons") or [],
+                "z_quality_risks": z_item.get("quality_risks") or [],
             }
         )
     return rows
@@ -2301,6 +2808,14 @@ def apply_consensus_tdx_preset(rows: list[dict[str, Any]], preset: str) -> list[
         return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) >= 2]
     if preset == "单模型观察":
         return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) == 1]
+    if preset == "Z精选":
+        return [row for row in rows if row.get("z_quality_verdict") == "A_SELECT"]
+    if preset == "Z观察":
+        return [row for row in rows if row.get("z_quality_verdict") == "B_WATCH"]
+    if preset == "Z精选+观察":
+        return [row for row in rows if row.get("z_quality_verdict") in {"A_SELECT", "B_WATCH"}]
+    if preset == "Z复盘样本":
+        return [row for row in rows if row.get("z_quality_verdict") == "C_REVIEW_ONLY"]
     if preset == "分歧样本":
         return [row for row in rows if int(row["pass_count"]) >= 1 and int(row["fail_count"]) >= 1]
     return rows
@@ -2319,6 +2834,10 @@ def filter_consensus_tdx_rows(
     watch_range: tuple[int, int],
     fail_range: tuple[int, int],
     score_range: tuple[float, float],
+    z_verdicts: list[str],
+    z_score_range: tuple[float, float],
+    exclude_z_hard_veto: bool,
+    exclude_z_watch_cap: bool,
     complete_only: bool,
 ) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
@@ -2340,6 +2859,16 @@ def filter_consensus_tdx_rows(
         score = row["consensus_score"]
         if score is not None and not (score_range[0] <= float(score) <= score_range[1]):
             continue
+        z_verdict = str(row.get("z_quality_verdict") or "")
+        if z_verdicts and z_verdict not in z_verdicts:
+            continue
+        z_score = row.get("z_quality_score")
+        if z_score is not None and not (z_score_range[0] <= float(z_score) <= z_score_range[1]):
+            continue
+        if exclude_z_hard_veto and row.get("z_hard_vetoes"):
+            continue
+        if exclude_z_watch_cap and row.get("z_watch_caps"):
+            continue
         if selected_models and selected_model_states:
             states = [row["model_states"].get(model, "缺失") for model in selected_models]
             if model_match == "所有选中模型满足":
@@ -2354,6 +2883,7 @@ def filter_consensus_tdx_rows(
 def sort_consensus_tdx_rows(rows: list[dict[str, Any]], sort_by: str, limit: int) -> list[dict[str, Any]]:
     sorters = {
         "共识分": lambda row: float(row["consensus_score"] or 0),
+        "Z质量分": lambda row: float(row.get("z_quality_score") or 0),
         "推荐模型数": lambda row: int(row["pass_count"]),
         "观察模型数": lambda row: int(row["watch_count"]),
         "最高分歧": lambda row: float(row["score_spread"] or 0),
@@ -2369,11 +2899,13 @@ def render_consensus_tdx_import_dialog(
     summary: dict[str, Any],
     decisions: list[dict[str, Any]],
     models: list[str],
+    z_decisions: list[dict[str, Any]] | None = None,
 ) -> None:
     pick_date = str(summary.get("pick_date") or "")
     batch_id = str(summary.get("batch_id") or "")
     model_count = max(1, int(summary.get("model_count") or len(models) or 1))
-    all_rows = consensus_export_rows(decisions, models)
+    z_by_key = z_quality_by_key(z_decisions or [])
+    all_rows = consensus_export_rows(decisions, models, z_by_key)
 
     st.caption(f"复评批次：**{batch_id}**；选股日期：**{pick_date}**")
     if not summary.get("complete"):
@@ -2416,6 +2948,42 @@ def render_consensus_tdx_import_dialog(
         default=bucket_options,
         key=f"consensus_tdx_bucket_{batch_id}",
     )
+
+    z_options = ["A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT"]
+    present_z_options = [item for item in z_options if any(row.get("z_quality_verdict") == item for row in all_rows)]
+    z1, z2, z3 = st.columns(3)
+    with z1:
+        z_verdicts = st.multiselect(
+            "Z裁决",
+            present_z_options,
+            default=present_z_options,
+            format_func=z_quality_label,
+            key=f"consensus_tdx_z_verdict_{batch_id}",
+            disabled=not present_z_options,
+        )
+    with z2:
+        z_score_range = st.slider(
+            "Z质量分",
+            0.0,
+            5.0,
+            (0.0, 5.0),
+            step=0.05,
+            key=f"consensus_tdx_z_score_range_{batch_id}",
+            disabled=not present_z_options,
+        )
+    with z3:
+        exclude_z_hard_veto = st.toggle(
+            "排除Z硬否决",
+            value=False,
+            key=f"consensus_tdx_z_hard_veto_{batch_id}",
+            disabled=not present_z_options,
+        )
+        exclude_z_watch_cap = st.toggle(
+            "排除Z观察限制",
+            value=False,
+            key=f"consensus_tdx_z_watch_cap_{batch_id}",
+            disabled=not present_z_options,
+        )
 
     m1, m2, m3 = st.columns(3)
     with m1:
@@ -2479,7 +3047,7 @@ def render_consensus_tdx_import_dialog(
     with s2:
         sort_by = st.selectbox(
             "排序",
-            ["共识分", "推荐模型数", "观察模型数", "最高分歧", "原始排名"],
+            ["共识分", "Z质量分", "推荐模型数", "观察模型数", "最高分歧", "原始排名"],
             key=f"consensus_tdx_sort_{batch_id}",
         )
     with s3:
@@ -2505,6 +3073,10 @@ def render_consensus_tdx_import_dialog(
         watch_range=watch_range,
         fail_range=fail_range,
         score_range=score_range,
+        z_verdicts=z_verdicts,
+        z_score_range=z_score_range,
+        exclude_z_hard_veto=exclude_z_hard_veto,
+        exclude_z_watch_cap=exclude_z_watch_cap,
         complete_only=complete_only,
     )
     filtered_rows = sort_consensus_tdx_rows(filtered_rows, sort_by, int(limit))
@@ -2518,6 +3090,8 @@ def render_consensus_tdx_import_dialog(
                     "策略": row["strategy"],
                     "共识结论": row["consensus_verdict"],
                     "共识分": row["consensus_score"],
+                    "Z裁决": row["z_quality_label"],
+                    "Z分": row["z_quality_score"],
                     "推荐": row["pass_count"],
                     "观察": row["watch_count"],
                     "不推荐": row["fail_count"],
@@ -2536,7 +3110,7 @@ def render_consensus_tdx_import_dialog(
         {
             "code": row["code"],
             "strategy": row["strategy"],
-            "score": row["consensus_score"],
+            "score": row["z_quality_score"] if sort_by == "Z质量分" or preset.startswith("Z") else row["consensus_score"],
             "recommended": int(row["pass_count"]) > 0,
             "rank": row["rank"],
         }
@@ -2569,8 +3143,12 @@ def render_consensus_center() -> None:
     summary_path = summary_files[labels.index(selected_label)]
     summary, decisions, details = load_consensus_payload(summary_path)
     models = [str(model) for model in summary.get("models", [])]
+    z_decisions = load_z_quality_decisions(summary)
+    z_by_key = z_quality_by_key(z_decisions)
 
     bucket_counts = summary.get("decision_bucket_counts") or {}
+    z_quality = summary.get("z_quality") or {}
+    z_counts = z_quality.get("verdict_counts") or {}
     st.markdown(
         f"""
         <div class="metric-row">
@@ -2578,6 +3156,8 @@ def render_consensus_center() -> None:
           <div class="metric-card"><div class="metric-label">候选数量</div><div class="metric-value">{summary.get('candidate_count', 0)}</div></div>
           <div class="metric-card"><div class="metric-label">参与模型</div><div class="metric-value">{summary.get('model_count', 0)}</div></div>
           <div class="metric-card"><div class="metric-label">全票推荐 / 不完整</div><div class="metric-value">{bucket_counts.get('all_models_recommended', 0)} / {bucket_counts.get('incomplete', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">Z精选 / Z观察</div><div class="metric-value">{z_counts.get('A_SELECT', 0)} / {z_counts.get('B_WATCH', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">Z复盘 / 剔除</div><div class="metric-value">{z_counts.get('C_REVIEW_ONLY', 0)} / {z_counts.get('REJECT', 0)}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2586,6 +3166,8 @@ def render_consensus_center() -> None:
         st.warning("存在 score>=阈值 但 verdict!=PASS 的历史结果，请查看 summary.json 的 invariant_violations。")
     if not summary.get("complete"):
         st.warning("当前批次存在模型缺失评分，不能作为最终全票推荐结果；可断点重跑多模型复评。")
+    if not z_decisions:
+        st.info("当前批次还没有 Z 质量裁决结果；可在配置中启用 z_quality 后重跑共识后处理。")
 
     with st.columns([0.7, 0.3])[1]:
         if st.button(
@@ -2595,27 +3177,57 @@ def render_consensus_center() -> None:
             help="按共识结果筛选股票并导入通达信自定义板块",
             key=f"consensus_tdx_import_open_{summary.get('batch_id')}",
         ):
-            render_consensus_tdx_import_dialog(summary, decisions, models)
+            render_consensus_tdx_import_dialog(summary, decisions, models, z_decisions)
 
-    tab_decision, tab_detail = st.tabs(["决策结果集", "模型评分明细"])
+    tab_decision, tab_z_quality, tab_detail = st.tabs(["决策结果集", "Z质量裁决", "模型评分明细"])
     with tab_decision:
-        decision_df = pd.DataFrame(consensus_decision_table_rows(decisions, models))
+        decision_df = pd.DataFrame(consensus_decision_table_rows(decisions, models, z_by_key))
         if decision_df.empty:
             st.info("没有决策结果。")
         else:
-            f1, f2 = st.columns(2)
+            f1, f2, f3 = st.columns(3)
             with f1:
                 strategies = sorted([x for x in decision_df["策略"].dropna().unique() if x])
                 strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"consensus_strategy_{summary.get('batch_id')}")
             with f2:
                 bucket_labels = ["全部"] + [DECISION_BUCKET_LABELS.get(key, key) for key in sorted(bucket_counts)]
                 bucket_label = st.selectbox("决策分组", bucket_labels, key=f"consensus_bucket_{summary.get('batch_id')}")
+            with f3:
+                z_labels = ["全部"] + [label for label in [z_quality_label(key) for key in ("A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT")] if label in set(decision_df["Z裁决"].dropna())]
+                z_label = st.selectbox("Z裁决", z_labels, key=f"consensus_z_verdict_{summary.get('batch_id')}")
             filtered = decision_df
             if strategy != "全部":
                 filtered = filtered[filtered["策略"] == strategy]
             if bucket_label != "全部":
                 filtered = filtered[filtered["决策分组"] == bucket_label]
+            if z_label != "全部":
+                filtered = filtered[filtered["Z裁决"] == z_label]
             st.caption(f"当前筛选结果：{len(filtered)} 条")
+            st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
+
+    with tab_z_quality:
+        z_df = pd.DataFrame(z_quality_table_rows(z_decisions))
+        if z_df.empty:
+            st.info("没有 Z 质量裁决结果。")
+        else:
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                strategies = sorted([x for x in z_df["策略"].dropna().unique() if x])
+                strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"z_quality_strategy_{summary.get('batch_id')}")
+            with f2:
+                z_labels = ["全部"] + [label for label in [z_quality_label(key) for key in ("A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT")] if label in set(z_df["Z裁决"].dropna())]
+                z_label = st.selectbox("Z裁决", z_labels, key=f"z_quality_verdict_{summary.get('batch_id')}")
+            with f3:
+                exclude_hard_veto = st.toggle("排除硬否决", value=False, key=f"z_quality_exclude_hard_veto_{summary.get('batch_id')}")
+            filtered = z_df
+            if strategy != "全部":
+                filtered = filtered[filtered["策略"] == strategy]
+            if z_label != "全部":
+                filtered = filtered[filtered["Z裁决"] == z_label]
+            if exclude_hard_veto:
+                filtered = filtered[filtered["硬否决"] == ""]
+            filtered = filtered.sort_values(["Z分", "排名"], ascending=[False, True], na_position="last")
+            st.caption(f"当前筛选结果：{len(filtered)} 条；result_mode={z_quality.get('result_mode') or '-'}")
             st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
 
     with tab_detail:

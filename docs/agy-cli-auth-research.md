@@ -50,6 +50,46 @@ AGY CLI 1.0.6 在批量多模型复评中重新暴露出认证不稳定问题。
 4. 多模型复评启动前可增加 AGY preflight：用极短 `agy --print` 探针确认本轮 keyring 可用。探针失败时跳过或终止 AGY reviewer，避免进入几百只股票后才连续弹浏览器。
 5. 文档和日志中继续保留 AGY 为实验 reviewer；在官方提供稳定 token/API key/cache 控制前，不做手工 token 保存、授权码转发或二进制 patch。
 
+## 2026-06-11 运行时恢复机制
+
+6 月 11 日全流程运行中，AGY 首批 5 只已成功写出，第二批触发 OAuth：
+
+```text
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?...
+Waiting for authentication (timeout 30s)...
+Or, paste the authorization code here and press Enter:
+Error: authentication timed out.
+```
+
+该 AGY 子进程已经退出，不能再向已退出的 stdin 补授权码。但同一时刻独立执行极小
+`agy --print` 探针可以恢复为 `OK`，说明登录态可通过外部浏览器操作恢复。
+
+项目侧新增短期恢复机制：
+
+1. `AgyCliAuthError` 不再直接终止当前 reviewer，而是进入认证恢复等待。
+2. reviewer 写入 `auth_recovery_status.json`，记录上下文、认证 URL、探测结果和超时。
+3. 常规非交互复评默认使用 `stdin_mode: devnull`，让 AGY `--print` 立即读到 EOF，避免 stdin 管道悬空导致无输出挂起。
+4. 如果必须向活跃 AGY 子进程粘贴 `authorization code`，可临时改为 `stdin_mode: pipe`；reviewer 会短暂监听 `auth_code.txt`，操作者把浏览器返回的 code 写入该文件后，reviewer 会写入 AGY 子进程 stdin，并立即删除 code 文件。
+5. 如果活跃子进程已经超时退出，等待期间会定期执行同一模型的极小 `agy --print` 探针。
+6. 探针通过后，使用同一模型重试当前批次或当前单股。
+7. 如果等待超时或恢复后再次认证失败，仍按失败退出，由多模型编排记录失败原因，并按 `rerun_failed_models_once` 做原模型断点重跑。
+
+默认配置：
+
+```yaml
+auth_recovery_enabled: true
+auth_recovery_wait_seconds: 900
+auth_recovery_check_interval: 15
+auth_recovery_probe_timeout_seconds: 90
+stdin_mode: devnull
+dangerously_skip_permissions: false
+auth_code_file: ""
+auth_code_wait_seconds: 25
+```
+
+这个机制不做模型降级，不保存授权码，不默认绕过 AGY/Google 的登录机制。需要人工介入时，优先完成浏览器登录并等待探针恢复；只有显式切到 `stdin_mode: pipe` 时，才按 `auth_recovery_status.json` 中的 `auth_code_file` 写入授权码。若活跃子进程已经退出，也可以在另一个终端运行一次极小 `agy --print` 来完成同一登录态刷新。`dangerously_skip_permissions` 仅作为显式开关保留，默认关闭。
+
 ## 2026-05-22 更新结论
 
 AGY CLI 1.0.1 已修复上一轮认证阻断。依据：

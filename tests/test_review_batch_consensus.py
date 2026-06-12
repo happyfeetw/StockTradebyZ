@@ -232,12 +232,13 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                 "prompt_path": str(project / "prompt.md"),
             }
             spec = {
-                "reviewer_key": "gemini-cli",
-                "script": "agent/gemini_cli_review.py",
+                "reviewer_key": "agy-cli",
+                "model_key": "gemini-3.5-flash-high",
+                "script": "agent/agy_cli_review.py",
                 "config": str(base_config),
-                "model": "gemini-3.1-pro-preview",
-                "model_profile": "gemini-3.1-pro-preview",
-                "fallback_model": "gemini-2.5-pro",
+                "model": "Gemini 3.5 Flash (High)",
+                "model_profile": "gemini-3.5-flash-high",
+                "fallback_model": "Gemini 3.5 Flash (Medium)",
             }
 
             with self.assertRaises(RuntimeError):
@@ -248,6 +249,41 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                     run_dir=project,
                     review_runs_dir=project / "review_runs",
                 )
+
+    def test_prepare_reviewer_config_uses_model_key_as_consensus_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            base_config = project / "agy.yaml"
+            base_config.write_text("skip_existing: true\nmodel_key: gemini-3.5-flash-high\n", encoding="utf-8")
+            manifest = {
+                "batch_id": "batch1",
+                "candidates_file": str(project / "candidates.json"),
+                "kline_dir": str(project / "kline"),
+                "prompt_path": str(project / "prompt.md"),
+            }
+            spec = {
+                "reviewer_key": "agy-cli",
+                "model_key": "gemini-3.1-pro-high",
+                "script": "agent/agy_cli_review.py",
+                "config": str(base_config),
+                "model": "Gemini 3.1 Pro (High)",
+                "model_profile": "gemini-3.1-pro-high",
+            }
+
+            runtime_cfg, runtime_path, run_spec = multi_model_review.prepare_reviewer_config(
+                spec=spec,
+                multi_cfg={"no_model_substitution": True},
+                manifest=manifest,
+                run_dir=project,
+                review_runs_dir=project / "review_runs",
+            )
+
+        self.assertEqual(run_spec["model_key"], "gemini-3.1-pro-high")
+        self.assertEqual(run_spec["execution_backend"], "agy-cli")
+        self.assertEqual(runtime_cfg["model"], "Gemini 3.1 Pro (High)")
+        self.assertEqual(runtime_cfg["model_key"], "gemini-3.1-pro-high")
+        self.assertTrue(str(run_spec["output_dir"]).endswith("agy-cli/gemini-3.1-pro-high"))
+        self.assertEqual(runtime_path.name, "agy-cli_gemini-3.1-pro-high.yaml")
 
     def test_run_z_quality_postprocess_writes_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,9 +360,9 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                 "\n".join(
                     [
                         "[INFO] pick_date=2026-06-08，复评股票数=104，batch_size=5",
-                        "[1-5/104] 000001_b1,000002_b1 — Gemini CLI 批量分析 5 张图 ... 完成",
+                        "[1-5/104] 000001_b1,000002_b1 — AGY 批量分析 5 张图 ... 完成",
                         "    000001 — verdict=FAIL, score=2.4",
-                        "[6-10/104] 000003_b1,000004_b1 — Gemini CLI 批量分析 5 张图 ...",
+                        "[6-10/104] 000003_b1,000004_b1 — AGY 批量分析 5 张图 ...",
                     ]
                 ),
                 encoding="utf-8",
@@ -337,7 +373,7 @@ class ReviewBatchConsensusTests(unittest.TestCase):
         self.assertEqual(snapshot["completed"], 10)
         self.assertEqual(snapshot["total"], 104)
         self.assertEqual(snapshot["progress_text"], "处理到 10/104 (10%)")
-        self.assertIn("Gemini CLI 批量分析", snapshot["latest"])
+        self.assertIn("AGY 批量分析", snapshot["latest"])
 
     def test_progress_snapshot_prefers_success_failure_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -345,7 +381,7 @@ class ReviewBatchConsensusTests(unittest.TestCase):
             path.write_text(
                 "\n".join(
                     [
-                        "[131-136/136] 300001_b1 — Gemini CLI 批量分析 6 张图 ...",
+                        "[131-136/136] 300001_b1 — AGY 批量分析 6 张图 ...",
                         "[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
                         "[INFO] 汇总已写入: suggestion.json",
                     ]
@@ -362,7 +398,7 @@ class ReviewBatchConsensusTests(unittest.TestCase):
         self.assertEqual(snapshot["progress_text"], "成功 107/136，失败/跳过 29 (100%)")
         self.assertIn("评分完成", snapshot["latest"])
 
-    def test_grouped_progress_output_groups_by_reviewer_key(self) -> None:
+    def test_grouped_progress_output_uses_model_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             gemini_log = project / "gemini.log"
@@ -370,14 +406,14 @@ class ReviewBatchConsensusTests(unittest.TestCase):
             gemini_log.write_text("[1-5/20] gemini batch ... 完成\n", encoding="utf-8")
             codex_log.write_text("[1/20] codex single ... 完成\n", encoding="utf-8")
             runtimes = {
-                "gemini-cli/gemini-3.1-pro-preview": multi_model_review.ReviewerRuntime(
+                "gemini-3.1-pro-high": multi_model_review.ReviewerRuntime(
                     spec={},
                     proc=mock.Mock(),
                     log_file=mock.Mock(),
                     log_path=gemini_log,
                     started_at=0.0,
                 ),
-                "codex-cli/gpt-5.5-high-standard": multi_model_review.ReviewerRuntime(
+                "gpt-5.5-high": multi_model_review.ReviewerRuntime(
                     spec={},
                     proc=mock.Mock(),
                     log_file=mock.Mock(),
@@ -393,11 +429,25 @@ class ReviewBatchConsensusTests(unittest.TestCase):
 
         output = buf.getvalue()
         self.assertIn("[PROGRESS] 多模型复评进度 attempt=1", output)
-        self.assertIn("[gemini-cli]", output)
-        self.assertIn("[codex-cli]", output)
-        self.assertIn("gemini-cli/gemini-3.1-pro-preview: running", output)
-        self.assertIn("codex-cli/gpt-5.5-high-standard: running", output)
+        self.assertIn("[gemini-3.1-pro-high]", output)
+        self.assertIn("[gpt-5.5-high]", output)
+        self.assertIn("gemini-3.1-pro-high: running", output)
+        self.assertIn("gpt-5.5-high: running", output)
         self.assertIn("elapsed=1m05s", output)
+
+    def test_reviewer_execution_waves_serialize_same_backend(self) -> None:
+        specs = [
+            {"model_key": "gemini-3.5-flash-high", "execution_backend": "agy-cli"},
+            {"model_key": "gemini-3.1-pro-high", "execution_backend": "agy-cli"},
+            {"model_key": "gpt-5.5-high", "execution_backend": "codex-cli"},
+        ]
+
+        waves = multi_model_review.reviewer_execution_waves(specs)
+
+        self.assertEqual(
+            [[spec["model_key"] for spec in wave] for wave in waves],
+            [["gemini-3.5-flash-high", "gpt-5.5-high"], ["gemini-3.1-pro-high"]],
+        )
 
 
 if __name__ == "__main__":

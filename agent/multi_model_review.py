@@ -142,7 +142,22 @@ def model_profile(spec: dict[str, Any]) -> str:
 
 
 def model_key(spec: dict[str, Any]) -> str:
+    configured = str(spec.get("model_key") or spec.get("model_id") or "").strip()
+    if configured:
+        return configured
     return f"{spec.get('reviewer_key')}/{model_profile(spec)}"
+
+
+def validate_unique_model_keys(specs: list[dict[str, Any]]) -> None:
+    seen: dict[str, str] = {}
+    for spec in specs:
+        key = str(spec.get("model_key") or "").strip()
+        if not key:
+            continue
+        label = str(spec.get("label") or spec.get("reviewer_key") or key)
+        if key in seen:
+            raise RuntimeError(f"多模型复评模型 ID 重复：{key}（{seen[key]} / {label}）")
+        seen[key] = label
 
 
 def _truthy(value: Any, default: bool = False) -> bool:
@@ -179,6 +194,36 @@ def safe_log_name(key: str, *, attempt: int) -> str:
     if attempt > 1:
         name = f"{name}__attempt{attempt}"
     return name
+
+
+def reviewer_concurrency_group(spec: dict[str, Any]) -> str:
+    return str(
+        spec.get("concurrency_group")
+        or spec.get("execution_backend")
+        or spec.get("reviewer_key")
+        or spec.get("reviewer")
+        or model_key(spec)
+        or "reviewer"
+    )
+
+
+def reviewer_execution_waves(run_specs: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    pending = list(run_specs)
+    waves: list[list[dict[str, Any]]] = []
+    while pending:
+        used_groups: set[str] = set()
+        wave: list[dict[str, Any]] = []
+        remaining: list[dict[str, Any]] = []
+        for spec in pending:
+            group = reviewer_concurrency_group(spec)
+            if group in used_groups:
+                remaining.append(spec)
+                continue
+            used_groups.add(group)
+            wave.append(spec)
+        waves.append(wave)
+        pending = remaining
+    return waves
 
 
 def reviewer_group(model_key_value: str) -> str:
@@ -362,6 +407,7 @@ def prepare_reviewer_config(
         runtime_cfg["review_scoring"] = multi_cfg["review_scoring"]
     if spec.get("model"):
         runtime_cfg["model"] = spec["model"]
+    runtime_cfg["model_key"] = model_key(spec)
     runtime_cfg["model_profile"] = profile
     if spec.get("output_format"):
         runtime_cfg["output_format"] = spec["output_format"]
@@ -379,6 +425,8 @@ def prepare_reviewer_config(
         "enabled": True,
         "label": spec.get("label") or model_key(spec),
         "model_key": model_key(spec),
+        "model_id": model_key(spec),
+        "execution_backend": reviewer_key,
         "reviewer": reviewer_key,
         "reviewer_key": reviewer_key,
         "model": str(spec.get("model") or runtime_cfg.get("model") or ""),
@@ -393,7 +441,7 @@ def prepare_reviewer_config(
     return runtime_cfg, runtime_config_path, run_spec
 
 
-def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str], attempt: int = 1) -> dict[str, dict[str, Any]]:
+def _run_reviewer_wave(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str], attempt: int) -> dict[str, dict[str, Any]]:
     logs_dir = run_dir / "multi_model_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     processes: dict[str, ReviewerRuntime] = {}
@@ -458,6 +506,17 @@ def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, en
     return results
 
 
+def run_reviewers_parallel(run_specs: list[dict[str, Any]], *, run_dir: Path, env: dict[str, str], attempt: int = 1) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    waves = reviewer_execution_waves(run_specs)
+    for index, wave in enumerate(waves, start=1):
+        if len(waves) > 1:
+            wave_keys = ", ".join(str(spec["model_key"]) for spec in wave)
+            log_event("INFO", f"调度批次 {index}/{len(waves)} attempt={attempt}: {wave_keys}")
+        results.update(_run_reviewer_wave(wave, run_dir=run_dir, env=env, attempt=attempt))
+    return results
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="多模型复评与共识汇总")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="多模型配置 YAML")
@@ -510,6 +569,7 @@ def main() -> int:
         )
         log_event("CONFIG", f"{run_spec['model_key']} -> {runtime_path}")
         run_specs.append(run_spec)
+    validate_unique_model_keys(run_specs)
 
     run_specs_path = review_runs_dir / str(manifest["batch_id"]) / "review_runs.json"
     write_json(

@@ -51,18 +51,9 @@ review_scoring:
 
 reviewers:
   - enabled: true
-    reviewer_key: gemini-cli
-    label: Gemini CLI 3.1 Pro Preview
-    script: agent/gemini_cli_review.py
-    config: config/gemini_cli_review.yaml
-    model: gemini-3.1-pro-preview
-    model_profile: gemini-3.1-pro-preview
-    output_format: stream-json
-    batch_size: 5
-
-  - enabled: true
-    reviewer_key: agy-cli-experimental
-    label: AGY Gemini 3.5 Flash High
+    reviewer_key: agy-cli
+    model_key: gemini-3.5-flash-high
+    label: Gemini 3.5 Flash High
     script: agent/agy_cli_review.py
     config: config/agy_cli_review.yaml
     model: "Gemini 3.5 Flash (High)"
@@ -70,8 +61,19 @@ reviewers:
     batch_size: 5
 
   - enabled: true
+    reviewer_key: agy-cli
+    model_key: gemini-3.1-pro-high
+    label: Gemini 3.1 Pro High
+    script: agent/agy_cli_review.py
+    config: config/agy_cli_review.yaml
+    model: "Gemini 3.1 Pro (High)"
+    model_profile: gemini-3.1-pro-high
+    batch_size: 5
+
+  - enabled: true
     reviewer_key: codex-cli
-    label: Codex GPT-5.5 High Standard
+    model_key: gpt-5.5-high
+    label: GPT-5.5 High
     script: agent/codex_cli_review.py
     config: config/codex_cli_review.yaml
     model: gpt-5.5

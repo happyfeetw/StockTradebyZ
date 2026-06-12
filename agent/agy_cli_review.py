@@ -1,12 +1,12 @@
 """
 agy_cli_review.py
 ~~~~~~~~~~~~~~~~~
-使用本机 Antigravity CLI（agy）对候选股票进行实验性图表复评。
+使用本机 Antigravity CLI（agy）对候选股票进行图表复评。
 
-该路径只用于迁移探索：
-- 默认不替换 gemini-cli
-- 不覆盖正式 data/review/{pick_date}/{code}.json
-- 结果写入 data/review/agy_cli_experimental/{pick_date}
+该路径用于 Google 订阅登录模型复评：
+- 支持 per-call --model，模型名称直接使用 agy models 中的名称。
+- 默认不走 Gemini CLI。
+- 默认输出到 data/review/agy_cli/{pick_date}；多模型流程会按模型 profile 写入隔离目录。
 """
 
 from __future__ import annotations
@@ -35,17 +35,17 @@ _DEFAULT_CONFIG_PATH = _ROOT / "config" / "agy_cli_review.yaml"
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
     "kline_dir": "data/kline",
-    "output_dir": "data/review/agy_cli_experimental",
+    "output_dir": "data/review/agy_cli",
     "prompt_path": "agent/prompt.md",
     "agy_bin": "agy",
-    "model": "Gemini 3.5 Flash (Medium)",
+    "model": "Gemini 3.5 Flash (High)",
     "print_timeout": "3m",
     "timeout_seconds": 180,
     "stdin_mode": "devnull",
     "dangerously_skip_permissions": False,
     "request_delay": 10,
     "batch_size": 5,
-    "max_items": 1,
+    "max_items": None,
     "skip_existing": True,
     "suggest_min_score": 4.0,
     "save_raw_cli_io": True,
@@ -309,7 +309,7 @@ class AgyCliReviewer(BaseReviewer):
             message = f"AGY 本次调用模型为 {actual or '默认模型'}，期望为 {expected}"
             if self.config.get("fail_on_model_mismatch", False):
                 raise AgyCliError(message)
-            print(f"[WARN] {message}；本次仍按实验模式继续。")
+            print(f"[WARN] {message}；本次继续执行。")
 
     @staticmethod
     def _safe_log_name(code: str) -> str:
@@ -907,7 +907,7 @@ class AgyCliReviewer(BaseReviewer):
 
         parsed["code"] = code
         parsed["strategy"] = strategy or parsed.get("strategy", "")
-        parsed["reviewer"] = "agy-cli-experimental"
+        parsed["reviewer"] = "agy-cli"
         parsed["model"] = self.model
         parsed["model_evidence"] = self.model_evidence
         parsed["json_output_mode"] = "prompt-json"
@@ -957,7 +957,7 @@ class AgyCliReviewer(BaseReviewer):
             self._validate_review_payload(parsed, code=code, strategy=strategy)
             parsed["code"] = code
             parsed["strategy"] = strategy or parsed.get("strategy", "")
-            parsed["reviewer"] = "agy-cli-experimental"
+            parsed["reviewer"] = "agy-cli"
             parsed["model"] = self.model
             parsed["model_evidence"] = self.model_evidence
             parsed["json_output_mode"] = "prompt-json-array"
@@ -1106,7 +1106,7 @@ class AgyCliReviewer(BaseReviewer):
         if max_items is not None:
             candidates = candidates[: int(max_items)]
         batch_size = int(self.config.get("batch_size", 5))
-        print(f"[INFO] pick_date={pick_date}，AGY 实验复评股票数={len(candidates)}，batch_size={batch_size}")
+        print(f"[INFO] pick_date={pick_date}，AGY 复评股票数={len(candidates)}，batch_size={batch_size}")
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1171,11 +1171,11 @@ class AgyCliReviewer(BaseReviewer):
             all_results.extend(results)
             failed_codes.extend(failed)
 
-        print(f"\n[INFO] AGY 实验复评完成：成功 {len(all_results)} 支，失败/跳过 {len(failed_codes)} 支")
+        print(f"\n[INFO] AGY 复评完成：成功 {len(all_results)} 支，失败/跳过 {len(failed_codes)} 支")
         if failed_codes:
             print(f"[WARN] 未处理股票：{failed_codes}")
         if not all_results:
-            print("[ERROR] 没有可用的 AGY 实验复评结果，跳过汇总。")
+            print("[ERROR] 没有可用的 AGY 复评结果，跳过汇总。")
             raise SystemExit(1)
 
         suggestion = self.generate_suggestion(
@@ -1184,25 +1184,25 @@ class AgyCliReviewer(BaseReviewer):
             min_score=float(self.config.get("suggest_min_score", 4.0)),
             candidates=candidates,
         )
-        suggestion["reviewer"] = "agy-cli-experimental"
+        suggestion["reviewer"] = "agy-cli"
         suggestion["model"] = self.model
         suggestion["model_evidence"] = self.model_evidence
         suggestion["review_complete"] = not failed_codes
         suggestion["pending"] = failed_codes
         suggestion_file = out_dir / "suggestion.json"
         self._write_json(suggestion_file, suggestion)
-        print(f"[INFO] AGY 实验汇总已写入: {suggestion_file}")
+        print(f"[INFO] AGY 汇总已写入: {suggestion_file}")
         if not suggestion["review_complete"]:
             raise SystemExit(1)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AGY CLI 实验图表复评")
+    parser = argparse.ArgumentParser(description="AGY CLI 图表复评")
     parser.add_argument("--config", default=str(_DEFAULT_CONFIG_PATH), help="配置文件路径")
     parser.add_argument("--limit", type=int, default=None, help="覆盖配置中的 max_items")
     parser.add_argument("--candidates", default="", help="覆盖候选列表 JSON")
     parser.add_argument("--kline-dir", default="", help="覆盖 K 线图目录")
-    parser.add_argument("--output-dir", default="", help="覆盖实验输出目录")
+    parser.add_argument("--output-dir", default="", help="覆盖输出目录")
     parser.add_argument("--model", default="", help="覆盖配置中的 agy --model")
     args = parser.parse_args()
 

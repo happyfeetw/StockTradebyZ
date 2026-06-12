@@ -1,5 +1,5 @@
 # agy_cli_review.yaml
-# Antigravity CLI 实验复评配置（相对路径基于项目根目录）
+# Antigravity CLI 复评配置（相对路径基于项目根目录）
 
 # 候选列表 JSON
 candidates: data/candidates/candidates_latest.json
@@ -7,8 +7,8 @@ candidates: data/candidates/candidates_latest.json
 # 候选图表目录（其下按 pick_date 分目录）
 kline_dir: data/kline
 
-# 实验结果输出目录。保持与正式 data/review/{pick_date} 隔离。
-output_dir: data/review/agy_cli_experimental
+# 单模型结果输出目录。多模型流程会覆盖为按模型 profile 隔离的输出目录。
+output_dir: data/review/agy_cli
 
 # 提示词文件
 prompt_path: agent/prompt.md
@@ -17,9 +17,9 @@ prompt_path: agent/prompt.md
 agy_bin: agy
 
 # AGY 1.0.5 支持 per-call --model；workbench 下拉候选直接来自 `agy models`。
-model: "Gemini 3.5 Flash (Medium)"
+model: "Gemini 3.5 Flash (High)"
 
-# AGY print mode 超时。AGY 是实验 reviewer，默认快速失败，避免拖住全流程。
+# AGY print mode 超时。默认快速失败，避免拖住全流程。
 print_timeout: 3m
 
 # Python 子进程总超时（秒）
@@ -39,10 +39,10 @@ request_delay: 10
 # 单次 AGY CLI 请求最多提交几张图；普通批量 JSON 失败会使用同一模型拆批并最终逐只复评。
 batch_size: 5
 
-# 本次 AGY 实验最多复评前 N 个候选；默认只跑 1 支，避免误跑完整批次。
-max_items: 1
+# 本次 AGY 最多复评前 N 个候选；留空表示完整复评。
+max_items:
 
-# true: 跳过已存在的 agy-cli-experimental 单股 JSON（断点续跑）
+# true: 跳过已存在的 AGY 单股 JSON（断点续跑）
 skip_existing: true
 
 # 推荐最小分数门槛
@@ -51,7 +51,7 @@ suggest_min_score: 4.0
 # 保存每次 AGY CLI 调用的 prompt/stdout/stderr/meta
 save_raw_cli_io: true
 
-# 原始调用日志目录；留空时使用 data/review/agy_cli_experimental/{pick_date}/agy_cli_runs
+# 原始调用日志目录；留空时使用 output_dir/{pick_date}/agy_cli_runs
 raw_log_dir: ""
 
 # AGY 1.0.5 没有 --output-format。这里使用 prompt 约束模型正文为 JSON，
@@ -85,5 +85,5 @@ settings_path: ~/.gemini/antigravity-cli/settings.json
 expected_model_label: ""
 fail_on_model_mismatch: false
 
-# 与现有 Gemini 复评保持同一评分归一化口径
+# 与其它模型复评保持同一评分归一化口径
 classic_pattern_enabled: true

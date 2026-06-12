@@ -57,7 +57,7 @@ class AgyCliReviewerTests(unittest.TestCase):
         config = {
             **agy_cli_review.DEFAULT_CONFIG,
             "agy_bin": "/bin/echo",
-            "model": "Gemini 3.5 Flash (Medium)",
+            "model": "Gemini 3.5 Flash (High)",
             "prompt_path": prompt_path,
             "kline_dir": tmp_path,
             "output_dir": tmp_path / "review",
@@ -75,7 +75,7 @@ class AgyCliReviewerTests(unittest.TestCase):
             cmd = reviewer._build_command(chart, "prompt text")
 
         self.assertEqual(cmd[0], "/bin/echo")
-        self.assertEqual(cmd[1:3], ["--model", "Gemini 3.5 Flash (Medium)"])
+        self.assertEqual(cmd[1:3], ["--model", "Gemini 3.5 Flash (High)"])
         self.assertIn("--print-timeout", cmd)
         self.assertNotIn("--dangerously-skip-permissions", cmd)
         self.assertEqual(cmd[-2:], ["--print", "prompt text"])
@@ -111,8 +111,8 @@ class AgyCliReviewerTests(unittest.TestCase):
 
         self.assertEqual(result["code"], "000001")
         self.assertEqual(result["strategy"], "brick")
-        self.assertEqual(result["reviewer"], "agy-cli-experimental")
-        self.assertEqual(result["model"], "Gemini 3.5 Flash (Medium)")
+        self.assertEqual(result["reviewer"], "agy-cli")
+        self.assertEqual(result["model"], "Gemini 3.5 Flash (High)")
         self.assertEqual(result["model_evidence"]["control"], "per-call --model")
         self.assertEqual(result["json_output_mode"], "prompt-json")
         self.assertTrue(result["json_schema_valid"])
@@ -309,7 +309,7 @@ class AgyCliReviewerTests(unittest.TestCase):
 
         self.assertEqual([item["code"] for item in results], ["000001", "000002"])
         self.assertEqual(results[0]["json_output_mode"], "prompt-json-array")
-        self.assertEqual(results[1]["reviewer"], "agy-cli-experimental")
+        self.assertEqual(results[1]["reviewer"], "agy-cli")
 
     def test_review_batch_auth_output_does_not_fallback_to_single(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

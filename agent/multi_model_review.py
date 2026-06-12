@@ -419,6 +419,7 @@ def prepare_reviewer_config(
         "dangerously_skip_permissions",
         "stop_on_cli_timeout",
         "fallback_to_single_on_batch_error",
+        "split_batch_on_cli_timeout",
         "json_repair_enabled",
         "auth_recovery_enabled",
         "auth_recovery_wait_seconds",

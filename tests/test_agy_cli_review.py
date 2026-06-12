@@ -358,28 +358,26 @@ class AgyCliReviewerTests(unittest.TestCase):
 
         self.assertEqual(calls, ["batch_2"])
 
-    def test_review_batch_timeout_does_not_fallback_to_single(self) -> None:
+    def test_review_batch_timeout_splits_to_single_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             reviewer = self.make_reviewer(Path(tmp))
+            reviewer.config["request_delay"] = 0
             chart1 = Path(tmp) / "000001_day.jpg"
             chart2 = Path(tmp) / "000002_day.jpg"
             chart1.write_bytes(b"fake")
             chart2.write_bytes(b"fake")
-            calls: list[str] = []
+            batch_calls: list[str] = []
+            single_calls: list[str] = []
 
-            def fake_run_agy(*, code: str, day_chart: Path, prompt_text: str, purpose: str = "review"):
-                calls.append(purpose)
-                return subprocess.CompletedProcess(
-                    args=["agy"],
-                    returncode=-9,
-                    stdout="",
-                    stderr="AGY CLI timed out after 900s",
-                )
+            def fake_review_batch(*, items: list[dict], prompt: str):
+                batch_calls.append(",".join(str(item["code"]) for item in items))
+                raise agy_cli_review.AgyCliTimeoutError("AGY CLI timed out after 900s")
 
             def fake_review_stock(*, code: str, day_chart: Path, prompt: str, strategy: str = ""):
-                raise AssertionError("timeouts must not fall back to single-stock review")
+                single_calls.append(code)
+                return valid_review_payload(code=code, strategy=strategy)
 
-            reviewer._run_agy = fake_run_agy  # type: ignore[method-assign]
+            reviewer.review_batch = fake_review_batch  # type: ignore[method-assign]
             reviewer.review_stock = fake_review_stock  # type: ignore[method-assign]
             items = [
                 {
@@ -400,10 +398,12 @@ class AgyCliReviewerTests(unittest.TestCase):
                 },
             ]
 
-            with self.assertRaises(agy_cli_review.AgyCliTimeoutError):
-                reviewer._review_batch_items(items, total_candidates=2)
+            results, failed = reviewer._review_batch_items(items, total_candidates=2)
 
-        self.assertEqual(calls, ["batch_2"])
+        self.assertEqual(batch_calls, ["000001,000002"])
+        self.assertEqual(single_calls, ["000001", "000002"])
+        self.assertEqual([item["code"] for item in results], ["000001", "000002"])
+        self.assertEqual(failed, [])
 
     def test_batch_items_waits_for_auth_recovery_and_retries_same_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

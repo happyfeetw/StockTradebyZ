@@ -39,12 +39,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "prompt_path": "agent/prompt.md",
     "agy_bin": "agy",
     "model": "Gemini 3.5 Flash (High)",
-    "print_timeout": "3m",
-    "timeout_seconds": 180,
+    "print_timeout": "6m",
+    "timeout_seconds": 360,
     "stdin_mode": "devnull",
     "dangerously_skip_permissions": False,
-    "request_delay": 10,
-    "batch_size": 5,
+    "request_delay": 3,
+    "batch_size": 3,
     "max_items": None,
     "skip_existing": True,
     "suggest_min_score": 4.0,
@@ -53,6 +53,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "json_repair_enabled": True,
     "json_repair_prompt_max_chars": 12000,
     "fallback_to_single_on_batch_error": True,
+    "split_batch_on_cli_timeout": True,
     "stop_on_cli_timeout": True,
     "settings_path": "~/.gemini/antigravity-cli/settings.json",
     "expected_model_label": "",
@@ -206,6 +207,8 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
     config["settings_path"] = _resolve_cfg_path(config["settings_path"], base_dir=Path.home())
     config["json_repair_enabled"] = bool(config.get("json_repair_enabled", True))
     config["json_repair_prompt_max_chars"] = int(config.get("json_repair_prompt_max_chars", 12000))
+    config["fallback_to_single_on_batch_error"] = bool(config.get("fallback_to_single_on_batch_error", True))
+    config["split_batch_on_cli_timeout"] = bool(config.get("split_batch_on_cli_timeout", True))
     config["stop_on_cli_timeout"] = bool(config.get("stop_on_cli_timeout", True))
     config["stdin_mode"] = _normalize_stdin_mode(config.get("stdin_mode", "devnull"))
     config["dangerously_skip_permissions"] = bool(config.get("dangerously_skip_permissions", False))
@@ -978,6 +981,28 @@ class AgyCliReviewer(BaseReviewer):
     def _write_stock_result(self, item: dict[str, Any], result: dict[str, Any]) -> None:
         self._write_json(Path(item["out_file"]), result)
 
+    def _split_batch_items(
+        self,
+        items: list[dict[str, Any]],
+        total_candidates: int,
+        *,
+        reason: str,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        delay = float(self.config.get("request_delay", 10))
+        if len(items) > 2:
+            mid = len(items) // 2
+            print(f"[INFO] AGY {reason}，拆分为 {mid}+{len(items) - mid} 继续。")
+            if delay:
+                time.sleep(delay)
+            left_results, left_failed = self._review_batch_items(items[:mid], total_candidates)
+            if delay:
+                time.sleep(delay)
+            right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
+            return left_results + right_results, left_failed + right_failed
+
+        print(f"[INFO] AGY {reason}，使用同一模型逐只复评。")
+        return self._review_single_items(items, total_candidates)
+
     def _review_batch_items(
         self,
         items: list[dict[str, Any]],
@@ -1022,6 +1047,12 @@ class AgyCliReviewer(BaseReviewer):
                 continue
             except AgyCliTimeoutError as exc:
                 print(f"超时 — {exc}")
+                if (
+                    self.config.get("split_batch_on_cli_timeout", True)
+                    and self.config.get("fallback_to_single_on_batch_error", True)
+                    and len(items) > 1
+                ):
+                    return self._split_batch_items(items, total_candidates, reason="批量超时")
                 if self.config.get("stop_on_cli_timeout", True):
                     raise
                 return [], codes
@@ -1032,20 +1063,7 @@ class AgyCliReviewer(BaseReviewer):
         if not self.config.get("fallback_to_single_on_batch_error", True):
             return [], codes
 
-        delay = float(self.config.get("request_delay", 10))
-        if len(items) > 2:
-            mid = len(items) // 2
-            print(f"[INFO] AGY 批量失败，拆分为 {mid}+{len(items) - mid} 继续。")
-            if delay:
-                time.sleep(delay)
-            left_results, left_failed = self._review_batch_items(items[:mid], total_candidates)
-            if delay:
-                time.sleep(delay)
-            right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
-            return left_results + right_results, left_failed + right_failed
-
-        print("[INFO] AGY 小批量失败，使用同一模型逐只复评。")
-        return self._review_single_items(items, total_candidates)
+        return self._split_batch_items(items, total_candidates, reason="批量失败")
 
     def _review_single_items(
         self,

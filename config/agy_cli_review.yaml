@@ -34,10 +34,10 @@ stdin_mode: devnull
 dangerously_skip_permissions: false
 
 # 相邻 CLI 调用间隔（秒）
-request_delay: 2
+request_delay: 3
 
-# 单次 AGY CLI 请求最多提交几张图。正式多模型流程默认逐只调用，提高 AGY --print 稳定性。
-batch_size: 1
+# 单次 AGY CLI 请求最多提交几张图。正式多模型流程默认小批量，降低调用频率。
+batch_size: 3
 
 # 本次 AGY 最多复评前 N 个候选；留空表示完整复评。
 max_items:
@@ -59,9 +59,10 @@ raw_log_dir: ""
 json_repair_enabled: true
 json_repair_prompt_max_chars: 12000
 fallback_to_single_on_batch_error: true
+split_batch_on_cli_timeout: true
 
-# AGY 子进程达到 timeout_seconds 时按模型级失败处理，交给多模型编排按原模型重跑一次；
-# 不再拆批/单股 fallback，避免每个拆分批次继续长时间等待。
+# AGY 批量子进程达到 timeout_seconds 时优先按同一模型拆小批；单股仍超时时按模型级失败处理，
+# 交给多模型编排按原模型重跑一次。
 stop_on_cli_timeout: true
 
 # AGY/OAuth 运行时恢复：

@@ -54,7 +54,7 @@ python agent/multi_model_review.py --config config/multi_model_review.yaml
 python agent/multi_model_review.py --run-dir data/runs/<run_id>
 ```
 
-多模型按执行组调度：不同 backend 可以并行，例如 Codex 可与一个 AGY 模型同时跑；同一 backend 默认串行，避免两个 AGY `--print` 进程同时争用 `~/.gemini/antigravity-cli` 的 OAuth、keyring、全局日志和本地 server 状态。同一模型内部按批串行处理；AGY 正式模型默认 `batch_size: 1`，优先保证非交互 `--print` 稳定性，Codex 仍可保持批量 5。各 reviewer 后端会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。结果按执行后端和 `model_profile` 写入独立目录；共识 summary、进度日志和 Workbench 筛选使用 `model_key`，也就是纯模型 ID。
+多模型按执行组调度：不同 backend 可以并行，例如 Codex 可与一个 AGY 模型同时跑；同一 backend 默认串行，避免两个 AGY `--print` 进程同时争用 `~/.gemini/antigravity-cli` 的 OAuth、keyring、全局日志和本地 server 状态。同一模型内部按批串行处理；AGY 正式模型默认 `batch_size: 3`，在调用频率和非交互 `--print` 稳定性之间折中，Codex 仍可保持批量 5。各 reviewer 后端会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。结果按执行后端和 `model_profile` 写入独立目录；共识 summary、进度日志和 Workbench 筛选使用 `model_key`，也就是纯模型 ID。
 
 运行日志中的 `[x/y]` 表示“处理到第 x 个候选”，不等于成功生成了 x 个有效结果。模型日志出现最终汇总行后，多模型进度会优先展示 `成功 X/Y，失败/跳过 Z`，用于区分完成进度和有效结果数量。
 
@@ -63,7 +63,7 @@ python agent/multi_model_review.py --run-dir data/runs/<run_id>
 - `no_model_substitution: true`：禁止 `fallback_model`、`substitute_model`、`fallback_reviewer` 等替换配置。
 - `rerun_failed_models_once: true`：所有模型首轮结束后，只对失败模型按原模型再跑一次。
 - `skip_existing: true`：重跑时跳过已经写好的单股结果，用于补齐失败或缺失项。
-- AGY 默认 `print_timeout=6m`、`timeout_seconds=360`。子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时在多个拆分批次上反复等待。
+- AGY 默认 `print_timeout=6m`、`timeout_seconds=360`。批量子进程达到总超时时优先按同一模型拆小批；单股仍超时时再按模型级失败处理，由多模型编排按原模型断点重跑。
 - Codex 正式路径默认锁定 `gpt-5.5`、`reasoning_effort=high`、标准速度；如需临时试验非 5.5，必须显式 `force_fixed_model: false`，并且不能作为正式降级替换。
 
 进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。任一正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。

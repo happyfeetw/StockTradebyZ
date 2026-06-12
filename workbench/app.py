@@ -64,19 +64,44 @@ Z_QUALITY_DIR = ROOT / "data" / "z_quality"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 FORMAL_REVIEW_SOURCE = "formal"
-AGY_REVIEW_SOURCE = "agy-cli-experimental"
+AGY_REVIEW_SOURCE = "agy-cli"
+LEGACY_AGY_REVIEW_SOURCE = "agy-cli-experimental"
 CODEX_REVIEW_SOURCE = "codex-cli"
+GEMINI_35_FLASH_HIGH = "gemini-3.5-flash-high"
+GEMINI_31_PRO_HIGH = "gemini-3.1-pro-high"
+GPT_55_HIGH = "gpt-5.5-high"
+REVIEW_MODEL_SPECS = {
+    GEMINI_35_FLASH_HIGH: {
+        "label": "Gemini 3.5 Flash High",
+        "backend": AGY_REVIEW_SOURCE,
+        "backend_model": "Gemini 3.5 Flash (High)",
+        "output_dir": f"data/review_models/{GEMINI_35_FLASH_HIGH}",
+    },
+    GEMINI_31_PRO_HIGH: {
+        "label": "Gemini 3.1 Pro High",
+        "backend": AGY_REVIEW_SOURCE,
+        "backend_model": "Gemini 3.1 Pro (High)",
+        "output_dir": f"data/review_models/{GEMINI_31_PRO_HIGH}",
+    },
+    GPT_55_HIGH: {
+        "label": "GPT-5.5 High",
+        "backend": CODEX_REVIEW_SOURCE,
+        "backend_model": "gpt-5.5",
+        "output_dir": f"data/review_models/{GPT_55_HIGH}",
+    },
+}
 REVIEW_SOURCE_LABELS = {
-    FORMAL_REVIEW_SOURCE: "正式 Gemini",
-    AGY_REVIEW_SOURCE: "AGY 实验",
+    FORMAL_REVIEW_SOURCE: "历史正式复评",
+    AGY_REVIEW_SOURCE: "AGY 旧结果",
+    LEGACY_AGY_REVIEW_SOURCE: "AGY 旧结果",
     CODEX_REVIEW_SOURCE: "Codex GPT-5.5",
+    **{key: str(spec["label"]) for key, spec in REVIEW_MODEL_SPECS.items()},
 }
 REVIEWER_OPTIONS = {
-    "gemini-cli": "Gemini CLI（本机登录）",
-    "agy-cli-experimental": "AGY CLI（实验）",
-    "codex-cli": "Codex GPT-5.5",
-    "multi-model": "多模型复评",
-    "gemini-api": "Gemini API Key",
+    GEMINI_35_FLASH_HIGH: REVIEW_MODEL_SPECS[GEMINI_35_FLASH_HIGH]["label"],
+    GEMINI_31_PRO_HIGH: REVIEW_MODEL_SPECS[GEMINI_31_PRO_HIGH]["label"],
+    GPT_55_HIGH: REVIEW_MODEL_SPECS[GPT_55_HIGH]["label"],
+    "multi-model": "三模型共识",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
 CODEX_AUTH_MODE_LOCAL_OAUTH = "local_oauth"
@@ -95,7 +120,7 @@ MODEL_CONFIG_ROW_RE = re.compile(r"\[(?:CONFIG|INFO)\]\s+reviewer config:\s+(?P<
 MODEL_RUNTIME_CONFIG_ROW_RE = re.compile(r"\[CONFIG\]\s+(?P<key>\S+)\s+->")
 MODEL_START_ROW_RE = re.compile(r"\[(?:START|INFO)\].*?启动\s+(?P<key>\S+?)(?:\s+attempt=\d+|:|\s|$)")
 MODEL_DONE_ROW_RE = re.compile(
-    r"\[(?:DONE|INFO)\].*?(?P<key>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\s+结束"
+    r"\[(?:DONE|INFO)\].*?(?P<key>[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)\s+结束"
     r"(?:[，,]\s*exit=(?P<exit>-?\d+))?"
 )
 MODEL_OLD_RUNNING_ROW_RE = re.compile(r"多模型复评仍在运行：(?P<keys>.+)$")
@@ -207,7 +232,7 @@ def default_run_cfg() -> dict[str, Any]:
         "pick_date": dt.date.today().isoformat(),
         "end_date": "",
         "preselect_log_dir": "./data/logs",
-        "reviewer": "gemini-cli",
+        "reviewer": GEMINI_35_FLASH_HIGH,
     }
 
 
@@ -232,6 +257,52 @@ def project_path(value: Any, fallback: str) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def model_output_dir(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("output_dir") or f"data/review_models/{model_key}")
+
+
+def model_backend(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("backend") or "")
+
+
+def model_backend_name(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("backend_model") or "")
+
+
+def model_label(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("label") or model_key)
+
+
+def should_use_model_default_output_dir(current: Any) -> bool:
+    text = clean_text(current)
+    if not text:
+        return True
+    known_defaults = {
+        "data/review",
+        "./data/review",
+        "data/review/agy_cli",
+        "./data/review/agy_cli",
+        "data/review/agy_cli_experimental",
+        "./data/review/agy_cli_experimental",
+        "data/review/codex_cli",
+        "./data/review/codex_cli",
+        *[str(spec.get("output_dir") or "") for spec in REVIEW_MODEL_SPECS.values()],
+    }
+    return text in known_defaults
+
+
+def apply_model_defaults_to_config(cfg: dict[str, Any], reviewer: str) -> dict[str, Any]:
+    cfg["model_key"] = reviewer
+    cfg["model"] = model_backend_name(reviewer)
+    if should_use_model_default_output_dir(cfg.get("output_dir")):
+        cfg["output_dir"] = model_output_dir(reviewer)
+    return cfg
+
+
 def agy_review_base_dir() -> Path:
     cfg: dict[str, Any] = {}
     try:
@@ -242,7 +313,7 @@ def agy_review_base_dir() -> Path:
         cfg = {}
     if not cfg:
         cfg = load_yaml(ROOT / "config" / "agy_cli_review.yaml")
-    return project_path(cfg.get("output_dir"), "data/review/agy_cli_experimental")
+    return project_path(cfg.get("output_dir"), "data/review/agy_cli")
 
 
 def codex_review_base_dir() -> Path:
@@ -259,8 +330,12 @@ def codex_review_base_dir() -> Path:
 
 
 def review_base_dir(review_source: str = FORMAL_REVIEW_SOURCE) -> Path:
+    if review_source in REVIEW_MODEL_SPECS:
+        return project_path(model_output_dir(review_source), model_output_dir(review_source))
     if review_source == AGY_REVIEW_SOURCE:
         return agy_review_base_dir()
+    if review_source == LEGACY_AGY_REVIEW_SOURCE:
+        return ROOT / "data" / "review" / "agy_cli_experimental"
     if review_source == CODEX_REVIEW_SOURCE:
         return codex_review_base_dir()
     return ROOT / "data" / "review"
@@ -290,10 +365,18 @@ def review_source_has_data(pick_date: str, review_source: str = FORMAL_REVIEW_SO
 def review_sources_for_date(pick_date: str) -> list[str]:
     sources = [
         source
-        for source in (FORMAL_REVIEW_SOURCE, AGY_REVIEW_SOURCE, CODEX_REVIEW_SOURCE)
+        for source in (
+            GEMINI_35_FLASH_HIGH,
+            GEMINI_31_PRO_HIGH,
+            GPT_55_HIGH,
+            AGY_REVIEW_SOURCE,
+            LEGACY_AGY_REVIEW_SOURCE,
+            CODEX_REVIEW_SOURCE,
+            FORMAL_REVIEW_SOURCE,
+        )
         if review_source_has_data(pick_date, source)
     ]
-    return sources or [FORMAL_REVIEW_SOURCE]
+    return sources or [GEMINI_35_FLASH_HIGH]
 
 
 def render_review_source_selectbox(label: str, pick_date: str, key: str) -> str:
@@ -303,10 +386,12 @@ def render_review_source_selectbox(label: str, pick_date: str, key: str) -> str:
     return sources[labels.index(selected_label)]
 
 
-def latest_suggestion(review_source: str = FORMAL_REVIEW_SOURCE) -> dict[str, Any]:
+def latest_suggestion(review_source: str | None = None) -> dict[str, Any]:
     pick_date = latest_pick_date()
     if not pick_date:
         return {}
+    if not review_source:
+        review_source = review_sources_for_date(pick_date)[0]
     return load_review_suggestion(pick_date, review_source)
 
 
@@ -344,7 +429,6 @@ def environment_status() -> list[tuple[str, str, str]]:
     suggestion = latest_suggestion()
     return [
         ("Tushare", "ok" if token else "err", "已配置" if token else "未配置"),
-        ("Gemini CLI", "ok" if shutil.which("gemini") else "warn", "已安装" if shutil.which("gemini") else "未找到"),
         ("AGY CLI", "ok" if shutil.which("agy") else "warn", "已安装" if shutil.which("agy") else "未找到"),
         ("Codex CLI", "ok" if shutil.which("codex") else "warn", "已安装" if shutil.which("codex") else "未找到"),
         ("Gemini API", "ok" if gemini_api_key else "warn", "已配置" if gemini_api_key else "未配置"),
@@ -578,8 +662,15 @@ def apply_codex_auth_mode(cfg: dict[str, Any], mode: str) -> dict[str, Any]:
 
 
 def normalize_reviewer(value: Any) -> str:
-    reviewer = clean_text(value) or "gemini-cli"
-    return reviewer if reviewer in REVIEWER_OPTIONS else "gemini-cli"
+    reviewer = clean_text(value) or GEMINI_35_FLASH_HIGH
+    aliases = {
+        "gemini-cli": GEMINI_35_FLASH_HIGH,
+        "agy-cli": GEMINI_35_FLASH_HIGH,
+        "agy-cli-experimental": GEMINI_35_FLASH_HIGH,
+        "codex-cli": GPT_55_HIGH,
+    }
+    reviewer = aliases.get(reviewer, reviewer)
+    return reviewer if reviewer in REVIEWER_OPTIONS else GEMINI_35_FLASH_HIGH
 
 
 def ensure_reviewer_widget_state() -> None:
@@ -592,6 +683,22 @@ def sync_reviewer_from_widget() -> None:
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
     run_cfg["reviewer"] = normalize_reviewer(st.session_state.get(REVIEWER_WIDGET_KEY))
     st.session_state.run_cfg = run_cfg
+
+
+def snapshot_reviewer_configs(reviewer: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    agy_cfg = dict(st.session_state.get("agy_review_cfg", {}) or {})
+    codex_cfg = dict(st.session_state.get("codex_review_cfg", {}) or {})
+    multi_cfg = dict(st.session_state.get("multi_model_review_cfg", {}) or {})
+
+    if reviewer not in REVIEW_MODEL_SPECS:
+        return agy_cfg, codex_cfg, multi_cfg
+
+    backend = model_backend(reviewer)
+    if backend == AGY_REVIEW_SOURCE:
+        agy_cfg = apply_model_defaults_to_config(agy_cfg, reviewer)
+    elif backend == CODEX_REVIEW_SOURCE:
+        codex_cfg = apply_model_defaults_to_config(codex_cfg, reviewer)
+    return agy_cfg, codex_cfg, multi_cfg
 
 
 def parse_agy_models_output(output: str) -> list[str]:
@@ -787,15 +894,17 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    reviewer = normalize_reviewer(st.session_state.run_cfg.get("reviewer"))
+    st.session_state.run_cfg["reviewer"] = reviewer
+    agy_cfg, codex_cfg, multi_cfg = snapshot_reviewer_configs(reviewer)
     write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
-    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
-    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
-    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", agy_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", codex_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", multi_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
-    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
         run_dir / "run_config.json",
         {
@@ -827,17 +936,19 @@ def create_paper_run_snapshot() -> Path:
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    reviewer = normalize_reviewer(st.session_state.run_cfg.get("reviewer"))
+    st.session_state.run_cfg["reviewer"] = reviewer
+    agy_cfg, codex_cfg, multi_cfg = snapshot_reviewer_configs(reviewer)
     write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
-    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
-    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
-    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", agy_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", codex_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", multi_cfg)
     write_yaml(run_dir / "paper_trading.yaml", st.session_state.trading_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     command = [sys.executable, "-m", "paper_trading.daily_flow", "--run-dir", str(run_dir)]
-    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
         run_dir / "run_config.json",
         {
@@ -869,7 +980,8 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     rules_cfg = str(run_dir / "rules_preselect.yaml")
     run_id = run_dir.name
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
-    reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
+    reviewer = normalize_reviewer(run_cfg.get("reviewer"))
+    backend = model_backend(reviewer)
     if reviewer == "gemini-api":
         review_step = ("Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")])
     elif reviewer == "multi-model":
@@ -877,27 +989,25 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             "多模型复评与共识汇总",
             [python, "agent/multi_model_review.py", "--run-dir", str(run_dir)],
         )
-    elif reviewer == "codex-cli":
+    elif backend == CODEX_REVIEW_SOURCE:
         review_step = (
-            "Codex GPT-5.5 复评",
+            f"{model_label(reviewer)} 复评",
             [python, "agent/codex_cli_review.py", "--config", str(run_dir / "codex_cli_review.yaml")],
         )
-    elif reviewer == "agy-cli-experimental":
+    elif backend == AGY_REVIEW_SOURCE:
         review_step = (
-            "AGY CLI 实验复评",
+            f"{model_label(reviewer)} 复评",
             [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")],
         )
     else:
         review_step = (
-            "Gemini CLI 复评",
-            [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")],
+            f"{model_label(GEMINI_35_FLASH_HIGH)} 复评",
+            [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")],
         )
-    agy_output_dir = clean_text(st.session_state.get("agy_review_cfg", {}).get("output_dir"))
-    codex_output_dir = clean_text(st.session_state.get("codex_review_cfg", {}).get("output_dir"))
-    isolated_reviewer = (
-        reviewer == "multi-model"
-        or (reviewer == "agy-cli-experimental" and agy_output_dir not in {"data/review", "./data/review"})
-        or (reviewer == "codex-cli" and codex_output_dir not in {"data/review", "./data/review"})
+    agy_cfg, codex_cfg, _ = snapshot_reviewer_configs(reviewer)
+    output_dir = clean_text((codex_cfg if backend == CODEX_REVIEW_SOURCE else agy_cfg).get("output_dir"))
+    isolated_reviewer = reviewer == "multi-model" or (
+        reviewer in REVIEW_MODEL_SPECS and output_dir not in {"data/review", "./data/review"}
     )
     archive_step = [] if isolated_reviewer else [("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id])]
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
@@ -1098,9 +1208,42 @@ def _progress_status_label(status: str, exit_code: str | None = None) -> str:
     return str(status or "等待")
 
 
+def progress_model_key(raw_key: Any) -> str:
+    key = clean_text(raw_key)
+    aliases = {
+        "agy-cli/gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH,
+        "agy-cli-experimental/gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH,
+        "agy-cli/gemini-3.1-pro-high": GEMINI_31_PRO_HIGH,
+        "agy-cli-experimental/gemini-3.1-pro-high": GEMINI_31_PRO_HIGH,
+        "codex-cli/gpt-5.5-high": GPT_55_HIGH,
+        "codex-cli/gpt-5.5-high-standard": GPT_55_HIGH,
+    }
+    if key in aliases:
+        return aliases[key]
+    if "/" in key:
+        return key.rsplit("/", 1)[-1].strip() or key
+    return key or "unknown"
+
+
+def progress_model_display_name(model_key_value: Any) -> str:
+    key = progress_model_key(model_key_value)
+    return model_label(key) if key in REVIEW_MODEL_SPECS else key
+
+
+def progress_model_sort_index(model_key_value: Any, fallback: int) -> tuple[int, int, str]:
+    key = progress_model_key(model_key_value)
+    known_order = list(REVIEW_MODEL_SPECS)
+    if key in known_order:
+        return (0, known_order.index(key), key)
+    return (1, fallback, key)
+
+
 def _progress_row_defaults(key: str) -> dict[str, Any]:
+    model_key_value = progress_model_key(key)
     return {
-        "key": key,
+        "key": model_key_value,
+        "display_key": progress_model_display_name(model_key_value),
+        "raw_keys": [key] if key and key != model_key_value else [],
         "status": "waiting",
         "status_label": "等待",
         "exit_code": "",
@@ -1140,13 +1283,15 @@ def multi_model_progress_rows(log_text: str) -> list[dict[str, Any]]:
     order: list[str] = []
 
     def ensure_row(key: str) -> dict[str, Any]:
-        key = str(key or "").strip()
-        if not key:
-            key = "unknown"
-        if key not in rows:
-            rows[key] = _progress_row_defaults(key)
-            order.append(key)
-        return rows[key]
+        raw_key = str(key or "").strip()
+        model_key_value = progress_model_key(raw_key)
+        if model_key_value not in rows:
+            rows[model_key_value] = _progress_row_defaults(raw_key or model_key_value)
+            order.append(model_key_value)
+        row = rows[model_key_value]
+        if raw_key and raw_key != model_key_value and raw_key not in row.get("raw_keys", []):
+            row.setdefault("raw_keys", []).append(raw_key)
+        return row
 
     for raw_line in str(log_text or "").splitlines():
         line = raw_line.strip()
@@ -1203,7 +1348,11 @@ def multi_model_progress_rows(log_text: str) -> list[dict[str, Any]]:
             }
         )
 
-    return [rows[key] for key in order]
+    ordered_keys = sorted(
+        order,
+        key=lambda key: progress_model_sort_index(key, order.index(key)),
+    )
+    return [rows[key] for key in ordered_keys]
 
 
 def compact_run_log_for_display(log_text: str) -> str:
@@ -1231,7 +1380,7 @@ def multi_model_progress_html(rows: list[dict[str, Any]]) -> str:
         status = str(row.get("status_label") or "等待")
         status_class = "ok" if status == "完成" else "error" if status == "失败" else "running"
         percent = int(row.get("percent") or 0)
-        key = escape_log(str(row.get("key") or ""))
+        key = escape_log(str(row.get("display_key") or row.get("key") or ""))
         count_text = escape_log(str(row.get("count_text") or row.get("progress_text") or "等待输出"))
         elapsed = escape_log(str(row.get("elapsed") or ""))
         rendered_rows.append(
@@ -1254,7 +1403,7 @@ def multi_model_progress_html(rows: list[dict[str, Any]]) -> str:
             "<style>",
             ".review-progress-wrap { border: 1px solid #d9dee7; border-radius: 6px; margin: 0 0 10px; overflow: hidden; }",
             ".review-progress-title { background: #f5f7fb; border-bottom: 1px solid #d9dee7; color: #273142; font-size: 13px; font-weight: 600; padding: 8px 10px; }",
-            ".review-progress-row { align-items: center; border-bottom: 1px solid #edf0f5; display: grid; gap: 10px; grid-template-columns: minmax(220px, 1.7fr) 64px 96px minmax(120px, 1fr) 48px 70px; min-height: 34px; padding: 7px 10px; }",
+            ".review-progress-row { align-items: center; border-bottom: 1px solid #edf0f5; display: grid; gap: 10px; grid-template-columns: minmax(128px, 180px) 64px minmax(168px, max-content) minmax(120px, 1fr) 48px 60px; min-height: 34px; padding: 7px 10px; }",
             ".review-progress-row:last-child { border-bottom: 0; }",
             '.review-progress-model, .review-progress-count, .review-progress-percent, .review-progress-elapsed { color: #2f3848; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             ".review-progress-status { border-radius: 4px; font-size: 12px; line-height: 20px; text-align: center; }",
@@ -1705,7 +1854,7 @@ def render_review_config() -> None:
     run_cfg = st.session_state.run_cfg
     ensure_reviewer_widget_state()
     st.radio(
-        "复评方式",
+        "复评模型",
         list(REVIEWER_OPTIONS),
         format_func=lambda key: REVIEWER_OPTIONS[key],
         horizontal=True,
@@ -1755,43 +1904,26 @@ def render_review_config() -> None:
         st.session_state.api_review_cfg = cfg
         return
 
-    if reviewer == "agy-cli-experimental":
+    if reviewer in REVIEW_MODEL_SPECS and model_backend(reviewer) == AGY_REVIEW_SOURCE:
         cfg = st.session_state.agy_review_cfg
+        cfg = apply_model_defaults_to_config(cfg, reviewer)
         left, right = st.columns(2, gap="large")
         with left:
             cfg["agy_bin"] = st.text_input("AGY CLI 路径", value=str(cfg.get("agy_bin", "agy")))
             agy_bin = str(cfg.get("agy_bin", "agy"))
             model_options, model_error, model_fetched_at = cached_agy_model_options(agy_bin)
-            current_model = clean_text(cfg.get("model")) or (model_options[0] if model_options else "")
-            if model_options:
-                if current_model not in model_options:
-                    st.warning(f"当前配置模型 `{current_model}` 不在 `agy models` 列表中，已切换为 `{model_options[0]}`。")
-                    current_model = model_options[0]
-                if st.session_state.get("agy_model_choice") not in {None, *model_options}:
-                    st.session_state.pop("agy_model_choice", None)
-                cfg["model"] = st.selectbox(
-                    "模型 model",
-                    model_options,
-                    index=model_options.index(current_model),
-                    key="agy_model_choice",
-                    help="候选项直接来自 `agy models` 输出，名称不做改写。",
-                )
-                if model_fetched_at:
-                    st.caption(f"模型列表缓存于 {model_fetched_at}；如 AGY 已升级，请手动刷新。")
+            st.caption(f"复评模型：{model_label(reviewer)}")
+            st.caption(f"底层模型名：{cfg['model']}")
+            if model_options and cfg["model"] not in model_options:
+                st.warning(f"当前模型 `{cfg['model']}` 不在 `agy models` 列表中，请确认本机 AGY 版本和账号可用。")
+            elif model_fetched_at:
+                st.caption(f"AGY 模型列表缓存于 {model_fetched_at}。")
+            elif model_error:
+                st.warning(f"上次读取 AGY 模型列表失败：{model_error}")
             else:
-                cfg["model"] = st.text_input(
-                    "模型 model",
-                    value=current_model or "尚未加载 AGY 模型列表",
-                    disabled=True,
-                    key="agy_model_fallback",
-                    help="为避免切换到 AGY 时卡顿，页面不会自动执行 `agy models`；点击下面按钮后再生成下拉候选。",
-                )
-                if model_error:
-                    st.warning(f"上次读取 AGY 模型列表失败：{model_error}")
-                else:
-                    st.info("尚未加载 AGY 模型列表。当前模型来自配置，点击按钮后会从 `agy models` 读取严格候选。")
+                st.info("页面不会自动执行 `agy models`；需要校验本机可用模型时可手动刷新。")
             if st.button(
-                "加载/刷新 AGY 模型列表",
+                "校验/刷新 AGY 模型列表",
                 key="agy_model_refresh",
                 help="手动执行 `agy models`；本机实测约 4 秒。",
             ):
@@ -1799,22 +1931,29 @@ def render_review_config() -> None:
                     refreshed_models, refresh_error = fetch_agy_model_options(agy_bin)
                 store_agy_model_options(agy_bin, refreshed_models, refresh_error)
                 if refreshed_models:
-                    selected = current_model if current_model in refreshed_models else refreshed_models[0]
-                    st.session_state["agy_model_choice"] = selected
-                    cfg["model"] = selected
                     st.session_state.agy_review_cfg = cfg
                     st.rerun()
                 st.warning(f"读取 AGY 模型列表失败：{refresh_error or '未知错误'}")
             cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "3m")))
             cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 180)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
-            cfg["max_items"] = st.number_input(
-                "实验复评上限 max_items",
-                min_value=1,
-                value=int(cfg.get("max_items", 1)),
-                help="本次 AGY 实验最多复评前 N 个候选；默认 1 用于 smoke test，避免误跑完整候选集。命令行 --limit 会覆盖此值。",
+            max_items_value = cfg.get("max_items")
+            limit_enabled = max_items_value not in {"", None, 0, "0"}
+            limit_enabled = st.toggle(
+                "限制复评数量",
+                value=limit_enabled,
+                key="agy_limit_enabled",
+                help="关闭时完整复评全部候选；开启后只复评前 N 个候选，适合 smoke test。",
             )
-            st.caption("实验复评上限只限制处理数量，不影响评分口径；候选顺序沿用复评器的策略优先级排序。")
+            if limit_enabled:
+                cfg["max_items"] = st.number_input(
+                    "复评上限 max_items",
+                    min_value=1,
+                    value=int(max_items_value or 1),
+                )
+            else:
+                cfg["max_items"] = None
+            st.caption("复评上限只限制处理数量，不影响评分口径；候选顺序沿用复评器的策略优先级排序。")
         with right:
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
@@ -1834,19 +1973,20 @@ def render_review_config() -> None:
                 cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
                 cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
             with p2:
-                cfg["output_dir"] = st.text_input("实验复评输出目录", value=str(cfg.get("output_dir", "data/review/agy_cli_experimental")))
+                cfg["output_dir"] = st.text_input("模型结果输出目录", value=str(cfg.get("output_dir", model_output_dir(reviewer))))
                 cfg["raw_log_dir"] = st.text_input("AGY 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/agy_cli_runs。")
                 cfg["settings_path"] = st.text_input("AGY settings 路径", value=str(cfg.get("settings_path", "~/.gemini/antigravity-cli/settings.json")))
 
         st.markdown(
-            "<div class='panel-note'>AGY 路径为实验 reviewer；默认输出到隔离目录，不覆盖正式 Gemini CLI 复评结果。若输出目录不是 <code>data/review</code>，运行计划会跳过归档步骤。</div>",
+            "<div class='panel-note'>当前选择的是 Google 模型，底层固定通过 AGY 执行。模型结果默认按模型 ID 隔离输出；若输出目录不是 <code>data/review</code>，运行计划会跳过归档步骤。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.agy_review_cfg = cfg
         return
 
-    if reviewer == "codex-cli":
+    if reviewer in REVIEW_MODEL_SPECS and model_backend(reviewer) == CODEX_REVIEW_SOURCE:
         cfg = st.session_state.codex_review_cfg
+        cfg = apply_model_defaults_to_config(cfg, reviewer)
         left, right = st.columns(2, gap="large")
         with left:
             cfg["codex_bin"] = st.text_input("Codex CLI 路径", value=str(cfg.get("codex_bin", "codex")))
@@ -1854,13 +1994,14 @@ def render_review_config() -> None:
             cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=60, value=int(cfg.get("timeout_seconds", 900)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 1)), step=1.0)
             cfg["max_items"] = st.number_input(
-                "实验复评上限 max_items",
+                "复评上限 max_items",
                 min_value=1,
                 value=int(cfg.get("max_items", 1)),
                 help="单独使用 Codex reviewer 时最多复评前 N 个候选；多模型复评会覆盖为完整候选集。",
             )
         with right:
-            st.caption("固定模型：GPT-5.5")
+            st.caption(f"复评模型：{model_label(reviewer)}")
+            st.caption(f"底层模型名：{cfg['model']}")
             st.caption("固定思考强度：high")
             st.caption("速度路径：standard（禁用 fast 默认路径）")
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
@@ -1886,11 +2027,11 @@ def render_review_config() -> None:
                 cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
                 cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
             with p2:
-                cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review/codex_cli")))
+                cfg["output_dir"] = st.text_input("模型结果输出目录", value=str(cfg.get("output_dir", model_output_dir(reviewer))))
                 cfg["raw_log_dir"] = st.text_input("Codex 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/codex_cli_runs。")
 
         st.markdown(
-            "<div class='panel-note'>Codex reviewer 固定使用 <code>gpt-5.5</code>、<code>high</code> 思考强度，并通过 <code>--output-schema</code> 返回 JSON；默认走本机 Codex OAuth，输出到隔离目录。</div>",
+            "<div class='panel-note'>当前选择的是 GPT 模型，底层固定通过 Codex CLI 执行。默认走本机 Codex OAuth，并通过 <code>--output-schema</code> 返回 JSON。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.codex_review_cfg = cfg
@@ -1931,15 +2072,23 @@ def render_review_config() -> None:
             cfg["consensus_dir"] = st.text_input("共识汇总目录", value=str(cfg.get("consensus_dir", "data/review_consensus")))
 
         st.subheader("参与复评的模型")
+        st.caption("Google 模型通过 AGY 执行；GPT 模型通过 Codex CLI 执行。共识、进度、筛选和导出都以模型 ID 为准。")
         reviewers = cfg.get("reviewers") or []
         for index, spec in enumerate(reviewers):
-            label = str(spec.get("label") or spec.get("reviewer_key") or f"model-{index + 1}")
-            c1, c2, c3 = st.columns([0.28, 0.48, 0.18])
+            label = str(spec.get("label") or spec.get("model_key") or spec.get("reviewer_key") or f"model-{index + 1}")
+            c1, c2, c3, c4 = st.columns([0.24, 0.30, 0.30, 0.12])
             with c1:
                 spec["enabled"] = st.toggle(label, value=bool(spec.get("enabled", True)), key=f"multi_model_enabled_{index}")
             with c2:
-                spec["model"] = st.text_input("模型", value=str(spec.get("model", "")), key=f"multi_model_model_{index}")
+                spec["model_key"] = st.text_input(
+                    "模型 ID",
+                    value=str(spec.get("model_key") or spec.get("model_profile") or ""),
+                    key=f"multi_model_model_key_{index}",
+                    help="共识汇总、进度日志、筛选和导出都使用这个模型 ID。",
+                )
             with c3:
+                spec["model"] = st.text_input("后端模型名", value=str(spec.get("model", "")), key=f"multi_model_model_{index}")
+            with c4:
                 spec["batch_size"] = st.number_input(
                     "batch",
                     min_value=1,
@@ -1955,73 +2104,15 @@ def render_review_config() -> None:
                 "multi_model_codex",
             )
         st.markdown(
-            "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动配置中声明的 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>；失败模型会记录日志和失败原因，可按原模型断点重跑，不会自动替换模型。</div>",
+            "<div class='panel-note'>多模型复评会先冻结候选批次，再按模型 ID 并行启动。两个 Google 模型默认通过 AGY 执行，GPT 模型默认通过 Codex CLI 执行；共识、进度、筛选和导出以模型 ID 为维度。失败模型会记录日志和失败原因，可按原模型断点重跑，不会自动替换模型。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.multi_model_review_cfg = cfg
         return
 
-    cfg = st.session_state.review_cfg
-    left, right = st.columns(2, gap="large")
-    with left:
-        cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
-        cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
-        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 5)))
-        cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
-        cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
-        cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 2000)))
-    with right:
-        output_format_options = ["stream-json", "json", "text"]
-        current_output_format = str(cfg.get("output_format", "stream-json"))
-        cfg["output_format"] = st.selectbox(
-            "CLI 输出格式",
-            output_format_options,
-            index=output_format_options.index(current_output_format) if current_output_format in output_format_options else 0,
-        )
-        cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
-        cfg["idle_timeout_seconds"] = st.number_input(
-            "空闲超时秒数",
-            min_value=0,
-            value=int(cfg.get("idle_timeout_seconds", 0) or 0),
-            step=30,
-            help="超过该时间没有 stdout/stderr 输出即中止；0 表示关闭空闲超时。",
-        )
-        cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
-        retry_backoff = cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900])
-        if isinstance(retry_backoff, list):
-            retry_backoff_text = ",".join(str(int(x) if float(x).is_integer() else x) for x in retry_backoff)
-        else:
-            retry_backoff_text = str(retry_backoff)
-        retry_text = st.text_input("错误退避序列", value=retry_backoff_text, help="逗号分隔秒数，用于 429、容量不足、Premature close、超时等错误。")
-        cfg["retry_backoff_seconds"] = [float(x.strip()) for x in retry_text.split(",") if x.strip()]
-        cfg["retry_jitter_ratio"] = st.number_input("退避 jitter 比例", min_value=0.0, max_value=1.0, value=float(cfg.get("retry_jitter_ratio", 0.2)), step=0.05)
-        cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
-        cfg["save_raw_cli_io"] = st.toggle("保存 CLI 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
-        cfg["fallback_to_single_on_batch_error"] = st.toggle(
-            "批量失败后拆小批/逐只复评（同一模型）",
-            value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
-        )
-        cfg["stop_on_rate_limit"] = st.toggle("重试耗尽后命中限流则停止", value=bool(cfg.get("stop_on_rate_limit", False)))
-
-    with st.expander("经典图形匹配", expanded=True):
-        cfg = render_classic_pattern_config(cfg, "cli_review")
-
-    with st.expander("路径配置"):
-        p1, p2 = st.columns(2)
-        with p1:
-            cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
-            cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
-            cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
-        with p2:
-            cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review")))
-            cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
-            cfg["raw_log_dir"] = st.text_input("CLI 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 data/review/{pick_date}/gemini_cli_runs。")
-
-    st.markdown(
-        "<div class='panel-note'>batch_size 默认 5；Gemini CLI 会在图片目录运行并引用本地 @图片文件；stream-json 原始输出会写入单独 raw log 目录，主运行日志只显示摘要。</div>",
-        unsafe_allow_html=True,
-    )
-    st.session_state.review_cfg = cfg
+    st.warning("未知复评模型，已切换到 Gemini 3.5 Flash High。")
+    run_cfg["reviewer"] = GEMINI_35_FLASH_HIGH
+    st.session_state.run_cfg = run_cfg
 
 
 def result_rows_from_candidates(
@@ -2117,20 +2208,21 @@ def result_center_dates() -> list[str]:
     latest = latest_pick_date()
     if latest:
         dates.add(latest)
-    agy_base = review_base_dir(AGY_REVIEW_SOURCE)
-    if agy_base.exists():
-        dates.update(
-            p.name
-            for p in agy_base.iterdir()
-            if p.is_dir() and review_source_has_data(p.name, AGY_REVIEW_SOURCE)
-        )
-    codex_base = review_base_dir(CODEX_REVIEW_SOURCE)
-    if codex_base.exists():
-        dates.update(
-            p.name
-            for p in codex_base.iterdir()
-            if p.is_dir() and review_source_has_data(p.name, CODEX_REVIEW_SOURCE)
-        )
+    for source in (
+        GEMINI_35_FLASH_HIGH,
+        GEMINI_31_PRO_HIGH,
+        GPT_55_HIGH,
+        AGY_REVIEW_SOURCE,
+        LEGACY_AGY_REVIEW_SOURCE,
+        CODEX_REVIEW_SOURCE,
+    ):
+        base = review_base_dir(source)
+        if base.exists():
+            dates.update(
+                p.name
+                for p in base.iterdir()
+                if p.is_dir() and review_source_has_data(p.name, source)
+            )
     return sorted(dates, reverse=True)
 
 

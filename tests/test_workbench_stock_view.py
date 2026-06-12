@@ -153,7 +153,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 sources = workbench_app.review_sources_for_date("2026-06-04")
                 rows = workbench_app.result_rows_for_date(
                     "2026-06-04",
-                    workbench_app.AGY_REVIEW_SOURCE,
+                    workbench_app.LEGACY_AGY_REVIEW_SOURCE,
                 )
             finally:
                 workbench_app.ROOT = old_root
@@ -161,7 +161,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 workbench_app.st = old_st
 
         self.assertEqual(dates, ["2026-06-04"])
-        self.assertEqual(sources, [workbench_app.AGY_REVIEW_SOURCE])
+        self.assertEqual(sources, [workbench_app.LEGACY_AGY_REVIEW_SOURCE])
         self.assertEqual(rows[0]["代码"], "300001")
         self.assertEqual(rows[0]["复评状态"], "推荐")
         self.assertEqual(rows[0]["结论"], "PASS")
@@ -180,7 +180,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 workbench_app.st = SimpleNamespace(session_state=SessionDict())
                 rows = workbench_app.stock_view_rows_for_date(
                     "2026-06-04",
-                    workbench_app.AGY_REVIEW_SOURCE,
+                    workbench_app.LEGACY_AGY_REVIEW_SOURCE,
                 )
             finally:
                 workbench_app.ROOT = old_root
@@ -189,7 +189,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["code"], "300001")
         self.assertEqual(rows[0]["review"]["reviewer"], "agy-cli-experimental")
-        self.assertEqual(rows[0]["review_source"], workbench_app.AGY_REVIEW_SOURCE)
+        self.assertEqual(rows[0]["review_source"], workbench_app.LEGACY_AGY_REVIEW_SOURCE)
         self.assertEqual(rows[0]["status"], "recommended")
         self.assertEqual(rows[0]["rank"], 1)
 
@@ -227,27 +227,28 @@ class WorkbenchStockViewTests(unittest.TestCase):
             session = SessionDict(
                 {
                     "run_cfg": {"reviewer": "gemini-cli"},
-                    "agy_review_cfg": {"output_dir": "data/review/agy_cli_experimental"},
+                    "agy_review_cfg": {"output_dir": "data/review/agy_cli"},
                     "codex_review_cfg": {"output_dir": "data/review/codex_cli"},
+                    "multi_model_review_cfg": {},
                 }
             )
             workbench_app.st = SimpleNamespace(session_state=session)
-            gemini_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-gemini"))
-            session["run_cfg"] = {"reviewer": "agy-cli-experimental"}
+            legacy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-legacy"))
+            session["run_cfg"] = {"reviewer": workbench_app.GEMINI_31_PRO_HIGH}
             agy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-agy"))
-            session["run_cfg"] = {"reviewer": "codex-cli"}
+            session["run_cfg"] = {"reviewer": workbench_app.GPT_55_HIGH}
             codex_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-codex"))
             session["run_cfg"] = {"reviewer": "multi-model"}
             multi_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-multi"))
         finally:
             workbench_app.st = old_st
 
-        self.assertEqual(gemini_steps[0][0], "Gemini CLI 复评")
-        self.assertIn("agent/gemini_cli_review.py", gemini_steps[0][1])
-        self.assertEqual(agy_steps[0][0], "AGY CLI 实验复评")
+        self.assertEqual(legacy_steps[0][0], "Gemini 3.5 Flash High 复评")
+        self.assertIn("agent/agy_cli_review.py", legacy_steps[0][1])
+        self.assertEqual(agy_steps[0][0], "Gemini 3.1 Pro High 复评")
         self.assertIn("agent/agy_cli_review.py", agy_steps[0][1])
         self.assertEqual(len(agy_steps), 1)
-        self.assertEqual(codex_steps[0][0], "Codex GPT-5.5 复评")
+        self.assertEqual(codex_steps[0][0], "GPT-5.5 High 复评")
         self.assertIn("agent/codex_cli_review.py", codex_steps[0][1])
         self.assertEqual(len(codex_steps), 1)
         self.assertEqual(multi_steps[0][0], "多模型复评与共识汇总")
@@ -261,14 +262,40 @@ class WorkbenchStockViewTests(unittest.TestCase):
             workbench_app.st = SimpleNamespace(session_state=session)
 
             workbench_app.ensure_reviewer_widget_state()
-            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "gemini-cli")
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], workbench_app.GEMINI_35_FLASH_HIGH)
 
-            session[workbench_app.REVIEWER_WIDGET_KEY] = "agy-cli-experimental"
+            session[workbench_app.REVIEWER_WIDGET_KEY] = workbench_app.GEMINI_31_PRO_HIGH
             workbench_app.sync_reviewer_from_widget()
             workbench_app.ensure_reviewer_widget_state()
 
-            self.assertEqual(session["run_cfg"]["reviewer"], "agy-cli-experimental")
-            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "agy-cli-experimental")
+            self.assertEqual(session["run_cfg"]["reviewer"], workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], workbench_app.GEMINI_31_PRO_HIGH)
+        finally:
+            workbench_app.st = old_st
+
+    def test_snapshot_reviewer_configs_map_model_to_backend(self) -> None:
+        old_st = workbench_app.st
+        try:
+            session = SessionDict(
+                {
+                    "agy_review_cfg": {"agy_bin": "agy"},
+                    "codex_review_cfg": {"codex_bin": "codex"},
+                    "multi_model_review_cfg": {},
+                }
+            )
+            workbench_app.st = SimpleNamespace(session_state=session)
+
+            agy_cfg, codex_cfg, _ = workbench_app.snapshot_reviewer_configs(workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(agy_cfg["model_key"], workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(agy_cfg["model"], "Gemini 3.1 Pro (High)")
+            self.assertEqual(agy_cfg["output_dir"], f"data/review_models/{workbench_app.GEMINI_31_PRO_HIGH}")
+            self.assertNotIn("model_key", codex_cfg)
+
+            agy_cfg, codex_cfg, _ = workbench_app.snapshot_reviewer_configs(workbench_app.GPT_55_HIGH)
+            self.assertEqual(codex_cfg["model_key"], workbench_app.GPT_55_HIGH)
+            self.assertEqual(codex_cfg["model"], "gpt-5.5")
+            self.assertEqual(codex_cfg["output_dir"], f"data/review_models/{workbench_app.GPT_55_HIGH}")
+            self.assertNotIn("model_key", agy_cfg)
         finally:
             workbench_app.st = old_st
 
@@ -343,14 +370,14 @@ class WorkbenchStockViewTests(unittest.TestCase):
             newer = runs_dir / "2026-06-12_agy_resume_consensus"
             logs = newer / "multi_model_logs"
             logs.mkdir(parents=True)
-            (logs / "agy-cli-experimental__gemini-3.5-flash-high.log").write_text(
-                "[INFO] AGY 实验复评完成：成功 136 支，失败/跳过 0 支\n",
+            (logs / "agy-cli__gemini-3.5-flash-high.log").write_text(
+                "[INFO] AGY 复评完成：成功 136 支，失败/跳过 0 支\n",
                 encoding="utf-8",
             )
             os.utime(stale / "run.log", (1000, 1000))
             os.utime(stale / "run_state.json", (1000, 1000))
             os.utime(stale, (1000, 1000))
-            os.utime(logs / "agy-cli-experimental__gemini-3.5-flash-high.log", (2000, 2000))
+            os.utime(logs / "agy-cli__gemini-3.5-flash-high.log", (2000, 2000))
             os.utime(newer, (2000, 2000))
 
             session = SessionDict({"last_run_dir": str(stale)})
@@ -390,54 +417,81 @@ class WorkbenchStockViewTests(unittest.TestCase):
     def test_multi_model_progress_rows_keep_latest_status_per_model(self) -> None:
         log_text = "\n".join(
             [
-                "[2026-06-11 10:00:00] [CONFIG] gemini-cli/gemini-3.1-pro-preview -> /tmp/gemini.yaml",
-                "[2026-06-11 10:00:00] [CONFIG] codex-cli/gpt-5.5-high-standard -> /tmp/codex.yaml",
-                "[2026-06-11 10:00:01] [START] [gemini-cli] 启动 gemini-cli/gemini-3.1-pro-preview",
-                "[2026-06-11 10:00:01] [START] [codex-cli] 启动 codex-cli/gpt-5.5-high-standard",
+                "[2026-06-11 10:00:00] [CONFIG] gemini-3.1-pro-high -> /tmp/gemini.yaml",
+                "[2026-06-11 10:00:00] [CONFIG] gpt-5.5-high -> /tmp/codex.yaml",
+                "[2026-06-11 10:00:01] [START] [gemini-3.1-pro-high] 启动 gemini-3.1-pro-high",
+                "[2026-06-11 10:00:01] [START] [gpt-5.5-high] 启动 gpt-5.5-high",
                 "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
-                "  [codex-cli]",
-                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=30s, progress=处理到 5/104 (5%), latest=[1-5/104] codex batch",
-                "  [gemini-cli]",
-                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "  [gpt-5.5-high]",
+                "    - gpt-5.5-high: running, elapsed=30s, progress=处理到 5/104 (5%), latest=[1-5/104] codex batch",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
                 "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
-                "  [codex-cli]",
-                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=1m00s, progress=处理到 15/104 (14%), latest=[11-15/104] codex batch",
-                "  [gemini-cli]",
-                "    - gemini-cli/gemini-3.1-pro-preview: finished, exit=0, elapsed=1m00s, progress=成功 107/136，失败/跳过 29 (100%), latest=[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
+                "  [gpt-5.5-high]",
+                "    - gpt-5.5-high: running, elapsed=1m00s, progress=处理到 15/104 (14%), latest=[11-15/104] codex batch",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: finished, exit=0, elapsed=1m00s, progress=成功 107/136，失败/跳过 29 (100%), latest=[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
             ]
         )
 
         rows = workbench_app.multi_model_progress_rows(log_text)
         by_key = {row["key"]: row for row in rows}
 
-        self.assertEqual(rows[0]["key"], "gemini-cli/gemini-3.1-pro-preview")
-        self.assertEqual(rows[1]["key"], "codex-cli/gpt-5.5-high-standard")
-        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["status_label"], "完成")
-        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["count_text"], "成功 107/136，失败/跳过 29")
-        self.assertEqual(by_key["gemini-cli/gemini-3.1-pro-preview"]["percent"], 100)
-        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["status_label"], "运行中")
-        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["count_text"], "处理到 15/104")
-        self.assertEqual(by_key["codex-cli/gpt-5.5-high-standard"]["percent"], 14)
+        self.assertEqual(rows[0]["key"], "gemini-3.1-pro-high")
+        self.assertEqual(rows[1]["key"], "gpt-5.5-high")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["status_label"], "完成")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["count_text"], "成功 107/136，失败/跳过 29")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["percent"], 100)
+        self.assertEqual(by_key["gpt-5.5-high"]["status_label"], "运行中")
+        self.assertEqual(by_key["gpt-5.5-high"]["count_text"], "处理到 15/104")
+        self.assertEqual(by_key["gpt-5.5-high"]["percent"], 14)
+
+    def test_multi_model_progress_rows_normalize_tool_prefixed_keys_to_models(self) -> None:
+        log_text = "\n".join(
+            [
+                "[2026-06-11 10:00:00] [CONFIG] agy-cli-experimental/gemini-3.5-flash-high -> /tmp/agy.yaml",
+                "[2026-06-11 10:00:00] [CONFIG] codex-cli/gpt-5.5-high-standard -> /tmp/codex.yaml",
+                "[2026-06-11 10:00:01] [START] [agy-cli-experimental] 启动 agy-cli-experimental/gemini-3.5-flash-high",
+                "[2026-06-11 10:00:01] [START] [codex-cli] 启动 codex-cli/gpt-5.5-high-standard",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [agy-cli-experimental]",
+                "    - agy-cli-experimental/gemini-3.5-flash-high: running, elapsed=30s, progress=处理到 5/136 (4%), latest=[1-5/136] agy batch",
+                "  [codex-cli]",
+                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=30s, progress=处理到 5/136 (4%), latest=[1-5/136] codex batch",
+            ]
+        )
+
+        rows = workbench_app.multi_model_progress_rows(log_text)
+        by_key = {row["key"]: row for row in rows}
+        html = workbench_app.multi_model_progress_html(rows)
+
+        self.assertEqual([row["key"] for row in rows], [workbench_app.GEMINI_35_FLASH_HIGH, workbench_app.GPT_55_HIGH])
+        self.assertEqual(by_key[workbench_app.GEMINI_35_FLASH_HIGH]["display_key"], "Gemini 3.5 Flash High")
+        self.assertEqual(by_key[workbench_app.GPT_55_HIGH]["display_key"], "GPT-5.5 High")
+        self.assertIn("Gemini 3.5 Flash High", html)
+        self.assertIn("GPT-5.5 High", html)
+        self.assertNotIn("agy-cli-experimental/gemini-3.5-flash-high", html)
+        self.assertNotIn("codex-cli/gpt-5.5-high-standard", html)
 
     def test_compact_run_log_for_display_removes_repeated_multi_model_progress_blocks(self) -> None:
         log_text = "\n".join(
             [
                 "[Step] 多模型复评与共识汇总",
-                "[2026-06-11 10:00:01] [START] [gemini-cli] 启动 gemini-cli/gemini-3.1-pro-preview",
+                "[2026-06-11 10:00:01] [START] [gemini-3.1-pro-high] 启动 gemini-3.1-pro-high",
                 "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
-                "  [gemini-cli]",
-                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
                 "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
-                "  [gemini-cli]",
-                "    - gemini-cli/gemini-3.1-pro-preview: running, elapsed=1m00s, progress=处理到 20/104 (19%), latest=[16-20/104] gemini batch",
-                "[2026-06-11 10:01:02] [DONE] [gemini-cli] gemini-cli/gemini-3.1-pro-preview 结束",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=1m00s, progress=处理到 20/104 (19%), latest=[16-20/104] gemini batch",
+                "[2026-06-11 10:01:02] [DONE] [gemini-3.1-pro-high] gemini-3.1-pro-high 结束",
             ]
         )
 
         compacted = workbench_app.compact_run_log_for_display(log_text)
 
         self.assertIn("[Step] 多模型复评与共识汇总", compacted)
-        self.assertIn("[DONE] [gemini-cli] gemini-cli/gemini-3.1-pro-preview 结束", compacted)
+        self.assertIn("[DONE] [gemini-3.1-pro-high] gemini-3.1-pro-high 结束", compacted)
         self.assertNotIn("多模型复评进度 attempt=1", compacted)
         self.assertNotIn("progress=处理到 10/104", compacted)
         self.assertNotIn("progress=处理到 20/104", compacted)
@@ -446,15 +500,17 @@ class WorkbenchStockViewTests(unittest.TestCase):
         html = workbench_app.multi_model_progress_html(
             [
                 {
-                    "key": "gemini-cli/gemini-3.1-pro-preview",
+                    "key": "gemini-3.1-pro-high",
                     "status_label": "运行中",
-                    "count_text": "5/136",
+                    "count_text": "成功 157/157，失败/跳过 0",
                     "percent": 4,
                     "elapsed": "30s",
                 }
             ]
         )
 
+        self.assertIn("minmax(128px, 180px) 64px minmax(168px, max-content)", html)
+        self.assertIn("成功 157/157，失败/跳过 0", html)
         self.assertIn('<div class="review-progress-row">', html)
         self.assertNotRegex(html, r"\n\s{4,}<div class=\"review-progress-row\"")
         self.assertNotIn("&lt;div class=&quot;review-progress-row&quot;", html)

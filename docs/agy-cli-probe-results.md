@@ -1,6 +1,8 @@
 # AGY CLI 探针结果
 
-状态：Phase 1/2 回归中，日期 2026-06-05；AGY 已升级到 1.0.5 并支持 per-call `--model`。
+状态：历史探针记录，日期 2026-06-05；AGY 已升级到 1.0.5 并支持 per-call `--model`。
+
+> 2026-06-12 当前口径：AGY 已成为默认 Google 订阅登录复评路径，默认多模型中的两个 Gemini 模型都通过 AGY 执行。本文保留早期探针证据。
 
 ## 运行命令
 
@@ -62,7 +64,7 @@ AGY 1.0.1 已解除上一轮认证硬阻断；1.0.5 需要继续用探针观察�
 - repair 只是模型正文修复，不是 AGY CLI 原生结构化输出；结果会标记 `json_output_mode=prompt-json`。
 - 小批量 JSON 成功率仍需用真实候选继续验证。
 
-因此当前可以进入显式实验 reviewer，并能通过 `--model` 控制模型；在小批量 prompt-json 稳定性通过前，不能作为默认生产复评入口。
+因此当前 AGY 已可作为正式 Google 模型执行后端，并能通过 `--model` 控制模型；结果仍需保留 prompt-json 元数据，便于排查非原生结构化输出带来的解析风险。
 
 ## 下一步
 
@@ -89,7 +91,7 @@ AGY 1.0.1 已解除上一轮认证硬阻断；1.0.5 需要继续用探针观察�
      --image-probe-timeout 120
    ```
 
-4. 单股实验 reviewer 已新增，可用一支股票 smoke test：
+4. AGY reviewer 已新增，可用一支股票 smoke test：
 
    ```bash
    python3 agent/agy_cli_review.py --limit 1 --model "Gemini 3.5 Flash (Medium)"

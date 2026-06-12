@@ -1,11 +1,9 @@
 # Gemini CLI 复评方案
 
 本文档描述将当前项目的 Gemini API 复评环节扩展为 Gemini CLI 复评的方案。
-当前实现已把 `run_all.py` 的默认复评方式切换为 Gemini CLI，并保留 Gemini API
-作为显式兼容模式。
+这是历史方案文档。2026-06-12 起，`run_all.py` 和 Workbench 默认 Google 订阅登录复评路径已切换为 AGY CLI；Gemini CLI 仅作为历史兼容脚本保留，不再进入默认多模型配置。
 
-> AGY 迁移探索：Antigravity CLI 1.0.5 已支持 per-call `--model`，当前实验 reviewer
-> 见 [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
+> AGY 路径见 [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
 
 ## 背景
 

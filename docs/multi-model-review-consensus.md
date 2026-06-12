@@ -4,11 +4,11 @@
 
 ## Goal
 
-多模型复评用于把同一批候选股票交给多个 reviewer 独立打分，最终优先选择所有模型都推荐的股票。当前默认模型组合：
+多模型复评用于把同一批候选股票交给多个模型独立打分，最终优先选择所有模型都推荐的股票。执行后端只是运行载体，当前默认模型组合：
 
-- Gemini CLI: `gemini-3.1-pro-preview`
-- AGY CLI: `Gemini 3.5 Flash (High)`，默认 `required=true`，作为第三路正式复评模型
-- Codex CLI: `gpt-5.5`，`reasoning_effort=high`，标准速度路径
+- `gemini-3.5-flash-high`：AGY CLI 执行，后端模型名 `Gemini 3.5 Flash (High)`
+- `gemini-3.1-pro-high`：AGY CLI 执行，后端模型名 `Gemini 3.1 Pro (High)`
+- `gpt-5.5-high`：Codex CLI 执行，`gpt-5.5` + `reasoning_effort=high`
 
 推荐阈值不再使用单一全局 `4.0`。评分归一化仍由 `BaseReviewer.normalize_scores()` 完成，但现在分成三层：公共条件 gate、策略 profile 评分、共识汇总评分。
 
@@ -21,12 +21,12 @@ flowchart TD
     A["candidates_latest.json"] --> B["freeze_review_batch"]
     B --> C["data/review_batches/{batch_id}/candidates.json"]
     C --> S["按 strategy 分组"]
-    S --> D1["Gemini CLI reviewer"]
-    S --> D2["AGY CLI reviewer"]
-    S --> D3["Codex CLI reviewer"]
-    D1 --> E1["data/review_runs/{batch_id}/gemini-cli/{model}/{pick_date}"]
-    D2 --> E2["data/review_runs/{batch_id}/agy-cli-experimental/{model}/{pick_date}"]
-    D3 --> E3["data/review_runs/{batch_id}/codex-cli/{model}/{pick_date}"]
+    S --> D1["model: gemini-3.5-flash-high"]
+    S --> D2["model: gemini-3.1-pro-high"]
+    S --> D3["model: gpt-5.5-high"]
+    D1 --> E1["AGY backend -> data/review_runs/{batch_id}/agy-cli/gemini-3.5-flash-high/{pick_date}"]
+    D2 --> E2["AGY backend -> data/review_runs/{batch_id}/agy-cli/gemini-3.1-pro-high/{pick_date}"]
+    D3 --> E3["Codex backend -> data/review_runs/{batch_id}/codex-cli/gpt-5.5-high-standard/{pick_date}"]
     E1 --> F["build_consensus"]
     E2 --> F
     E3 --> F
@@ -54,7 +54,7 @@ python agent/multi_model_review.py --config config/multi_model_review.yaml
 python agent/multi_model_review.py --run-dir data/runs/<run_id>
 ```
 
-多模型之间并行执行；每个工具内部按批串行处理，默认 `batch_size: 5`。各 reviewer 会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。各 reviewer 写入独立目录，不覆盖正式 Gemini CLI 结果。
+多模型按执行组调度：不同 backend 可以并行，例如 Codex 可与一个 AGY 模型同时跑；同一 backend 默认串行，避免两个 AGY `--print` 进程同时争用 `~/.gemini/antigravity-cli` 的 OAuth、keyring、全局日志和本地 server 状态。同一模型内部按批串行处理，默认 `batch_size: 5`。各 reviewer 后端会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。结果按执行后端和 `model_profile` 写入独立目录；共识 summary、进度日志和 Workbench 筛选使用 `model_key`，也就是纯模型 ID。
 
 运行日志中的 `[x/y]` 表示“处理到第 x 个候选”，不等于成功生成了 x 个有效结果。模型日志出现最终汇总行后，多模型进度会优先展示 `成功 X/Y，失败/跳过 Z`，用于区分完成进度和有效结果数量。
 
@@ -66,7 +66,7 @@ python agent/multi_model_review.py --run-dir data/runs/<run_id>
 - AGY 默认 `print_timeout=3m`、`timeout_seconds=180`。子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时在多个拆分批次上反复等待。
 - Codex 正式路径默认锁定 `gpt-5.5`、`reasoning_effort=high`、标准速度；如需临时试验非 5.5，必须显式 `force_fixed_model: false`，并且不能作为正式降级替换。
 
-进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。Gemini、AGY、Codex 任一路正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。
+进程失败会写入 `data/runs/<run_id>/multi_model_logs/*.log`，共识 summary 中的 `review_runs` 会记录 exit code、日志路径、失败摘要和是否重跑恢复。任一正式模型最终失败时，多模型命令返回非零退出码；已经生成的部分结果可用于排障，但 `complete=false` 或 `incomplete` 结果不能作为最终交易决策。
 
 ## Strategy Review Scoring
 
@@ -151,7 +151,7 @@ export CODEX_OPENAI_API_KEY=<ccswitch-api-key>
 - `data/review_runs/{batch_id}/codex-cli/{profile}/{pick_date}/codex_cli_runs/*/stderr.txt`
 - `data/runs/{run_id}/multi_model_logs/codex-cli__{profile}.log`
 
-Workbench 的“复评配置”页在单独选择 Codex reviewer 时会显示完整 Codex 调用模式配置；在“多模型复评”模式下也会显示“Codex 子模型调用模式”，用于写入本次 run snapshot。
+Workbench 的“复评配置”页按模型提供选择；选择 `gpt-5.5-high` 时会显示完整 Codex 调用模式配置，在“三模型共识”模式下也会显示“Codex 子模型调用模式”，用于写入本次 run snapshot。
 
 如果 stderr 中出现 `401 Unauthorized`、`Invalid API key`、`Incorrect API key provided`，且请求地址是 `http://127.0.0.1:8317/v1/...`，说明本次 Codex 子进程仍在走旧的本地代理/API-key provider。先检查当前基础配置和 run snapshot 里的 `codex_cli_review.yaml`，确认 `auth_mode: local_oauth`、`env_provider_enabled: false`、`ignore_user_config: false`。如果错误来自原生 Codex OAuth 登录态，则重新执行 `codex login` 或在 Codex App 里重新登录后重跑。
 
@@ -223,4 +223,4 @@ Workbench 新增：
 
 ## Backtest Plan
 
-实现稳定后，可固定某个选股日期重新跑基础候选，再分别汇总 Gemini CLI、AGY、Codex 和全票共识的推荐结果，用后续 K 线计算胜率、平均收益、最大回撤和分策略表现。
+实现稳定后，可固定某个选股日期重新跑基础候选，再分别汇总 `gemini-3.5-flash-high`、`gemini-3.1-pro-high`、`gpt-5.5-high` 和全票共识的推荐结果，用后续 K 线计算胜率、平均收益、最大回撤和分策略表现。

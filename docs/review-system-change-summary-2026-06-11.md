@@ -53,16 +53,16 @@
 
 - [agent/multi_model_review.py](../agent/multi_model_review.py) 负责：
   - 冻结候选批次。
-  - 并行调度多个 reviewer。
+  - 按执行组调度 reviewer：不同 backend 可并行，同一 backend 串行，避免 AGY 并发争用本机 OAuth/keyring/日志状态。
   - 强制 `no_model_substitution`。
   - 首轮失败后按原模型 rerun 一次。
   - 写入进度快照、日志路径和失败摘要。
   - 共识完成后自动触发 Z 质量层。
 - [pipeline/review_consensus.py](../pipeline/review_consensus.py) 生成股票粒度 `decisions` 与模型粒度 `details`。
 - [config/multi_model_review.yaml](../config/multi_model_review.yaml) 当前默认模型：
-  - Gemini CLI：`gemini-3.1-pro-preview`
-  - AGY CLI：`Gemini 3.5 Flash (High)`，第三路正式复评模型
-  - Codex CLI：`gpt-5.5`，`reasoning_effort=high`，标准速度路径
+  - `gemini-3.5-flash-high`：AGY CLI 执行，后端模型名 `Gemini 3.5 Flash (High)`
+  - `gemini-3.1-pro-high`：AGY CLI 执行，后端模型名 `Gemini 3.1 Pro (High)`
+  - `gpt-5.5-high`：Codex CLI 执行，`gpt-5.5` + `reasoning_effort=high`
 - [docs/multi-model-review-consensus.md](multi-model-review-consensus.md) 是多模型流程的主说明文档。
 
 ### AGY CLI
@@ -75,7 +75,7 @@
 - AGY 默认 `print_timeout=3m`、`timeout_seconds=180`；子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时反复等待。
 - AGY 非交互 `--print` 默认 `stdin_mode=devnull`，避免等待 stdin EOF；`stdin_mode=pipe` 仅用于显式授权码转发。
 - `dangerously_skip_permissions` 作为显式配置保留但默认关闭，不自动绕过 AGY 权限确认。
-- AGY CLI 当前仍沿用实验 reviewer 实现，但在多模型正式流程中是第三路必需模型；不可用、超时或缺失时应记录失败原因并补跑，不能从正式共识中排除。
+- AGY CLI 当前是 Google 订阅登录模型的默认执行后端；不可用、超时或缺失时应记录失败原因并补跑，不能从正式共识中排除。
 - 相关调研见：
   - [docs/agy-cli-auth-research.md](agy-cli-auth-research.md)
   - [docs/agy-cli-review-migration-exploration-plan.md](agy-cli-review-migration-exploration-plan.md)
@@ -92,9 +92,9 @@
   - `env_provider_enabled: false`
   - 默认读取 `~/.codex/config.toml` / `~/.codex/auth.json`
   - 默认从子进程环境剥离 `CODEX_OPENAI_*` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_API_BASE`
-- Workbench 复评配置页已开放 Codex 调用模式：
-  - 单独 Codex reviewer：显示完整“Codex 调用模式”
-  - 多模型复评：显示“Codex 子模型调用模式”，用于写入本次 run snapshot
+- Workbench 复评配置页按模型提供选择：
+  - 选择 `gpt-5.5-high`：显示完整“Codex 调用模式”
+  - 三模型共识：显示“Codex 子模型调用模式”，用于写入本次 run snapshot
 - 认证错误会归类为 `CodexCliAuthError`，避免表现成长期卡在 0% 或 1%。
 
 旧的 OpenAI-compatible 本地代理路径仍保留为显式兼容模式：

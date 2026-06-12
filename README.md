@@ -5,7 +5,7 @@
 - 使用 Tushare 拉取股票日线数据
 - 用量化规则做初选，当前主策略为 `b1`、`b2`、`brick`
 - 导出候选股票 K 线图
-- 调用 Gemini CLI、AGY CLI、Codex CLI 对图表进行 AI 复评打分
+- 调用 AGY CLI、Codex CLI 对图表进行 AI 复评打分
 - 用策略化评分和多模型共识筛出高质量候选
 - 在本地 Workbench 中复盘、筛选，并导出到通达信自定义板块
 
@@ -15,7 +15,7 @@
 
 - 主线从“单 Gemini 复评”升级为“候选冻结 -> 多模型复评 -> 共识结果 -> 通达信导入”。
 - AI 复评使用评分体系 V3：公共交易 gate + 分策略 profile + 本地归一化。
-- 多模型复评默认运行 Gemini 3.1 Pro Preview、AGY Gemini 3.5 Flash High、Codex GPT-5.5 High Standard，三路都作为正式必需模型参与共识。
+- 多模型复评默认以模型为维度运行 `gemini-3.5-flash-high`、`gemini-3.1-pro-high`、`gpt-5.5-high` 三路；两个 Gemini 模型都通过 AGY 执行，Codex 模型通过 Codex CLI 执行。
 - 多模型模式禁止模型静默替换或降级；模型失败时记录原因，并按原模型断点重跑一次。
 - `run_all.py` 仍保留轻量单 reviewer 流程；完整多模型流程建议使用 Workbench 或 `agent/multi_model_review.py`。
 - 当前分支改动总览见 [docs/review-system-change-summary-2026-06-11.md](docs/review-system-change-summary-2026-06-11.md)。
@@ -29,7 +29,7 @@
 1. 下载 K 线数据（pipeline.fetch_kline）
 2. 量化初选（pipeline.cli preselect）
 3. 导出候选图表（dashboard/export_kline_charts.py）
-4. 单 reviewer 图表复评（默认 Gemini CLI）
+4. 单 reviewer 图表复评（默认 AGY CLI）
 5. 打印推荐结果（读取 suggestion.json）
 
 Workbench 多模型流程：
@@ -96,9 +96,7 @@ Windows PowerShell（永久写入）：
 ~~~
 
 写入后请重开终端，环境变量才会在新会话中生效。
-Gemini CLI 复评需要先在本机完成 `gemini` 登录；如果要使用旧的 Gemini API
-复评方式，再额外设置 `GEMINI_API_KEY`。
-AGY reviewer 需要本机已安装并登录 `agy`。Codex reviewer 需要本机可执行 `codex` CLI。
+AGY reviewer 需要本机已安装并登录 `agy`。Codex reviewer 需要本机可执行 `codex` CLI。如果要使用旧的 Gemini API 复评方式，再额外设置 `GEMINI_API_KEY`。
 
 ### 3.4 运行一键脚本
 
@@ -114,7 +112,6 @@ python run_all.py
 python run_all.py --skip-fetch
 python run_all.py --start-from 3
 python run_all.py --reviewer gemini-api
-python run_all.py --reviewer agy-cli-experimental
 python run_all.py --skip-review
 ~~~
 
@@ -122,7 +119,7 @@ python run_all.py --skip-review
 
 - --skip-fetch：跳过数据下载，直接进入初选
 - --start-from N：从第 N 步开始执行（1 到 4）
-- --reviewer：选择单 reviewer 复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY
+- --reviewer：选择单 reviewer 复评后端，默认 agy-cli；gemini-api 使用 GEMINI_API_KEY
 - --skip-review：跳过复评，直接打印已有 suggestion.json
 
 ### 3.5 启动 Workbench
@@ -136,7 +133,7 @@ bash start_workbench
 Workbench 适合日常使用：
 
 - 运行中心：配置并执行抓取、初选、导图、复评
-- 复评配置：选择 Gemini、AGY、Codex 或多模型复评
+- 复评配置：按模型选择 Gemini 3.5 Flash High、Gemini 3.1 Pro High、GPT-5.5 High 或三模型共识
 - 结果中心：查看正式单 reviewer 结果
 - 共识结果：查看多模型共识、分歧和模型明细
 - 通达信导入：导出正式结果或共识筛选结果
@@ -185,30 +182,28 @@ python dashboard/export_kline_charts.py
 
 输出到 data/kline/选股日期，图像命名为 代码_day.jpg。
 
-### 步骤 4：Gemini CLI 图表复评
+### 步骤 4：AGY CLI 图表复评
 
 ~~~bash
-python agent/gemini_cli_review.py
+python agent/agy_cli_review.py
 ~~~
 
 可选参数示例：
 
 ~~~bash
-python agent/gemini_cli_review.py --config config/gemini_cli_review.yaml
+python agent/agy_cli_review.py --config config/agy_cli_review.yaml
 python agent/gemini_review.py --config config/gemini_review.yaml
-python agent/agy_cli_review.py --config config/agy_cli_review.yaml --limit 1
 python agent/codex_cli_review.py --config config/codex_cli_review.yaml
 python agent/multi_model_review.py --config config/multi_model_review.yaml
 python agent/z_quality_review.py --config config/z_quality_rules.yaml
 ~~~
 
-Gemini CLI 配置见 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml)。
+AGY 复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认使用 `Gemini 3.5 Flash (High)`，输出到 `data/review/agy_cli`。AGY 目前没有 `--output-format json/stream-json`，项目使用 prompt 级 JSON、本地 schema 校验和一次 JSON repair。
 旧 API Key 模式配置见 [config/gemini_review.yaml](config/gemini_review.yaml)。
-AGY 实验复评配置见 [config/agy_cli_review.yaml](config/agy_cli_review.yaml)，默认输出到隔离目录 `data/review/agy_cli_experimental`。AGY 1.0.5 目前没有 `--output-format json/stream-json`，实验路径使用 prompt 级 JSON、本地 schema 校验和一次 JSON repair，不作为默认生产复评入口。
 Codex CLI 配置见 [config/codex_cli_review.yaml](config/codex_cli_review.yaml)，默认固定 `gpt-5.5`、`reasoning_effort=high`、标准速度路径。
 多模型配置见 [config/multi_model_review.yaml](config/multi_model_review.yaml)，会冻结候选批次、生成共识结果，并在 `z_quality.enabled=true` 时自动运行 Z 质量裁决。
 Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yaml)，也可单独重跑；默认读取最新共识结果，输出到 `data/z_quality/{batch_id}`。第一版不调用 zettaranc skill 的数据层，只使用本项目共识结果、单股复评 JSON、日线图和 `data/raw` K 线特征；详见 [docs/z-quality-layer.md](docs/z-quality-layer.md)。
-在 workbench 的“复评配置”页面，AGY 模型下拉候选通过“加载/刷新 AGY 模型列表”手动执行 `agy models` 后缓存，名称不做改写；“实验复评上限 max_items”表示本次最多复评前 N 个候选。结果中心和单票复盘可以通过“复评结果源”选择“AGY 实验”查看隔离结果。
+在 workbench 的“复评配置”页面，用户按模型选择复评；两个 Google 模型会自动通过 AGY 执行，GPT 模型会自动通过 Codex CLI 执行。`max_items` 留空表示完整复评，开启限制后可用于 smoke test。结果中心和单票复盘可以通过“复评结果源”按模型查看隔离结果。
 
 读取候选与图表后，输出：
 
@@ -237,13 +232,11 @@ Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yam
 
 ### 5.3 复评层
 
-在 [config/gemini_cli_review.yaml](config/gemini_cli_review.yaml) 中可调整：
+在 [config/agy_cli_review.yaml](config/agy_cli_review.yaml) 中可调整：
 
 - model：模型名称
-- output_format：CLI 输出格式，默认 stream-json
 - request_delay：调用间隔（防限流）
-- idle_timeout_seconds：CLI 无 stdout/stderr 输出时的空闲超时，默认 0 关闭，仅保留 900 秒总超时
-- batch_size：每次 Gemini CLI 请求最多提交几张图，默认 5
+- batch_size：每次 AGY CLI 请求最多提交几张图，默认 5
 - fallback_to_single_on_batch_error：批量 JSON 解析失败时是否使用同一模型拆批并最终逐只复评
 - AGY 的 `print_timeout` / `timeout_seconds` 默认是 `3m` / `180`：子进程总超时按模型级失败记录，交给多模型编排按原模型重跑一次，不进入拆批/单股 fallback
 - save_raw_cli_io / raw_log_dir：保存每次 CLI 调用的原始 prompt、stdout、stderr 和 meta
@@ -260,9 +253,9 @@ Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yam
 - rerun_failed_models_once：失败模型按原模型重跑一次，默认开启
 - z_quality：共识完成后的 Z 质量裁决后处理配置
 - review_scoring：公共 gate、策略 profile 和 PASS/WATCH 门槛
-- reviewers：声明要运行的 reviewer、模型和输出 profile
+- reviewers：声明要运行的模型 ID、执行后端、后端模型名和输出 profile
 
-AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前可用 `run_all.py --reviewer agy-cli-experimental` 或工作台复评配置中的 “AGY CLI（实验）” 显式运行；默认单 reviewer 复评方式仍是 Gemini CLI。
+AGY 迁移探索见 [docs/agy-cli-review-migration-exploration-plan.md](docs/agy-cli-review-migration-exploration-plan.md)。当前默认 Google 订阅登录复评路径是 AGY；Gemini CLI 仅作为历史兼容脚本保留，不再进入默认 Workbench 或多模型配置。
 
 AGY 运行中如果触发 OAuth/Keychain 认证抖动，`auth_recovery_enabled` 默认会暂停当前批次并等待登录态恢复。AGY 非交互 `--print` 默认使用 `stdin_mode: devnull`，避免子进程等待 stdin EOF 导致挂起；只有临时改为 `stdin_mode: pipe` 时，才会把 `auth_recovery_status.json` 中提示的 `auth_code_file` 转发到 AGY stdin。恢复后使用同一模型重试当前批次，不做模型降级。可在 [config/agy_cli_review.yaml](config/agy_cli_review.yaml) 调整等待时长、探测间隔和权限开关。
 

@@ -10,6 +10,16 @@
 2. 是否存在官方支持的免交互方案。
 3. 该问题对 K 线图批量复评迁移是否构成阻断。
 
+## 2026-06-12 当前口径
+
+Gemini CLI 本机 Google 登录服务不可用后，默认 Google 订阅登录复评路径已切换到 AGY。多模型复评不再使用 `gemini-cli` 作为正式模型后端，而是以模型 ID 为维度：
+
+- `gemini-3.5-flash-high` -> AGY CLI `Gemini 3.5 Flash (High)`
+- `gemini-3.1-pro-high` -> AGY CLI `Gemini 3.1 Pro (High)`
+- `gpt-5.5-high` -> Codex CLI `gpt-5.5`
+
+下方早期“继续保留 Gemini CLI 作为默认路径”的结论仅保留为历史记录，已经被本节取代。
+
 ## 2026-06-05 更新结论
 
 AGY CLI 1.0.5 已解除上一轮模型控制阻断。依据：
@@ -48,7 +58,7 @@ AGY CLI 1.0.6 在批量多模型复评中重新暴露出认证不稳定问题。
 2. `AgyCliAuthError` 不进入 JSON repair，因为认证输出不是模型正文，修复 prompt 没有意义。
 3. 批量调用遇到 `AgyCliAuthError` 时，不再拆批、不再逐只 fallback；应让 AGY reviewer 快速失败并保留已成功写出的单股结果，后续依靠 `skip_existing` 断点续跑。
 4. 多模型复评启动前可增加 AGY preflight：用极短 `agy --print` 探针确认本轮 keyring 可用。探针失败时跳过或终止 AGY reviewer，避免进入几百只股票后才连续弹浏览器。
-5. 文档和日志中继续保留 AGY 为实验 reviewer；在官方提供稳定 token/API key/cache 控制前，不做手工 token 保存、授权码转发或二进制 patch。
+5. 文档和日志中将 AGY 作为正式 Google 模型执行后端记录；在官方提供稳定 token/API key/cache 控制前，不做手工 token 保存或二进制 patch。
 
 ## 2026-06-11 运行时恢复机制
 
@@ -194,17 +204,17 @@ Print mode: auth timed out
 1. 输出不可结构化指定：当前未发现 `--output-format json/stream-json`，只能依赖 prompt 级 JSON、本地 schema 校验和一次 JSON repair，失败率需要继续用小批量样本验证。
 2. 认证静默恢复需要每次升级后继续探针回归，避免历史 keyring 超时问题复发。
 
-因此，AGY CLI 已具备显式实验 reviewer 条件，并能通过 `--model` 指定 Gemini 3.5 Flash；在小批量 JSON 稳定性验证通过前，仍不作为默认生产 reviewer。实验结果必须带上 `reviewer=agy-cli-experimental`、`model`、`model_evidence` 和 `json_output_mode=prompt-json`，并保持输出目录隔离。
+因此，AGY CLI 已作为正式 Google 模型执行后端接入，并能通过 `--model` 指定 Gemini 3.5 Flash / Gemini 3.1 Pro。结果带上 `reviewer=agy-cli`、`model`、`model_evidence` 和 `json_output_mode=prompt-json`，单模型输出按模型 ID 隔离，多模型输出按 `review_runs/{batch_id}/agy-cli/{model_profile}` 隔离。
 
 ## 当前可行策略
 
-### 短期生产路径：继续保留 Gemini CLI 作为默认路径
+### 短期生产路径：AGY 承接 Google 订阅登录模型
 
-这是当前最稳的短期路径。AGY 迁移探索以显式实验 reviewer 方式推进，不影响默认 `gemini-cli` 复评。
+当前 Google 订阅登录复评默认走 AGY。Gemini CLI 路径仅作为历史兼容脚本保留，不再进入默认 Workbench 或多模型配置。
 
-### AGY 探索路径：进入实验 reviewer
+### AGY 探索路径：已转为正式 Google 模型执行后端
 
-AGY 分支已满足进入单股实验 reviewer 的前置条件：
+AGY 分支已满足正式接入的前置条件：
 
 - `scripts/agy_cli_probe.py --json-probe-timeout 120` 的 `json_probe_failed=false`。
 - `scripts/agy_cli_probe.py --image-path <真实K线图>` 的 `image_probe_failed=false`。

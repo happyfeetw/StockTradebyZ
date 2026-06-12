@@ -37,7 +37,7 @@ dangerously_skip_permissions: false
 request_delay: 3
 
 # 单次 AGY CLI 请求最多提交几张图。正式多模型流程默认小批量，降低调用频率。
-batch_size: 3
+batch_size: 4
 
 # 本次 AGY 最多复评前 N 个候选；留空表示完整复评。
 max_items:

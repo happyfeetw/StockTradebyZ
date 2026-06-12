@@ -268,7 +268,7 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                 "config": str(base_config),
                 "model": "Gemini 3.1 Pro (High)",
                 "model_profile": "gemini-3.1-pro-high",
-                "batch_size": 3,
+                "batch_size": 4,
                 "print_timeout": "6m",
                 "timeout_seconds": 360,
                 "request_delay": 3,
@@ -288,7 +288,7 @@ class ReviewBatchConsensusTests(unittest.TestCase):
         self.assertEqual(run_spec["execution_backend"], "agy-cli")
         self.assertEqual(runtime_cfg["model"], "Gemini 3.1 Pro (High)")
         self.assertEqual(runtime_cfg["model_key"], "gemini-3.1-pro-high")
-        self.assertEqual(runtime_cfg["batch_size"], 3)
+        self.assertEqual(runtime_cfg["batch_size"], 4)
         self.assertEqual(runtime_cfg["print_timeout"], "6m")
         self.assertEqual(runtime_cfg["timeout_seconds"], 360)
         self.assertEqual(runtime_cfg["request_delay"], 3)

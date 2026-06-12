@@ -4,8 +4,10 @@ import json
 import importlib.util
 import logging
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import types
 from types import SimpleNamespace
@@ -40,6 +42,36 @@ class SessionDict(dict):
 
     def __setattr__(self, key, value):
         self[key] = value
+
+
+def wait_for_file(path: Path, timeout_seconds: float = 5.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.1)
+    return path.exists()
+
+
+def pid_status(pid: int) -> str:
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "stat="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def wait_until_pid_not_live(pid: int, timeout_seconds: float = 5.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        status = pid_status(pid)
+        if not status or status.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    status = pid_status(pid)
+    return not status or status.startswith("Z")
 
 
 class WorkbenchStockViewTests(unittest.TestCase):
@@ -707,6 +739,53 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual(models, ["Gemini 3.5 Flash (High)"])
         self.assertEqual(error, "")
         self.assertTrue(fetched_at)
+
+    def test_stop_background_run_terminates_descendant_process_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            child_pid_path = tmp_path / "child.pid"
+            child_script = tmp_path / "child.py"
+            child_script.write_text(
+                "\n".join(
+                    [
+                        "import os",
+                        "import pathlib",
+                        "import time",
+                        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(os.getpid()), encoding='utf-8')",
+                        "time.sleep(60)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runner_script = tmp_path / "runner.py"
+            runner_script.write_text(
+                "\n".join(
+                    [
+                        "import subprocess",
+                        "import sys",
+                        "import time",
+                        f"subprocess.Popen([sys.executable, {str(child_script)!r}], start_new_session=True)",
+                        "time.sleep(60)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runner = subprocess.Popen([sys.executable, str(runner_script)], start_new_session=True)
+            self.assertTrue(wait_for_file(child_pid_path), "fake child did not start")
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+            run_dir = tmp_path / "run"
+            run_dir.mkdir()
+            (run_dir / "run_state.json").write_text(
+                json.dumps({"status": "running", "runner_pid": runner.pid}),
+                encoding="utf-8",
+            )
+
+            workbench_app.stop_background_run(run_dir)
+            runner.wait(timeout=5)
+            state = json.loads((run_dir / "run_state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(state["status"], "stopped")
+        self.assertTrue(wait_until_pid_not_live(child_pid), pid_status(child_pid))
 
 
 if __name__ == "__main__":

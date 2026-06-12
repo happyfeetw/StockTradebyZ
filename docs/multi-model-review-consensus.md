@@ -54,7 +54,7 @@ python agent/multi_model_review.py --config config/multi_model_review.yaml
 python agent/multi_model_review.py --run-dir data/runs/<run_id>
 ```
 
-多模型按执行组调度：不同 backend 可以并行，例如 Codex 可与一个 AGY 模型同时跑；同一 backend 默认串行，避免两个 AGY `--print` 进程同时争用 `~/.gemini/antigravity-cli` 的 OAuth、keyring、全局日志和本地 server 状态。同一模型内部按批串行处理；AGY 正式模型默认 `batch_size: 3`，在调用频率和非交互 `--print` 稳定性之间折中，Codex 仍可保持批量 5。各 reviewer 后端会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。结果按执行后端和 `model_profile` 写入独立目录；共识 summary、进度日志和 Workbench 筛选使用 `model_key`，也就是纯模型 ID。
+多模型按执行组调度：不同 backend 可以并行，例如 Codex 可与一个 AGY 模型同时跑；同一 backend 默认串行，避免两个 AGY `--print` 进程同时争用 `~/.gemini/antigravity-cli` 的 OAuth、keyring、全局日志和本地 server 状态。同一模型内部按批串行处理；AGY 正式模型默认 `batch_size: 4`，按 6 只小样本实测在 2/3/4 三档里吞吐最好，且保留超时拆小批兜底，Codex 仍可保持批量 5。各 reviewer 后端会先按 `strategy` 分组，策略变化时提交当前批次，保证同一批 prompt 只包含同一种策略标准。结果按执行后端和 `model_profile` 写入独立目录；共识 summary、进度日志和 Workbench 筛选使用 `model_key`，也就是纯模型 ID。
 
 运行日志中的 `[x/y]` 表示“处理到第 x 个候选”，不等于成功生成了 x 个有效结果。模型日志出现最终汇总行后，多模型进度会优先展示 `成功 X/Y，失败/跳过 Z`，用于区分完成进度和有效结果数量。
 

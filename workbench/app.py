@@ -17,6 +17,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -540,6 +541,53 @@ def is_pid_running(pid: int | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_table() -> list[dict[str, int]]:
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,pgid="],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001 - cleanup still falls back to the root process group.
+        return []
+
+    rows: list[dict[str, int]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            rows.append({"pid": int(parts[0]), "ppid": int(parts[1]), "pgid": int(parts[2])})
+        except ValueError:
+            continue
+    return rows
+
+
+def descendant_process_groups(root_pid: int) -> set[int]:
+    rows = _process_table()
+    children_by_parent: dict[int, list[dict[str, int]]] = {}
+    for row in rows:
+        children_by_parent.setdefault(row["ppid"], []).append(row)
+
+    pgids: set[int] = set()
+    stack = [root_pid]
+    seen: set[int] = set()
+    while stack:
+        parent = stack.pop()
+        if parent in seen:
+            continue
+        seen.add(parent)
+        for child in children_by_parent.get(parent, []):
+            pgids.add(child["pgid"])
+            stack.append(child["pid"])
+
+    root_row = next((row for row in rows if row["pid"] == root_pid), None)
+    if root_row:
+        pgids.add(root_row["pgid"])
+    return {pgid for pgid in pgids if pgid > 0 and pgid != os.getpgrp()}
 
 
 def is_run_active(run_dir: Path | None = None) -> bool:
@@ -1134,12 +1182,35 @@ def stop_background_run(run_dir: Path) -> None:
     state = run_state(run_dir)
     pid = int(state.get("runner_pid") or 0)
     if pid:
+        pgids = descendant_process_groups(pid) or {pid}
         try:
             os.killpg(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         except PermissionError:
             os.kill(pid, signal.SIGTERM)
+        for pgid in sorted(pgids):
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                try:
+                    os.kill(pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        time.sleep(1)
+        live_pgids = {row["pgid"] for row in _process_table() if row["pgid"] in pgids}
+        for pgid in sorted(live_pgids):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                try:
+                    os.kill(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
     write_json(
         run_dir / "run_state.json",
         {

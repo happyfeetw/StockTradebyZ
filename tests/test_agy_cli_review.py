@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -48,6 +49,27 @@ def valid_review_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _pid_status(pid: int) -> str:
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "stat="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def _wait_until_pid_not_live(pid: int, timeout_seconds: float = 5.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        status = _pid_status(pid)
+        if not status or status.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    status = _pid_status(pid)
+    return not status or status.startswith("Z")
 
 
 class AgyCliReviewerTests(unittest.TestCase):
@@ -254,6 +276,48 @@ class AgyCliReviewerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("STDIN_EOF=True", result.stdout)
         self.assertEqual(meta["stdin_mode"], "devnull")
+
+    def test_run_agy_timeout_kills_process_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            child_pid_path = tmp_path / "child.pid"
+            fake_agy = tmp_path / "fake_agy.py"
+            fake_agy.write_text(
+                "\n".join(
+                    [
+                        f"#!{sys.executable}",
+                        "import pathlib",
+                        "import subprocess",
+                        "import sys",
+                        "import time",
+                        f"child_pid_path = pathlib.Path({str(child_pid_path)!r})",
+                        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])",
+                        "child_pid_path.write_text(str(child.pid), encoding='utf-8')",
+                        "print('started', flush=True)",
+                        "time.sleep(60)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            fake_agy.chmod(0o755)
+            reviewer = self.make_reviewer(tmp_path)
+            reviewer.agy_bin = str(fake_agy)
+            reviewer.timeout_seconds = 1
+            reviewer.raw_log_root = tmp_path / "raw"
+            chart = tmp_path / "000001_day.jpg"
+            chart.write_bytes(b"fake")
+
+            result = reviewer._run_agy(
+                code="000001",
+                day_chart=chart,
+                prompt_text="prompt",
+                purpose="review",
+            )
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("timed out", result.stderr)
+        self.assertTrue(_wait_until_pid_not_live(child_pid), _pid_status(child_pid))
 
     def test_review_stock_rejects_schema_error_when_repair_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -44,7 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stdin_mode": "devnull",
     "dangerously_skip_permissions": False,
     "request_delay": 3,
-    "batch_size": 3,
+    "batch_size": 4,
     "max_items": None,
     "skip_existing": True,
     "suggest_min_score": 4.0,
@@ -728,6 +728,37 @@ class AgyCliReviewer(BaseReviewer):
                 env={**os.environ, "NO_COLOR": "1"},
                 start_new_session=True,
             )
+
+            def terminate_agy_process(sig: int) -> None:
+                if proc.poll() is not None:
+                    return
+                try:
+                    os.killpg(proc.pid, sig)
+                except ProcessLookupError:
+                    return
+                except Exception:
+                    try:
+                        proc.send_signal(sig)
+                    except ProcessLookupError:
+                        return
+
+            previous_signal_handlers: dict[int, Any] = {}
+
+            def handle_parent_signal(signum: int, _frame: Any) -> None:
+                stderr_chunks.append(f"\nAGY CLI interrupted by signal {signum}\n")
+                terminate_agy_process(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    terminate_agy_process(signal.SIGKILL)
+                    proc.wait(timeout=3)
+                raise SystemExit(128 + signum)
+
+            if threading.current_thread() is threading.main_thread():
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    previous_signal_handlers[sig] = signal.getsignal(sig)
+                    signal.signal(sig, handle_parent_signal)
+
             threads = [
                 threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks, proc, raw_dir), daemon=True),
                 threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks, proc, raw_dir), daemon=True),
@@ -737,13 +768,12 @@ class AgyCliReviewer(BaseReviewer):
             try:
                 return_code = proc.wait(timeout=self.timeout_seconds)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except Exception:
-                    proc.kill()
+                terminate_agy_process(signal.SIGKILL)
                 return_code = proc.wait()
                 stderr_chunks.append(f"\nAGY CLI timed out after {self.timeout_seconds}s\n")
             finally:
+                for sig, previous_handler in previous_signal_handlers.items():
+                    signal.signal(sig, previous_handler)
                 if proc.stdin is not None:
                     try:
                         proc.stdin.close()

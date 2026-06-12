@@ -19,11 +19,11 @@ agy_bin: agy
 # AGY 1.0.5 支持 per-call --model；workbench 下拉候选直接来自 `agy models`。
 model: "Gemini 3.5 Flash (High)"
 
-# AGY print mode 超时。默认快速失败，避免拖住全流程。
-print_timeout: 3m
+# AGY print mode 超时。AGY 非交互多图调用偶发长时间无输出，默认留足单股视觉分析时间。
+print_timeout: 6m
 
 # Python 子进程总超时（秒）
-timeout_seconds: 180
+timeout_seconds: 360
 
 # 非交互 --print 默认关闭 stdin，避免 agy 等待 EOF 导致挂起。
 # 如必须向活跃 AGY 子进程粘贴 authorization code，可临时改为 pipe。
@@ -34,10 +34,10 @@ stdin_mode: devnull
 dangerously_skip_permissions: false
 
 # 相邻 CLI 调用间隔（秒）
-request_delay: 10
+request_delay: 2
 
-# 单次 AGY CLI 请求最多提交几张图；普通批量 JSON 失败会使用同一模型拆批并最终逐只复评。
-batch_size: 5
+# 单次 AGY CLI 请求最多提交几张图。正式多模型流程默认逐只调用，提高 AGY --print 稳定性。
+batch_size: 1
 
 # 本次 AGY 最多复评前 N 个候选；留空表示完整复评。
 max_items:

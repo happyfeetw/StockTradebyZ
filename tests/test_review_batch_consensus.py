@@ -268,6 +268,11 @@ class ReviewBatchConsensusTests(unittest.TestCase):
                 "config": str(base_config),
                 "model": "Gemini 3.1 Pro (High)",
                 "model_profile": "gemini-3.1-pro-high",
+                "batch_size": 1,
+                "print_timeout": "6m",
+                "timeout_seconds": 360,
+                "request_delay": 2,
+                "stop_on_cli_timeout": True,
             }
 
             runtime_cfg, runtime_path, run_spec = multi_model_review.prepare_reviewer_config(
@@ -282,6 +287,11 @@ class ReviewBatchConsensusTests(unittest.TestCase):
         self.assertEqual(run_spec["execution_backend"], "agy-cli")
         self.assertEqual(runtime_cfg["model"], "Gemini 3.1 Pro (High)")
         self.assertEqual(runtime_cfg["model_key"], "gemini-3.1-pro-high")
+        self.assertEqual(runtime_cfg["batch_size"], 1)
+        self.assertEqual(runtime_cfg["print_timeout"], "6m")
+        self.assertEqual(runtime_cfg["timeout_seconds"], 360)
+        self.assertEqual(runtime_cfg["request_delay"], 2)
+        self.assertTrue(runtime_cfg["stop_on_cli_timeout"])
         self.assertTrue(str(run_spec["output_dir"]).endswith("agy-cli/gemini-3.1-pro-high"))
         self.assertEqual(runtime_path.name, "agy-cli_gemini-3.1-pro-high.yaml")
 

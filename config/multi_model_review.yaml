@@ -58,7 +58,10 @@ reviewers:
     config: config/agy_cli_review.yaml
     model: "Gemini 3.5 Flash (High)"
     model_profile: gemini-3.5-flash-high
-    batch_size: 5
+    batch_size: 1
+    print_timeout: 6m
+    timeout_seconds: 360
+    request_delay: 2
 
   - enabled: true
     reviewer_key: agy-cli
@@ -68,7 +71,10 @@ reviewers:
     config: config/agy_cli_review.yaml
     model: "Gemini 3.1 Pro (High)"
     model_profile: gemini-3.1-pro-high
-    batch_size: 5
+    batch_size: 1
+    print_timeout: 6m
+    timeout_seconds: 360
+    request_delay: 2
 
   - enabled: true
     reviewer_key: codex-cli

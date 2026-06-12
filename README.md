@@ -236,11 +236,11 @@ Z 质量裁决配置见 [config/z_quality_rules.yaml](config/z_quality_rules.yam
 
 - model：模型名称
 - request_delay：调用间隔（防限流）
-- batch_size：每次 AGY CLI 请求最多提交几张图，默认 5
+- batch_size：每次 AGY CLI 请求最多提交几张图，正式多模型默认 1，优先保证 AGY `--print` 稳定性
 - fallback_to_single_on_batch_error：批量 JSON 解析失败时是否使用同一模型拆批并最终逐只复评
-- AGY 的 `print_timeout` / `timeout_seconds` 默认是 `3m` / `180`：子进程总超时按模型级失败记录，交给多模型编排按原模型重跑一次，不进入拆批/单股 fallback
+- AGY 的 `print_timeout` / `timeout_seconds` 默认是 `6m` / `360`：子进程总超时按模型级失败记录，交给多模型编排按原模型重跑一次，不进入拆批/单股 fallback
 - save_raw_cli_io / raw_log_dir：保存每次 CLI 调用的原始 prompt、stdout、stderr 和 meta
-- max_requests_per_run：单次运行最多请求数；batch_size=5 时，1 次请求最多覆盖 5 支股票
+- max_requests_per_run：单次运行最多请求数；batch_size=1 时，1 次请求覆盖 1 支股票
 - daily_request_budget：项目侧每日请求预算
 - skip_existing：是否断点续跑
 - suggest_min_score：推荐分数门槛

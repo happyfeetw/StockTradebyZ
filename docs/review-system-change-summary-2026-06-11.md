@@ -72,7 +72,7 @@
 - 如果活跃 AGY 子进程正在等待 authorization code，可按 `auth_recovery_status.json` 里的 `auth_code_file` 写入 code，reviewer 会转发到子进程 stdin 并删除该文件。
 - 如果 AGY 要求重新 OAuth，reviewer 会暂停当前批次，定期用同一模型执行极小 `agy --print` 探针；探针恢复后重试当前批次。
 - 恢复状态写入 `auth_recovery_status.json`；超时后仍按失败退出，由多模型编排按原模型断点重跑。
-- AGY 默认 `print_timeout=3m`、`timeout_seconds=180`；子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时反复等待。
+- AGY 默认 `batch_size=1`、`print_timeout=6m`、`timeout_seconds=360`；子进程达到总超时时按模型级失败处理，不再拆批或逐只 fallback，避免同一不可恢复超时反复等待。
 - AGY 非交互 `--print` 默认 `stdin_mode=devnull`，避免等待 stdin EOF；`stdin_mode=pipe` 仅用于显式授权码转发。
 - `dangerously_skip_permissions` 作为显式配置保留但默认关闭，不自动绕过 AGY 权限确认。
 - AGY CLI 当前是 Google 订阅登录模型的默认执行后端；不可用、超时或缺失时应记录失败原因并补跑，不能从正式共识中排除。

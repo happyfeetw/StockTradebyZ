@@ -411,7 +411,25 @@ def prepare_reviewer_config(
     runtime_cfg["model_profile"] = profile
     if spec.get("output_format"):
         runtime_cfg["output_format"] = spec["output_format"]
-    for key in ("reasoning_effort", "speed_tier", "force_fixed_model"):
+    reviewer_runtime_overrides = (
+        "print_timeout",
+        "timeout_seconds",
+        "request_delay",
+        "stdin_mode",
+        "dangerously_skip_permissions",
+        "stop_on_cli_timeout",
+        "fallback_to_single_on_batch_error",
+        "json_repair_enabled",
+        "auth_recovery_enabled",
+        "auth_recovery_wait_seconds",
+        "auth_recovery_check_interval",
+        "auth_recovery_probe_timeout_seconds",
+        "max_requests_per_run",
+        "reasoning_effort",
+        "speed_tier",
+        "force_fixed_model",
+    )
+    for key in reviewer_runtime_overrides:
         if key in spec:
             runtime_cfg[key] = spec[key]
     if "max_requests_per_run" in multi_cfg:

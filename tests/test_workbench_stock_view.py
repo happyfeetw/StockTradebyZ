@@ -669,6 +669,34 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual([row["code"] for row in z_select_watch], ["600000", "000001"])
         self.assertEqual([row["code"] for row in filtered], ["600000"])
 
+    def test_consensus_tdx_z_presets_use_z_marker_in_block_names(self) -> None:
+        expected_identity_prefixes = {
+            "Z精选": "ZA",
+            "Z观察": "ZW",
+            "Z精选+观察": "ZQ",
+            "Z复盘样本": "ZR",
+        }
+        items = [{"code": "600000", "strategy": "b1", "score": 4.7, "recommended": True}]
+
+        for preset, identity_prefix in expected_identity_prefixes.items():
+            with self.subTest(preset=preset):
+                preset_config = workbench_app.CONSENSUS_TDX_PRESETS[preset]
+                blocks = workbench_app.tdx_export.build_blocks_from_items(
+                    "2026-06-12",
+                    items,
+                    name_prefix=preset_config.get("block_prefix", preset_config["prefix"]),
+                )
+                self.assertEqual(preset_config["prefix"], identity_prefix)
+                self.assertEqual(blocks[0]["name"], "0612ZB1")
+
+        consensus_config = workbench_app.CONSENSUS_TDX_PRESETS["多模型推荐"]
+        blocks = workbench_app.tdx_export.build_blocks_from_items(
+            "2026-06-12",
+            items,
+            name_prefix=consensus_config.get("block_prefix", consensus_config["prefix"]),
+        )
+        self.assertEqual(blocks[0]["name"], "0612CMB1")
+
     def test_parse_agy_models_output_preserves_exact_names(self) -> None:
         output = "\n".join(
             [

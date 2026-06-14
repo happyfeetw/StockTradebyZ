@@ -2728,10 +2728,10 @@ CONSENSUS_TDX_PRESETS = {
     "共同观察": {"prefix": "CWA"},
     "多模型观察": {"prefix": "CW"},
     "单模型观察": {"prefix": "CSW"},
-    "Z精选": {"prefix": "ZA"},
-    "Z观察": {"prefix": "ZW"},
-    "Z精选+观察": {"prefix": "ZQ"},
-    "Z复盘样本": {"prefix": "ZR"},
+    "Z精选": {"prefix": "ZA", "block_prefix": "Z"},
+    "Z观察": {"prefix": "ZW", "block_prefix": "Z"},
+    "Z精选+观察": {"prefix": "ZQ", "block_prefix": "Z"},
+    "Z复盘样本": {"prefix": "ZR", "block_prefix": "Z"},
     "分歧样本": {"prefix": "CD"},
     "全部自定义": {"prefix": "C"},
 }
@@ -3279,8 +3279,10 @@ def render_consensus_tdx_import_dialog(
         }
         for row in filtered_rows
     ]
-    prefix = CONSENSUS_TDX_PRESETS.get(preset, CONSENSUS_TDX_PRESETS["全部自定义"])["prefix"]
-    blocks = tdx_export.build_blocks_from_items(pick_date, block_items, name_prefix=prefix)
+    preset_config = CONSENSUS_TDX_PRESETS.get(preset, CONSENSUS_TDX_PRESETS["全部自定义"])
+    prefix = preset_config["prefix"]
+    block_prefix = preset_config.get("block_prefix", prefix)
+    blocks = tdx_export.build_blocks_from_items(pick_date, block_items, name_prefix=block_prefix)
     if not blocks:
         st.warning("筛选结果没有可转换为通达信代码的股票")
         return

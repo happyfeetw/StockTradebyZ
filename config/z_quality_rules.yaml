@@ -20,8 +20,10 @@ verdicts:
   REJECT: 硬伤明显，不进入 Z 精选池。
 
 thresholds:
-  a_select_min_quality_score: 4.2
-  b_watch_min_quality_score: 3.4
+  # Z 层二次质量分阈值，不等同于模型复评 suggest_min_score=4.0。
+  # 模型是否推荐由策略 profile / reviewer 结论决定；这里仅决定 Z精选、Z观察、Z复盘样本分层。
+  z_select_min_quality_score: 4.2
+  z_watch_min_quality_score: 3.4
   max_reject_score: 2.6
 
 hard_vetoes:

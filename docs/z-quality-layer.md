@@ -76,6 +76,12 @@ python agent/z_quality_review.py --config config/z_quality_rules.yaml
 - `C_REVIEW_ONLY`：有分歧或证据不足，只适合复盘研究。
 - `REJECT`：硬伤明显，不进入 Z 精选池。
 
+Z 质量层使用自己的二次质量分阈值，不等同于模型复评的 `suggest_min_score=4.0`，也不直接替代策略 profile 的 PASS/WATCH 门槛。默认配置中：
+
+- `z_select_min_quality_score: 4.2`：Z 精选阈值，且不能触发观察上限。
+- `z_watch_min_quality_score: 3.4`：Z 观察阈值。
+- 低于 Z 观察阈值但仍有正面证据时，归入 `C_REVIEW_ONLY` 作为复盘样本。
+
 ## First-Version Rules
 
 本地硬规则优先处理：

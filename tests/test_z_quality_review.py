@@ -143,8 +143,8 @@ class ZQualityReviewTests(unittest.TestCase):
                     "kline_dir": str(project / "kline"),
                     "include_incomplete": False,
                     "thresholds": {
-                        "a_select_min_quality_score": 4.2,
-                        "b_watch_min_quality_score": 3.4,
+                        "z_select_min_quality_score": 4.2,
+                        "z_watch_min_quality_score": 3.4,
                         "max_reject_score": 2.6,
                     },
                 },
@@ -156,10 +156,27 @@ class ZQualityReviewTests(unittest.TestCase):
             llm_input_exists = Path(llm_inputs[0]["input_file"]).exists()
 
         self.assertEqual(z_summary["processed_count"], 1)
+        self.assertEqual(z_summary["z_quality_thresholds"]["z_select_min_quality_score"], 4.2)
         self.assertEqual(decisions[0]["z_quality_verdict"], "A_SELECT")
+        self.assertEqual(decisions[0]["z_quality_thresholds"]["z_watch_min_quality_score"], 3.4)
         self.assertEqual(decisions[0]["result_mode"], "local_rules_dry_run")
         self.assertEqual(len(llm_inputs), 1)
         self.assertTrue(llm_input_exists)
+
+    def test_z_quality_thresholds_keep_legacy_config_compatible(self) -> None:
+        thresholds = z_quality_review.z_quality_thresholds(
+            {
+                "thresholds": {
+                    "a_select_min_quality_score": 4.1,
+                    "b_watch_min_quality_score": 3.3,
+                    "max_reject_score": 2.5,
+                }
+            }
+        )
+
+        self.assertEqual(thresholds["z_select_min_quality_score"], 4.1)
+        self.assertEqual(thresholds["z_watch_min_quality_score"], 3.3)
+        self.assertEqual(thresholds["max_reject_score"], 2.5)
 
 
 if __name__ == "__main__":

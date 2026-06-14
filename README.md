@@ -304,7 +304,7 @@ data/review_consensus/批次/decisions.json
 data/z_quality/批次/decisions.json
 
 - z_quality_verdict：A_SELECT / B_WATCH / C_REVIEW_ONLY / REJECT
-- z_quality_score：本地规则 dry-run 质量分
+- z_quality_score：本地规则 dry-run 质量分；Z 精选/观察使用 `config/z_quality_rules.yaml` 中的 `z_select_min_quality_score` / `z_watch_min_quality_score`，不是模型复评的 `suggest_min_score=4.0`
 - quality_reasons：入选或保留观察的核心原因
 - quality_risks：主要硬伤和观察风险
 - next_day_plan：次日条件化观察预案，不是自动买入指令

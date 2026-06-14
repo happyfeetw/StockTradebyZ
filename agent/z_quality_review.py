@@ -80,6 +80,34 @@ def clamp_score(value: float) -> float:
     return round(max(0.0, min(5.0, value)), 2)
 
 
+def z_threshold(thresholds: dict[str, Any], key: str, *, legacy_key: str, default: float) -> float:
+    """Read Z-layer thresholds while accepting the first-version config keys."""
+    if key in thresholds:
+        return float(thresholds[key])
+    if legacy_key in thresholds:
+        return float(thresholds[legacy_key])
+    return default
+
+
+def z_quality_thresholds(rules: dict[str, Any]) -> dict[str, float]:
+    thresholds = rules.get("thresholds") or {}
+    return {
+        "z_select_min_quality_score": z_threshold(
+            thresholds,
+            "z_select_min_quality_score",
+            legacy_key="a_select_min_quality_score",
+            default=4.2,
+        ),
+        "z_watch_min_quality_score": z_threshold(
+            thresholds,
+            "z_watch_min_quality_score",
+            legacy_key="b_watch_min_quality_score",
+            default=3.4,
+        ),
+        "max_reject_score": float(thresholds.get("max_reject_score", 2.6)),
+    }
+
+
 def consensus_base_dir(summary: dict[str, Any], summary_path: Path) -> Path:
     files = summary.get("files") or {}
     summary_file = str(files.get("summary") or "")
@@ -288,14 +316,15 @@ def local_quality_judge(
             watch_caps.append("gap_up_risk")
             risks.append("信号日存在跳空，次日不能追高验证。")
 
+    thresholds = z_quality_thresholds(rules)
     if hard_vetoes:
         verdict = "REJECT"
-        quality_score = min(quality_score, float((rules.get("thresholds") or {}).get("max_reject_score", 2.6)))
+        quality_score = min(quality_score, thresholds["max_reject_score"])
     else:
         quality_score = clamp_score(quality_score)
-        if quality_score >= float((rules.get("thresholds") or {}).get("a_select_min_quality_score", 4.2)) and not watch_caps:
+        if quality_score >= thresholds["z_select_min_quality_score"] and not watch_caps:
             verdict = "A_SELECT"
-        elif quality_score >= float((rules.get("thresholds") or {}).get("b_watch_min_quality_score", 3.4)):
+        elif quality_score >= thresholds["z_watch_min_quality_score"]:
             verdict = "B_WATCH"
         elif reasons:
             verdict = "C_REVIEW_ONLY"
@@ -320,6 +349,7 @@ def local_quality_judge(
         "watch_caps": sorted(set(watch_caps)),
         "data_limitations": features.get("data_limitations") or [],
         "local_stats": stats,
+        "z_quality_thresholds": thresholds,
     }
 
 
@@ -533,6 +563,7 @@ def run_z_quality_review(config: dict[str, Any], *, summary_path: Path, output_r
         "processed_count": len(z_decisions),
         "include_incomplete": include_incomplete,
         "result_mode": "local_rules_dry_run",
+        "z_quality_thresholds": z_quality_thresholds(config),
         "verdict_counts": dict(sorted(counts.items())),
         "files": output_files,
     }

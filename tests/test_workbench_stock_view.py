@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import logging
+import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import types
 from types import SimpleNamespace
@@ -38,6 +42,36 @@ class SessionDict(dict):
 
     def __setattr__(self, key, value):
         self[key] = value
+
+
+def wait_for_file(path: Path, timeout_seconds: float = 5.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.1)
+    return path.exists()
+
+
+def pid_status(pid: int) -> str:
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "stat="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def wait_until_pid_not_live(pid: int, timeout_seconds: float = 5.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        status = pid_status(pid)
+        if not status or status.startswith("Z"):
+            return True
+        time.sleep(0.1)
+    status = pid_status(pid)
+    return not status or status.startswith("Z")
 
 
 class WorkbenchStockViewTests(unittest.TestCase):
@@ -151,7 +185,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 sources = workbench_app.review_sources_for_date("2026-06-04")
                 rows = workbench_app.result_rows_for_date(
                     "2026-06-04",
-                    workbench_app.AGY_REVIEW_SOURCE,
+                    workbench_app.LEGACY_AGY_REVIEW_SOURCE,
                 )
             finally:
                 workbench_app.ROOT = old_root
@@ -159,7 +193,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 workbench_app.st = old_st
 
         self.assertEqual(dates, ["2026-06-04"])
-        self.assertEqual(sources, [workbench_app.AGY_REVIEW_SOURCE])
+        self.assertEqual(sources, [workbench_app.LEGACY_AGY_REVIEW_SOURCE])
         self.assertEqual(rows[0]["代码"], "300001")
         self.assertEqual(rows[0]["复评状态"], "推荐")
         self.assertEqual(rows[0]["结论"], "PASS")
@@ -178,7 +212,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
                 workbench_app.st = SimpleNamespace(session_state=SessionDict())
                 rows = workbench_app.stock_view_rows_for_date(
                     "2026-06-04",
-                    workbench_app.AGY_REVIEW_SOURCE,
+                    workbench_app.LEGACY_AGY_REVIEW_SOURCE,
                 )
             finally:
                 workbench_app.ROOT = old_root
@@ -187,7 +221,7 @@ class WorkbenchStockViewTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["code"], "300001")
         self.assertEqual(rows[0]["review"]["reviewer"], "agy-cli-experimental")
-        self.assertEqual(rows[0]["review_source"], workbench_app.AGY_REVIEW_SOURCE)
+        self.assertEqual(rows[0]["review_source"], workbench_app.LEGACY_AGY_REVIEW_SOURCE)
         self.assertEqual(rows[0]["status"], "recommended")
         self.assertEqual(rows[0]["rank"], 1)
 
@@ -225,27 +259,28 @@ class WorkbenchStockViewTests(unittest.TestCase):
             session = SessionDict(
                 {
                     "run_cfg": {"reviewer": "gemini-cli"},
-                    "agy_review_cfg": {"output_dir": "data/review/agy_cli_experimental"},
+                    "agy_review_cfg": {"output_dir": "data/review/agy_cli"},
                     "codex_review_cfg": {"output_dir": "data/review/codex_cli"},
+                    "multi_model_review_cfg": {},
                 }
             )
             workbench_app.st = SimpleNamespace(session_state=session)
-            gemini_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-gemini"))
-            session["run_cfg"] = {"reviewer": "agy-cli-experimental"}
+            legacy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-legacy"))
+            session["run_cfg"] = {"reviewer": workbench_app.GEMINI_31_PRO_HIGH}
             agy_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-agy"))
-            session["run_cfg"] = {"reviewer": "codex-cli"}
+            session["run_cfg"] = {"reviewer": workbench_app.GPT_55_HIGH}
             codex_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-codex"))
             session["run_cfg"] = {"reviewer": "multi-model"}
             multi_steps = workbench_app.command_plan("只跑复评", Path("/tmp/run-multi"))
         finally:
             workbench_app.st = old_st
 
-        self.assertEqual(gemini_steps[0][0], "Gemini CLI 复评")
-        self.assertIn("agent/gemini_cli_review.py", gemini_steps[0][1])
-        self.assertEqual(agy_steps[0][0], "AGY CLI 实验复评")
+        self.assertEqual(legacy_steps[0][0], "Gemini 3.5 Flash High 复评")
+        self.assertIn("agent/agy_cli_review.py", legacy_steps[0][1])
+        self.assertEqual(agy_steps[0][0], "Gemini 3.1 Pro High 复评")
         self.assertIn("agent/agy_cli_review.py", agy_steps[0][1])
         self.assertEqual(len(agy_steps), 1)
-        self.assertEqual(codex_steps[0][0], "Codex GPT-5.5 复评")
+        self.assertEqual(codex_steps[0][0], "GPT-5.5 High 复评")
         self.assertIn("agent/codex_cli_review.py", codex_steps[0][1])
         self.assertEqual(len(codex_steps), 1)
         self.assertEqual(multi_steps[0][0], "多模型复评与共识汇总")
@@ -259,16 +294,408 @@ class WorkbenchStockViewTests(unittest.TestCase):
             workbench_app.st = SimpleNamespace(session_state=session)
 
             workbench_app.ensure_reviewer_widget_state()
-            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "gemini-cli")
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], workbench_app.GEMINI_35_FLASH_HIGH)
 
-            session[workbench_app.REVIEWER_WIDGET_KEY] = "agy-cli-experimental"
+            session[workbench_app.REVIEWER_WIDGET_KEY] = workbench_app.GEMINI_31_PRO_HIGH
             workbench_app.sync_reviewer_from_widget()
             workbench_app.ensure_reviewer_widget_state()
 
-            self.assertEqual(session["run_cfg"]["reviewer"], "agy-cli-experimental")
-            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], "agy-cli-experimental")
+            self.assertEqual(session["run_cfg"]["reviewer"], workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(session[workbench_app.REVIEWER_WIDGET_KEY], workbench_app.GEMINI_31_PRO_HIGH)
         finally:
             workbench_app.st = old_st
+
+    def test_snapshot_reviewer_configs_map_model_to_backend(self) -> None:
+        old_st = workbench_app.st
+        try:
+            session = SessionDict(
+                {
+                    "agy_review_cfg": {"agy_bin": "agy"},
+                    "codex_review_cfg": {"codex_bin": "codex"},
+                    "multi_model_review_cfg": {},
+                }
+            )
+            workbench_app.st = SimpleNamespace(session_state=session)
+
+            agy_cfg, codex_cfg, _ = workbench_app.snapshot_reviewer_configs(workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(agy_cfg["model_key"], workbench_app.GEMINI_31_PRO_HIGH)
+            self.assertEqual(agy_cfg["model"], "Gemini 3.1 Pro (High)")
+            self.assertEqual(agy_cfg["output_dir"], f"data/review_models/{workbench_app.GEMINI_31_PRO_HIGH}")
+            self.assertNotIn("model_key", codex_cfg)
+
+            agy_cfg, codex_cfg, _ = workbench_app.snapshot_reviewer_configs(workbench_app.GPT_55_HIGH)
+            self.assertEqual(codex_cfg["model_key"], workbench_app.GPT_55_HIGH)
+            self.assertEqual(codex_cfg["model"], "gpt-5.5")
+            self.assertEqual(codex_cfg["output_dir"], f"data/review_models/{workbench_app.GPT_55_HIGH}")
+            self.assertNotIn("model_key", agy_cfg)
+        finally:
+            workbench_app.st = old_st
+
+    def test_codex_auth_mode_defaults_to_local_oauth(self) -> None:
+        cfg = workbench_app.apply_codex_auth_mode({}, workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+
+        self.assertEqual(workbench_app.normalize_codex_auth_mode(cfg), workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+        self.assertEqual(cfg["auth_mode"], workbench_app.CODEX_AUTH_MODE_LOCAL_OAUTH)
+        self.assertFalse(cfg["env_provider_enabled"])
+        self.assertFalse(cfg["ignore_user_config"])
+
+    def test_codex_auth_mode_supports_env_provider(self) -> None:
+        cfg = workbench_app.apply_codex_auth_mode({}, workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+
+        self.assertEqual(workbench_app.normalize_codex_auth_mode(cfg), workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+        self.assertEqual(cfg["auth_mode"], workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+        self.assertTrue(cfg["env_provider_enabled"])
+        self.assertTrue(cfg["ignore_user_config"])
+
+    def test_codex_auth_mode_infers_legacy_provider_flag(self) -> None:
+        mode = workbench_app.normalize_codex_auth_mode({"env_provider_enabled": True})
+
+        self.assertEqual(mode, workbench_app.CODEX_AUTH_MODE_ENV_PROVIDER)
+
+    def test_latest_run_dir_after_refresh_restores_active_disk_run(self) -> None:
+        old_runs_dir = workbench_app.RUNS_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            invalid = runs_dir / "multi_model_20260607_111604"
+            invalid.mkdir()
+            older = runs_dir / "2026-06-11_173502"
+            older.mkdir()
+            (older / "run_state.json").write_text(
+                json.dumps({"status": "finished", "runner_pid": 999999}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            active = runs_dir / "2026-06-11_173519"
+            active.mkdir()
+            (active / "run_state.json").write_text(
+                json.dumps({"status": "running", "runner_pid": os.getpid()}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (active / "run.log").write_text("[Step] 多模型复评与共识汇总\n", encoding="utf-8")
+            session = SessionDict()
+            try:
+                workbench_app.RUNS_DIR = runs_dir
+                workbench_app.st = SimpleNamespace(session_state=session)
+                listed = workbench_app.list_run_dirs()
+                latest = workbench_app.latest_run_dir()
+            finally:
+                workbench_app.RUNS_DIR = old_runs_dir
+                workbench_app.st = old_st
+
+        self.assertNotIn(invalid, listed)
+        self.assertEqual(latest, active)
+        self.assertEqual(session["last_run_dir"], str(active))
+
+    def test_latest_run_dir_prefers_newer_disk_run_over_stale_session_run(self) -> None:
+        old_runs_dir = workbench_app.RUNS_DIR
+        old_st = workbench_app.st
+        with tempfile.TemporaryDirectory() as tmp:
+            runs_dir = Path(tmp)
+            stale = runs_dir / "2026-06-11_173519"
+            stale.mkdir()
+            (stale / "run_state.json").write_text(
+                json.dumps({"status": "failed", "runner_pid": 999999}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (stale / "run.log").write_text("[ERROR] old failure\n", encoding="utf-8")
+
+            newer = runs_dir / "2026-06-12_agy_resume_consensus"
+            logs = newer / "multi_model_logs"
+            logs.mkdir(parents=True)
+            (logs / "agy-cli__gemini-3.5-flash-high.log").write_text(
+                "[INFO] AGY 复评完成：成功 136 支，失败/跳过 0 支\n",
+                encoding="utf-8",
+            )
+            os.utime(stale / "run.log", (1000, 1000))
+            os.utime(stale / "run_state.json", (1000, 1000))
+            os.utime(stale, (1000, 1000))
+            os.utime(logs / "agy-cli__gemini-3.5-flash-high.log", (2000, 2000))
+            os.utime(newer, (2000, 2000))
+
+            session = SessionDict({"last_run_dir": str(stale)})
+            try:
+                workbench_app.RUNS_DIR = runs_dir
+                workbench_app.st = SimpleNamespace(session_state=session)
+                listed = workbench_app.list_run_dirs()
+                latest = workbench_app.latest_run_dir()
+            finally:
+                workbench_app.RUNS_DIR = old_runs_dir
+                workbench_app.st = old_st
+
+        self.assertIn(newer, listed)
+        self.assertEqual(latest, newer)
+        self.assertEqual(session["last_run_dir"], str(newer))
+
+    def test_websocket_close_filter_only_suppresses_known_streamlit_disconnect_noise(self) -> None:
+        filter_obj = workbench_app._ClosedWorkbenchWebSocketFilter()
+        record = logging.LogRecord(
+            name="asyncio",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="Task exception was never retrieved",
+            args=(),
+            exc_info=None,
+        )
+        normal_error = RuntimeError("boom")
+        record.exc_info = (RuntimeError, normal_error, None)
+        self.assertTrue(filter_obj.filter(record))
+
+        websocket_error_cls = workbench_app._TornadoWebSocketClosedError
+        if websocket_error_cls is not None:
+            record.exc_info = (websocket_error_cls, websocket_error_cls(), None)
+            self.assertFalse(filter_obj.filter(record))
+
+    def test_multi_model_progress_rows_keep_latest_status_per_model(self) -> None:
+        log_text = "\n".join(
+            [
+                "[2026-06-11 10:00:00] [CONFIG] gemini-3.1-pro-high -> /tmp/gemini.yaml",
+                "[2026-06-11 10:00:00] [CONFIG] gpt-5.5-high -> /tmp/codex.yaml",
+                "[2026-06-11 10:00:01] [START] [gemini-3.1-pro-high] 启动 gemini-3.1-pro-high",
+                "[2026-06-11 10:00:01] [START] [gpt-5.5-high] 启动 gpt-5.5-high",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gpt-5.5-high]",
+                "    - gpt-5.5-high: running, elapsed=30s, progress=处理到 5/104 (5%), latest=[1-5/104] codex batch",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gpt-5.5-high]",
+                "    - gpt-5.5-high: running, elapsed=1m00s, progress=处理到 15/104 (14%), latest=[11-15/104] codex batch",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: finished, exit=0, elapsed=1m00s, progress=成功 107/136，失败/跳过 29 (100%), latest=[INFO] 评分完成：成功 107 支，失败/跳过 29 支",
+            ]
+        )
+
+        rows = workbench_app.multi_model_progress_rows(log_text)
+        by_key = {row["key"]: row for row in rows}
+
+        self.assertEqual(rows[0]["key"], "gemini-3.1-pro-high")
+        self.assertEqual(rows[1]["key"], "gpt-5.5-high")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["status_label"], "完成")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["count_text"], "成功 107/136，失败/跳过 29")
+        self.assertEqual(by_key["gemini-3.1-pro-high"]["percent"], 100)
+        self.assertEqual(by_key["gpt-5.5-high"]["status_label"], "运行中")
+        self.assertEqual(by_key["gpt-5.5-high"]["count_text"], "处理到 15/104")
+        self.assertEqual(by_key["gpt-5.5-high"]["percent"], 14)
+
+    def test_multi_model_progress_rows_normalize_tool_prefixed_keys_to_models(self) -> None:
+        log_text = "\n".join(
+            [
+                "[2026-06-11 10:00:00] [CONFIG] agy-cli-experimental/gemini-3.5-flash-high -> /tmp/agy.yaml",
+                "[2026-06-11 10:00:00] [CONFIG] codex-cli/gpt-5.5-high-standard -> /tmp/codex.yaml",
+                "[2026-06-11 10:00:01] [START] [agy-cli-experimental] 启动 agy-cli-experimental/gemini-3.5-flash-high",
+                "[2026-06-11 10:00:01] [START] [codex-cli] 启动 codex-cli/gpt-5.5-high-standard",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [agy-cli-experimental]",
+                "    - agy-cli-experimental/gemini-3.5-flash-high: running, elapsed=30s, progress=处理到 5/136 (4%), latest=[1-5/136] agy batch",
+                "  [codex-cli]",
+                "    - codex-cli/gpt-5.5-high-standard: running, elapsed=30s, progress=处理到 5/136 (4%), latest=[1-5/136] codex batch",
+            ]
+        )
+
+        rows = workbench_app.multi_model_progress_rows(log_text)
+        by_key = {row["key"]: row for row in rows}
+        html = workbench_app.multi_model_progress_html(rows)
+
+        self.assertEqual([row["key"] for row in rows], [workbench_app.GEMINI_35_FLASH_HIGH, workbench_app.GPT_55_HIGH])
+        self.assertEqual(by_key[workbench_app.GEMINI_35_FLASH_HIGH]["display_key"], "Gemini 3.5 Flash High")
+        self.assertEqual(by_key[workbench_app.GPT_55_HIGH]["display_key"], "GPT-5.5 High")
+        self.assertIn("Gemini 3.5 Flash High", html)
+        self.assertIn("GPT-5.5 High", html)
+        self.assertNotIn("agy-cli-experimental/gemini-3.5-flash-high", html)
+        self.assertNotIn("codex-cli/gpt-5.5-high-standard", html)
+
+    def test_compact_run_log_for_display_removes_repeated_multi_model_progress_blocks(self) -> None:
+        log_text = "\n".join(
+            [
+                "[Step] 多模型复评与共识汇总",
+                "[2026-06-11 10:00:01] [START] [gemini-3.1-pro-high] 启动 gemini-3.1-pro-high",
+                "[2026-06-11 10:00:31] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=30s, progress=处理到 10/104 (10%), latest=[6-10/104] gemini batch",
+                "[2026-06-11 10:01:01] [PROGRESS] 多模型复评进度 attempt=1",
+                "  [gemini-3.1-pro-high]",
+                "    - gemini-3.1-pro-high: running, elapsed=1m00s, progress=处理到 20/104 (19%), latest=[16-20/104] gemini batch",
+                "[2026-06-11 10:01:02] [DONE] [gemini-3.1-pro-high] gemini-3.1-pro-high 结束",
+            ]
+        )
+
+        compacted = workbench_app.compact_run_log_for_display(log_text)
+
+        self.assertIn("[Step] 多模型复评与共识汇总", compacted)
+        self.assertIn("[DONE] [gemini-3.1-pro-high] gemini-3.1-pro-high 结束", compacted)
+        self.assertNotIn("多模型复评进度 attempt=1", compacted)
+        self.assertNotIn("progress=处理到 10/104", compacted)
+        self.assertNotIn("progress=处理到 20/104", compacted)
+
+    def test_multi_model_progress_html_does_not_indent_rows_as_markdown_code(self) -> None:
+        html = workbench_app.multi_model_progress_html(
+            [
+                {
+                    "key": "gemini-3.1-pro-high",
+                    "status_label": "运行中",
+                    "count_text": "成功 157/157，失败/跳过 0",
+                    "percent": 4,
+                    "elapsed": "30s",
+                }
+            ]
+        )
+
+        self.assertIn("minmax(128px, 180px) 64px minmax(168px, max-content)", html)
+        self.assertIn("成功 157/157，失败/跳过 0", html)
+        self.assertIn('<div class="review-progress-row">', html)
+        self.assertNotRegex(html, r"\n\s{4,}<div class=\"review-progress-row\"")
+        self.assertNotIn("&lt;div class=&quot;review-progress-row&quot;", html)
+
+    def test_consensus_rows_merge_z_quality_decisions(self) -> None:
+        models = ["m1", "m2", "m3"]
+        decisions = [
+            {
+                "code": "600000",
+                "strategy": "b1",
+                "review_key": "600000_b1",
+                "rank": 1,
+                "decision_bucket": "single_model_recommended",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 3.1,
+                "agreement_score": 0.3,
+                "recommended_by_model": {"m1": True, "m2": False, "m3": False},
+                "verdicts_by_model": {"m1": "PASS", "m2": "FAIL", "m3": "FAIL"},
+                "scores_by_model": {"m1": 4.4, "m2": 2.5, "m3": 2.4},
+                "missing_models": [],
+                "completed_count": 3,
+                "total_models": 3,
+            }
+        ]
+        z_by_key = {
+            "600000_b1": {
+                "z_quality_verdict": "A_SELECT",
+                "z_quality_score": 4.7,
+                "quality_reasons": ["结构亮点", "贴近支撑"],
+                "quality_risks": ["次日不能追高"],
+                "hard_vetoes": [],
+                "watch_caps": ["support_too_far"],
+            }
+        }
+
+        table_rows = workbench_app.consensus_decision_table_rows(decisions, models, z_by_key)
+        export_rows = workbench_app.consensus_export_rows(decisions, models, z_by_key)
+
+        self.assertEqual(table_rows[0]["Z裁决"], "A精选")
+        self.assertEqual(table_rows[0]["Z分"], 4.7)
+        self.assertEqual(table_rows[0]["Z观察限制"], "support_too_far")
+        self.assertEqual(export_rows[0]["z_quality_verdict"], "A_SELECT")
+        self.assertEqual(export_rows[0]["z_quality_label"], "A精选")
+        self.assertEqual(export_rows[0]["z_quality_score"], 4.7)
+        self.assertEqual(export_rows[0]["z_watch_caps"], ["support_too_far"])
+
+    def test_consensus_tdx_z_presets_and_filters(self) -> None:
+        rows = [
+            {
+                "code": "600000",
+                "strategy": "b1",
+                "decision_bucket_label": "单模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 3.1,
+                "pass_count": 1,
+                "watch_count": 0,
+                "fail_count": 2,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "推荐", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "A_SELECT",
+                "z_quality_score": 4.7,
+                "z_hard_vetoes": [],
+                "z_watch_caps": [],
+            },
+            {
+                "code": "000001",
+                "strategy": "b1",
+                "decision_bucket_label": "无模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 2.2,
+                "pass_count": 0,
+                "watch_count": 1,
+                "fail_count": 2,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "观察", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "B_WATCH",
+                "z_quality_score": 3.8,
+                "z_hard_vetoes": [],
+                "z_watch_caps": ["support_too_far"],
+            },
+            {
+                "code": "300001",
+                "strategy": "brick",
+                "decision_bucket_label": "无模型推荐",
+                "consensus_verdict": "FAIL",
+                "consensus_score": 1.8,
+                "pass_count": 0,
+                "watch_count": 0,
+                "fail_count": 3,
+                "missing_count": 0,
+                "model_count": 3,
+                "model_states": {"m1": "不推荐", "m2": "不推荐", "m3": "不推荐"},
+                "z_quality_verdict": "REJECT",
+                "z_quality_score": 2.4,
+                "z_hard_vetoes": ["centipede_like"],
+                "z_watch_caps": [],
+            },
+        ]
+
+        z_select = workbench_app.apply_consensus_tdx_preset(rows, "Z精选")
+        z_select_watch = workbench_app.apply_consensus_tdx_preset(rows, "Z精选+观察")
+        filtered = workbench_app.filter_consensus_tdx_rows(
+            rows,
+            strategies=["b1"],
+            verdicts=["FAIL"],
+            bucket_labels=["单模型推荐", "无模型推荐"],
+            selected_models=[],
+            selected_model_states=[],
+            model_match="任一选中模型满足",
+            pass_range=(0, 3),
+            watch_range=(0, 3),
+            fail_range=(0, 3),
+            score_range=(0.0, 5.0),
+            z_verdicts=["A_SELECT", "B_WATCH"],
+            z_score_range=(3.5, 5.0),
+            exclude_z_hard_veto=True,
+            exclude_z_watch_cap=True,
+            complete_only=True,
+        )
+
+        self.assertEqual([row["code"] for row in z_select], ["600000"])
+        self.assertEqual([row["code"] for row in z_select_watch], ["600000", "000001"])
+        self.assertEqual([row["code"] for row in filtered], ["600000"])
+
+    def test_consensus_tdx_z_presets_use_z_marker_in_block_names(self) -> None:
+        expected_identity_prefixes = {
+            "Z精选": "ZA",
+            "Z观察": "ZW",
+            "Z精选+观察": "ZQ",
+            "Z复盘样本": "ZR",
+        }
+        items = [{"code": "600000", "strategy": "b1", "score": 4.7, "recommended": True}]
+
+        for preset, identity_prefix in expected_identity_prefixes.items():
+            with self.subTest(preset=preset):
+                preset_config = workbench_app.CONSENSUS_TDX_PRESETS[preset]
+                blocks = workbench_app.tdx_export.build_blocks_from_items(
+                    "2026-06-12",
+                    items,
+                    name_prefix=preset_config.get("block_prefix", preset_config["prefix"]),
+                )
+                self.assertEqual(preset_config["prefix"], identity_prefix)
+                self.assertEqual(blocks[0]["name"], "0612ZB1")
+
+        consensus_config = workbench_app.CONSENSUS_TDX_PRESETS["多模型推荐"]
+        blocks = workbench_app.tdx_export.build_blocks_from_items(
+            "2026-06-12",
+            items,
+            name_prefix=consensus_config.get("block_prefix", consensus_config["prefix"]),
+        )
+        self.assertEqual(blocks[0]["name"], "0612CMB1")
 
     def test_parse_agy_models_output_preserves_exact_names(self) -> None:
         output = "\n".join(
@@ -340,6 +767,53 @@ class WorkbenchStockViewTests(unittest.TestCase):
         self.assertEqual(models, ["Gemini 3.5 Flash (High)"])
         self.assertEqual(error, "")
         self.assertTrue(fetched_at)
+
+    def test_stop_background_run_terminates_descendant_process_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            child_pid_path = tmp_path / "child.pid"
+            child_script = tmp_path / "child.py"
+            child_script.write_text(
+                "\n".join(
+                    [
+                        "import os",
+                        "import pathlib",
+                        "import time",
+                        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(os.getpid()), encoding='utf-8')",
+                        "time.sleep(60)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runner_script = tmp_path / "runner.py"
+            runner_script.write_text(
+                "\n".join(
+                    [
+                        "import subprocess",
+                        "import sys",
+                        "import time",
+                        f"subprocess.Popen([sys.executable, {str(child_script)!r}], start_new_session=True)",
+                        "time.sleep(60)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runner = subprocess.Popen([sys.executable, str(runner_script)], start_new_session=True)
+            self.assertTrue(wait_for_file(child_pid_path), "fake child did not start")
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+            run_dir = tmp_path / "run"
+            run_dir.mkdir()
+            (run_dir / "run_state.json").write_text(
+                json.dumps({"status": "running", "runner_pid": runner.pid}),
+                encoding="utf-8",
+            )
+
+            workbench_app.stop_background_run(run_dir)
+            runner.wait(timeout=5)
+            state = json.loads((run_dir / "run_state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(state["status"], "stopped")
+        self.assertTrue(wait_until_pid_not_live(child_pid), pid_status(child_pid))
 
 
 if __name__ == "__main__":

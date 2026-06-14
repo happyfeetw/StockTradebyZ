@@ -2,7 +2,7 @@
 
 你的任务是：
 
-> 根据图表中的 **趋势、位置、量价、历史异动、追高风险**，判断该股票当前是否具备 **波段爆发潜力**。
+> 根据图表中的 **趋势资格、支撑/止损、上方压力、量价呼吸、历史异动、买后纪律**，判断该股票在 **当前来源策略** 下是否具备可交易价值。
 
 这是一个 **纯视觉图形分析任务**。
 你必须像经验丰富的人类交易员一样，只依据图中真实可见的信息进行判断。
@@ -33,9 +33,21 @@
 
 ---
 
-# 经典图形叠加加分规则
+# 公共条件 gate 与经典图形规则
 
-所有策略都必须先按照通用框架评估 **趋势结构、价格位置、量价行为、历史异动和风险**。如果来源策略声明了经典图形匹配环节，则在通用框架之上叠加经典图形加分规则。
+所有策略都必须先评估 **公共交易前提**，再按照来源策略评估 **趋势结构、价格位置、量价行为、历史异动和经典图形完成度**。公共交易前提不是宽松平均分，而是先判断这张图有没有交易资格。
+
+公共交易前提不是某个单独战法，而是 B1 / B2 / brick 都要先满足的基础条件。活跃市值和大盘择时由用户人工确认，本轮不要臆测；图中能判断的公共条件必须写入 `common_gate`：
+
+* `trend_qualification`：白线/黄线、均线和整体趋势是否具备交易资格。
+* `support_stop_loss_control`：是否贴近支撑、黄线/平台/N 型前低，止损是否可控。
+* `overhead_room`：上方压力是否可接受，是否已经靠近前高、S1 或放量出货区。
+* `volume_health`：上涨放量、回调缩量是否健康，是否存在最大量阴线、放量大阴、冲高回落。
+* `post_entry_discipline`：买后应对是否清晰，例如没涨/盈转亏/止损/放飞/破白线/破黄线是否有可执行位置。
+
+公共 gate 中出现明显出货、止损不可控、支撑/趋势失效、上方空间严重不足时，`common_gate.hard_veto` 必须为 `true`，且 `verdict` 不能为 PASS。任一核心公共项只能给到 2 分时，即使平均分较高，也应把公共 gate 限制为 WATCH；因为 zettaranc 体系强调“有瑕疵就不干”，不能用其他高分掩盖核心硬伤。
+
+如果来源策略声明了经典图形匹配环节，则在策略评分中使用经典图形完成度。最终 `total_score` 和 `verdict` 会由本地程序按公共 gate + 策略 profile 重新归一化；你仍需按图表给出完整分数和初步判断。
 
 当前已有经典图形定义的单一策略包括：`b1`、`b2`、`brick`。复合策略一定不启用经典图形匹配环节；如果来源策略名包含 `+`、`&`、`,`、`|` 等组合含义，必须按基础四维评分处理，`classic_pattern_type` 填 `none`，`classic_pattern_match` 填 `0`。如果来源策略没有对应经典图形定义，也必须按基础四维评分处理。
 
@@ -44,7 +56,7 @@
 评分原则：
 
 * 经典图形类别只用于识别结构原型，类别之间没有天然强弱顺序。
-* 基础四维评分永远独立计算，经典图形匹配只作为额外加分，不替代、不稀释任何基础维度。
+* 基础四维评分永远独立计算，经典图形匹配只进入 `classic_pattern_match`，不替代任何基础维度。
 * 策略有经典图形匹配环节时，`classic_pattern_match` 使用 1 到 5 分；1 表示不匹配经典图形或没有经典图形加分，5 表示高度匹配。
 * 未启用经典图形匹配环节、复合策略、没有经典图形定义的策略，`classic_pattern_match` 填 0，表示不适用，不参与总分。
 * 策略有经典图形匹配环节，且图形符合该策略的任意一种经典图形，并且 K 线形态、成交量、量价关系基本一致，才可以把 `classic_pattern_match` 提高到 2 分以上。
@@ -89,6 +101,7 @@ B1 复评的经典图形加分逻辑：
 * 符合上述任一类，并且上涨放量、回调缩量、关键支撑不破，可以提高 `classic_pattern_match` 评分。
 * 不属于四类经典图形的，`classic_pattern_match` 填 1，表示不给经典图形加分。
 * 第四类虽然可以加分，但如果已经远离均线、上方空间不足或出现高位放量滞涨，必须在 `price_position` 和 `signal_type` 中体现风险。
+* B1 的核心不是“强”，而是低风险回调买点；离黄线/支撑远、止损没法设、上方标准压力近时，不能用经典图形相似度抬成 PASS。
 
 ---
 
@@ -107,6 +120,8 @@ B2 的三组经典图形只代表三种同等有效的结构原型，不存在�
 复评时先识别最接近哪一类原型；如果接近任意一类，都使用同一套评分标准衡量“完成度”，不能因为属于某一类而直接加分或扣分。三类都不贴合时，按图形完成度不足处理。
 
 B2 复评必须把量价关系放在核心位置：上涨放量、回调缩量、B2 当日放量或至少平量且多头实体占优，是最健康结构；下跌放量、最大量出现在阴线、放量冲高回落或连续放量滞涨，必须显著扣分。
+
+B2 是 B1 后的右侧确认，不是任意一根大阳线。位置已经远离支撑、临近重压、长上影冲高回落或量价不支持时，即使看起来强，也不能给 PASS。
 
 当来源策略为 b2 时，评分维度按以下口径解释：
 
@@ -156,6 +171,8 @@ B2 复评必须把量价关系放在核心位置：上涨放量、回调缩量�
 * 分层结构原型：20%。按定势1约 5-7 根、定势2约 7-15 根、定势3约 10-20 根逐级放大的结构窗口判断；不能用更早走势补足结构。
 * 单 K 质量和跳空约束：10%。无跳空、实体不过度、上下影线短加分。
 * 量价确认：10%。上涨放量、回调缩量、转折日量能支持加分。
+
+注意：砖型图复评不能只靠 `classic_pattern_match` 一项定生死。它必须同时满足公共交易资格、转折点位置、量价呼吸和 1-4 日超短纪律；绿转红触发清晰但位置差、跳空、长上影或放量冲高回落时，最多 WATCH，严重时 FAIL。
 
 ---
 
@@ -336,24 +353,14 @@ B2 复评必须把量价关系放在核心位置：上涨放量、回调缩量�
 
 # 三、权重
 
-未启用经典图形匹配环节的策略沿用通用四维权重：
+本系统使用策略 profile。不同来源策略使用同一组输出字段，但字段解释、权重、低分上限和 PASS/WATCH 门槛由本批 prompt 末尾的“评分体系 V3”决定。
 
-trend_structure：0.20
-price_position：0.20
-volume_behavior：0.30
-previous_abnormal_move：0.30
+你必须为每个字段给出 0 到 5 分：
 
-启用经典图形匹配环节的策略，先按通用四维权重计算基础分，再按经典图形匹配给额外加分：
+* `common_gate.scores.*`：公共交易前提，先判断能不能做。
+* `scores.trend_structure`、`scores.price_position`、`scores.volume_behavior`、`scores.previous_abnormal_move`、`scores.classic_pattern_match`：策略专项评分，判断该战法做得好不好。
 
-trend_structure：0.20
-price_position：0.20
-volume_behavior：0.30
-previous_abnormal_move：0.30
-
-classic_bonus = max(0, classic_pattern_match - 1) * 0.10
-total_score = min(5.0, base_score + classic_bonus)
-
-其中 `classic_pattern_match = 1` 表示不匹配经典图形或没有经典图形加分，额外加分为 0；`classic_pattern_match = 5` 时最多额外加 0.4 分。
+不要再使用全局固定 `4.0/3.2` 或旧的统一四维权重覆盖策略 profile。
 
 ---
 
@@ -375,13 +382,20 @@ distribution_risk → 出货风险
 
 # 六、判定规则
 
-PASS：total_score ≥ 4.0
-WATCH：3.2 ≤ total_score < 4.0
-FAIL：total_score < 3.2
+先看公共 gate，再看策略 profile：
+
+* 公共 gate 硬否决 → 必须 FAIL。
+* 公共 gate 只到 WATCH → 最多 WATCH，不能 PASS。
+* 公共 gate PASS 后，按本批策略 profile 的 PASS/WATCH 门槛判断。
 
 特殊规则：
 
-volume_behavior = 1 → 必须 FAIL
+* `common_gate.scores.volume_health <= 1` → 必须 FAIL。
+* `common_gate.scores.trend_qualification <= 1` → 必须 FAIL。
+* `common_gate.scores.overhead_room <= 1` → 必须 FAIL。
+* `volume_behavior = 1` → 必须 FAIL。
+* `support_stop_loss_control <= 1` → 必须 FAIL。
+* `trend_qualification`、`support_stop_loss_control`、`overhead_room`、`volume_health` 任一项只有 2 分 → 公共 gate 最多 WATCH。
 
 ---
 
@@ -428,7 +442,7 @@ signal_reasoning
 
 `classic_pattern_type` 必须从示例中的枚举值中选择一个。未启用经典图形匹配环节的策略填写 `none`。
 
-未启用经典图形匹配环节的策略、复合策略、没有经典图形定义的策略，`scores.classic_pattern_match` 填 0，并按通用四维权重计算 `total_score`。启用经典图形匹配环节的策略，先按通用四维权重计算基础分，再用 `classic_pattern_match` 计算额外加分；经典图形不匹配时填 1，表示不加分但不扣分。
+未启用经典图形匹配环节的策略、复合策略、没有经典图形定义的策略，`scores.classic_pattern_match` 填 0。启用经典图形匹配环节的策略，经典图形不匹配时填 1。
 
 {
 "trend_reasoning": "string",
@@ -438,6 +452,18 @@ signal_reasoning
 "signal_reasoning": "string",
 "classic_pattern_type": "b1_type1_low_breakout_pullback | b1_type2_strong_move_pullback | b1_type3_right_side_rebuild | b1_type4_acceleration_pullback | b2_parallel_cannon | b2_rebuild | b2_eager_to_break | brick_n_shape_launch | brick_sideways_launch | brick_uptrend_continuation | none",
 "classic_pattern_reasoning": "string",
+"common_gate": {
+"scores": {
+"trend_qualification": 1,
+"support_stop_loss_control": 1,
+"overhead_room": 1,
+"volume_health": 1,
+"post_entry_discipline": 1
+},
+"hard_veto": false,
+"hard_veto_reasons": [],
+"comment": "公共条件一句话说明"
+},
 "scores": {
 "trend_structure": 1,
 "price_position": 1,

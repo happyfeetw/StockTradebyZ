@@ -6,15 +6,15 @@ run_all.py
   步骤 1  pipeline/fetch_kline.py   — 拉取最新 K 线数据
   步骤 2  pipeline/cli.py preselect — 量化初选，生成候选列表
   步骤 3  dashboard/export_kline_charts.py — 导出候选股 K 线图
-  步骤 4  agent/gemini_cli_review.py — Gemini CLI 图表分析评分
+  步骤 4  agent/agy_cli_review.py — AGY CLI 图表分析评分
   步骤 5  打印推荐购买的股票
 
 用法：
     python run_all.py
     python run_all.py --skip-fetch     # 跳过行情下载（已有最新数据时）
     python run_all.py --start-from 3   # 从第 3 步开始（跳过前两步）
+    python run_all.py --reviewer agy-cli
     python run_all.py --reviewer gemini-api
-    python run_all.py --reviewer agy-cli-experimental
     python run_all.py --skip-review
 """
 from __future__ import annotations
@@ -43,17 +43,27 @@ def _run(step_name: str, cmd: list[str]) -> None:
 
 def _reviewer_script(reviewer: str) -> Path:
     scripts = {
-        "gemini-cli": ROOT / "agent" / "gemini_cli_review.py",
+        "agy-cli": ROOT / "agent" / "agy_cli_review.py",
         "gemini-api": ROOT / "agent" / "gemini_review.py",
-        "agy-cli-experimental": ROOT / "agent" / "agy_cli_review.py",
     }
     return scripts[reviewer]
 
 
 def _suggestion_file_for_reviewer(pick_date: str, reviewer: str) -> Path:
-    if reviewer == "agy-cli-experimental":
+    if reviewer == "agy-cli":
+        current = ROOT / "data" / "review" / "agy_cli" / pick_date / "suggestion.json"
+        if current.exists():
+            return current
         return ROOT / "data" / "review" / "agy_cli_experimental" / pick_date / "suggestion.json"
     return ROOT / "data" / "review" / pick_date / "suggestion.json"
+
+
+def _normalize_reviewer(value: str) -> str:
+    aliases = {
+        "agy-cli-experimental": "agy-cli",
+        "gemini-cli": "agy-cli",
+    }
+    return aliases.get(value, value)
 
 
 def _print_recommendations(reviewer: str) -> None:
@@ -126,16 +136,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--reviewer",
-        choices=("gemini-cli", "gemini-api", "agy-cli-experimental"),
-        default="gemini-cli",
-        help="第 4 步复评方式，默认 gemini-cli；gemini-api 使用 GEMINI_API_KEY；agy-cli-experimental 使用隔离实验输出",
+        default="agy-cli",
+        help="第 4 步复评方式：agy-cli 或 gemini-api；默认 agy-cli",
     )
     parser.add_argument(
         "--skip-review",
         action="store_true",
-        help="跳过步骤 4（Gemini 复评），直接打印已有 suggestion.json",
+        help="跳过步骤 4（AI 复评），直接打印已有 suggestion.json",
     )
     args = parser.parse_args()
+    args.reviewer = _normalize_reviewer(args.reviewer)
+    if args.reviewer not in {"agy-cli", "gemini-api"}:
+        parser.error("--reviewer 只支持 agy-cli 或 gemini-api")
 
     start = args.start_from
     
@@ -170,7 +182,7 @@ def main() -> None:
             [PYTHON, str(_reviewer_script(args.reviewer))],
         )
     elif args.skip_review:
-        print("\n[INFO] 已跳过 Gemini 复评步骤。")
+        print("\n[INFO] 已跳过 AI 复评步骤。")
 
     # ── 步骤 5：打印推荐结果 ─────────────────────────────────────────
     print(f"\n{'='*60}")

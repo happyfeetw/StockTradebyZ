@@ -1,11 +1,9 @@
 # Gemini CLI 复评方案
 
 本文档描述将当前项目的 Gemini API 复评环节扩展为 Gemini CLI 复评的方案。
-当前实现已把 `run_all.py` 的默认复评方式切换为 Gemini CLI，并保留 Gemini API
-作为显式兼容模式。
+这是历史方案文档。2026-06-12 起，`run_all.py` 和 Workbench 默认 Google 订阅登录复评路径已切换为 AGY CLI；Gemini CLI 仅作为历史兼容脚本保留，不再进入默认多模型配置。
 
-> AGY 迁移探索：Antigravity CLI 1.0.5 已支持 per-call `--model`，当前实验 reviewer
-> 见 [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
+> AGY 路径见 [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
 
 ## 背景
 
@@ -103,10 +101,10 @@ usage_file: data/review/.gemini_cli_usage.json
 - `idle_timeout_seconds`：空闲超时；默认 0 表示关闭，只保留 `timeout_seconds` 总超时。
 - `batch_size`：单次 CLI 请求最多提交几张图，默认 5，上限仍为 2700，并会按实际图片尺寸和上下文预算动态切批。
 - `save_raw_cli_io`/`raw_log_dir`：保存每次 CLI 调用的 prompt、stdout、stderr、meta；`raw_log_dir` 留空时写入 `data/review/{pick_date}/gemini_cli_runs`。
-- `fallback_to_single_on_batch_error`：批量 JSON 解析失败、超时或流式连接中断时，自动拆批并最终降级为逐只复评。
+- `fallback_to_single_on_batch_error`：批量 JSON 解析失败、超时或流式连接中断时，使用同一模型自动拆批并最终逐只复评。
 - `retry_backoff_seconds`：遇到 `429`、`RESOURCE_EXHAUSTED`、`No capacity available`、`Premature close`、超时等错误时的退避序列。
 - `retry_jitter_ratio`：在退避秒数上增加随机抖动，避免固定节奏连续撞服务端容量。
-- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；如果降级逐只复评，需要同步提高该值或分多次断点续跑。
+- `max_requests_per_run`：控制单次运行最多调用多少次 Gemini CLI；如果拆到逐只复评，需要同步提高该值或分多次断点续跑。
 - `daily_request_budget`：项目侧每日调用预算，避免撞到订阅账号日限额。
 - `stop_on_rate_limit`：重试耗尽后遇到限流或额度错误是否立即停止；默认 false，优先跳过失败股票并继续处理后续候选。
 

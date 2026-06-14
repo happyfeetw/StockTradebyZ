@@ -1,0 +1,82 @@
+# z_quality_rules.yaml
+# Z 视角精选池质量裁决配置。此层不依赖 zettaranc-perspective 的数据层，
+# 只使用本项目候选、共识复评结果、K线图和 data/raw 特征。
+
+ruleset_version: z_quality_v1
+consensus_summary: data/review_consensus/latest.json
+output_root: data/z_quality
+raw_dir: data/raw
+kline_dir: data/kline
+
+include_incomplete: false
+max_items:
+write_llm_inputs: true
+local_rules_only: true
+
+verdicts:
+  A_SELECT: 高质量精选候选，只表示值得进入重点观察池，不表示直接买入。
+  B_WATCH: 有结构亮点但不够完美，进入观察池。
+  C_REVIEW_ONLY: 有分歧或证据不足，只适合复盘研究。
+  REJECT: 硬伤明显，不进入 Z 精选池。
+
+thresholds:
+  # Z 层二次质量分阈值，不等同于模型复评 suggest_min_score=4.0。
+  # 模型是否推荐由策略 profile / reviewer 结论决定；这里仅决定 Z精选、Z观察、Z复盘样本分层。
+  z_select_min_quality_score: 4.2
+  z_watch_min_quality_score: 3.4
+  max_reject_score: 2.6
+
+hard_vetoes:
+  - consensus_incomplete
+  - majority_common_gate_fail
+  - model_hard_veto_majority
+  - fangliang_yinxian
+  - high_volume_upper_shadow
+  - centipede_like
+  - largest_volume_down_distribution
+
+watch_caps:
+  - overhead_pressure_close
+  - support_too_far
+  - model_disagreement
+  - data_limited
+
+strategy_rules:
+  b1:
+    focus:
+      - near_support
+      - pullback_shrink
+      - previous_abnormal_move
+      - not_after_completed_wave
+    select_language: "B1 质量核心是低风险回调，不是强行追强。"
+  b2:
+    focus:
+      - confirmation_strength
+      - volume_takeover
+      - not_chasing_far_from_support
+      - previous_b1_context
+    select_language: "B2 质量核心是 B1 后右侧确认，不是任意大阳线。"
+  brick:
+    focus:
+      - clear_green_to_red
+      - near_support
+      - no_gap_launch
+      - no_long_upper_shadow
+    select_language: "砖型图质量核心是贴近支撑的绿转红爆发，不是高位追红砖。"
+
+operation_plan_rules:
+  common:
+    confirm_conditions:
+      - 大环境不能处于明显空头；本层不自动判断大盘，交给人工确认。
+      - 次日不能高开远离支撑后追涨。
+      - 不能出现放量冲高回落、长上影失败或放量阴线。
+      - 图形仍要保持支撑/止损空间可控。
+    skip_conditions:
+      - 高开过多导致远离支撑。
+      - 开盘或盘中出现放量长上影。
+      - 跌破关键支撑后无法收回。
+      - 量价表现从健康呼吸变成乱量。
+    hold_rules:
+      - 买后不涨或盈转亏，要降低预期。
+      - 缩量调整且支撑不破，可以继续观察。
+      - 放量大阴、冲高回落、跌破关键支撑属于警戒。

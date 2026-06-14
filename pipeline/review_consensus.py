@@ -4,11 +4,15 @@ import argparse
 import csv
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "agent"))
+
+from review_scoring import strategy_thresholds  # noqa: E402
 DEFAULT_THRESHOLD = 4.0
 
 
@@ -57,9 +61,10 @@ def numeric_score(value: Any) -> float | None:
         return None
 
 
-def is_recommended(review: dict[str, Any], threshold: float) -> bool:
+def is_recommended(review: dict[str, Any], threshold: float, *, strategy: str = "", review_scoring: Any = None) -> bool:
     score = numeric_score(review.get("total_score"))
-    return score is not None and score >= threshold
+    pass_min, _ = strategy_thresholds(strategy or str(review.get("strategy") or ""), review_scoring, fallback=threshold)
+    return score is not None and score >= pass_min and str(review.get("verdict") or "").upper() == "PASS"
 
 
 def decision_bucket(completed: int, recommended: int, total_models: int) -> str:
@@ -86,6 +91,7 @@ def build_consensus(
     run_specs: list[dict[str, Any]],
     output_dir: Path | None = None,
     threshold: float = DEFAULT_THRESHOLD,
+    review_scoring: Any = None,
 ) -> dict[str, Any]:
     candidates_file = resolve_path(batch_manifest["candidates_file"])
     batch_payload = load_json(candidates_file)
@@ -150,7 +156,7 @@ def build_consensus(
 
             score = numeric_score(review.get("total_score"))
             verdict = str(review.get("verdict") or "")
-            recommended = is_recommended(review, threshold)
+            recommended = is_recommended(review, threshold, strategy=strategy, review_scoring=review_scoring)
             scores_by_model[key] = score
             verdicts_by_model[key] = verdict
             recommended_by_model[key] = recommended
@@ -158,7 +164,7 @@ def build_consensus(
             completed_models.append(key)
             if recommended:
                 recommended_models.append(key)
-            if recommended and verdict.upper() != "PASS":
+            if numeric_score(review.get("total_score")) is not None and recommended and verdict.upper() != "PASS":
                 invariant_violations.append(
                     {
                         "review_key": item_key,
@@ -190,6 +196,25 @@ def build_consensus(
             )
 
         bucket = decision_bucket(len(completed_models), len(recommended_models), total_models)
+        numeric_scores = [score for score in scores_by_model.values() if score is not None]
+        average_score = round(sum(numeric_scores) / len(numeric_scores), 2) if numeric_scores else None
+        min_score = round(min(numeric_scores), 2) if numeric_scores else None
+        max_score = round(max(numeric_scores), 2) if numeric_scores else None
+        agreement_score = round((len(recommended_models) / total_models) * 5.0, 2) if total_models else 0.0
+        consensus_score = (
+            round((average_score * 0.70) + (agreement_score * 0.30), 2)
+            if average_score is not None
+            else None
+        )
+        strategy_pass_min, strategy_watch_min = strategy_thresholds(strategy, review_scoring, fallback=threshold)
+        if len(completed_models) < total_models:
+            consensus_verdict = "INCOMPLETE"
+        elif bucket == "all_models_recommended":
+            consensus_verdict = "PASS"
+        elif recommended_models and consensus_score is not None and consensus_score >= strategy_watch_min:
+            consensus_verdict = "WATCH"
+        else:
+            consensus_verdict = "FAIL"
         decisions.append(
             {
                 "batch_id": batch_id,
@@ -200,6 +225,14 @@ def build_consensus(
                 "strategy": strategy,
                 "close": candidate.get("close"),
                 "decision_bucket": bucket,
+                "consensus_score": consensus_score,
+                "consensus_verdict": consensus_verdict,
+                "average_score": average_score,
+                "min_score": min_score,
+                "max_score": max_score,
+                "agreement_score": agreement_score,
+                "strategy_pass_min": strategy_pass_min,
+                "strategy_watch_min": strategy_watch_min,
                 "all_models_recommended": bucket == "all_models_recommended",
                 "recommended_count": len(recommended_models),
                 "completed_count": len(completed_models),
@@ -240,6 +273,7 @@ def build_consensus(
         "pick_date": pick_date,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "threshold": threshold,
+        "threshold_mode": "strategy_profile",
         "candidate_count": len(decisions),
         "model_count": total_models,
         "models": [model_key(spec) for spec in model_specs],
@@ -286,6 +320,14 @@ def flatten_decision_rows(decisions: list[dict[str, Any]]) -> list[dict[str, Any
             "strategy": decision.get("strategy"),
             "close": decision.get("close"),
             "decision_bucket": decision.get("decision_bucket"),
+            "consensus_score": decision.get("consensus_score"),
+            "consensus_verdict": decision.get("consensus_verdict"),
+            "average_score": decision.get("average_score"),
+            "min_score": decision.get("min_score"),
+            "max_score": decision.get("max_score"),
+            "agreement_score": decision.get("agreement_score"),
+            "strategy_pass_min": decision.get("strategy_pass_min"),
+            "strategy_watch_min": decision.get("strategy_watch_min"),
             "all_models_recommended": decision.get("all_models_recommended"),
             "recommended_count": decision.get("recommended_count"),
             "completed_count": decision.get("completed_count"),

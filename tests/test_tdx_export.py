@@ -28,6 +28,14 @@ class TdxExportTests(unittest.TestCase):
             tdx_export.import_html_filename("2026-06-03", "仅推荐"),
             "tdx_import_20260603_recommended.html",
         )
+        self.assertEqual(
+            tdx_export.import_html_filename("2026-06-03", "共识结果-多模型推荐"),
+            "tdx_import_20260603_consensus_multi_recommended.html",
+        )
+        self.assertEqual(
+            tdx_export.import_html_filename("2026-06-03", "共识结果-Z精选+观察"),
+            "tdx_import_20260603_z_select_watch.html",
+        )
 
     def test_cfg_record_merge_is_fixed_width_and_deduped(self) -> None:
         record = tdx_export.cfg_record_bytes("0602QB1")
@@ -109,6 +117,28 @@ class TdxExportTests(unittest.TestCase):
 
         all_by_name = {block["name"]: block for block in all_blocks}
         self.assertEqual(base64.b64decode(all_by_name["0602QB1"]["content_b64"]), b"1600000\r\n0000001\r\n")
+
+    def test_build_blocks_from_items_uses_custom_prefix_and_strategy_groups(self) -> None:
+        blocks = tdx_export.build_blocks_from_items(
+            "2026-06-05",
+            [
+                {"code": "300001", "strategy": "brick", "score": 4.8, "recommended": True},
+                {"code": "600000", "strategy": "b1", "score": 4.6, "recommended": True},
+                {"code": "000001", "strategy": "b1", "score": 3.2, "recommended": False},
+            ],
+            name_prefix="CM",
+        )
+
+        by_name = {block["name"]: block for block in blocks}
+        self.assertEqual(sorted(by_name), ["0605CMB1", "0605CMBrick"])
+        self.assertEqual(
+            base64.b64decode(by_name["0605CMB1"]["content_b64"]),
+            b"1600000\r\n0000001\r\n",
+        )
+        self.assertEqual(
+            base64.b64decode(by_name["0605CMBrick"]["content_b64"]),
+            b"0300001\r\n",
+        )
 
     def test_export_to_tdx_writes_blk_and_cfg(self) -> None:
         blocks = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -42,7 +43,7 @@ def valid_review_payload(**overrides):
 
 
 class CodexCliReviewerTests(unittest.TestCase):
-    def make_reviewer(self, tmp_path: Path) -> codex_cli_review.CodexCliReviewer:
+    def make_reviewer(self, tmp_path: Path, **config_overrides) -> codex_cli_review.CodexCliReviewer:
         prompt_path = tmp_path / "prompt.md"
         prompt_path.write_text("评分规则", encoding="utf-8")
         config = {
@@ -51,6 +52,7 @@ class CodexCliReviewerTests(unittest.TestCase):
             "prompt_path": prompt_path,
             "kline_dir": tmp_path,
             "output_dir": tmp_path / "review",
+            **config_overrides,
         }
         return codex_cli_review.CodexCliReviewer(config)
 
@@ -72,13 +74,125 @@ class CodexCliReviewerTests(unittest.TestCase):
             )
 
         self.assertEqual(cmd[:4], ["/bin/echo", "--ask-for-approval", "never", "exec"])
-        self.assertIn("--ignore-user-config", cmd)
+        self.assertNotIn("--ignore-user-config", cmd)
         self.assertIn("--ignore-rules", cmd)
         self.assertIn("gpt-5.5", cmd)
         self.assertIn('model_reasoning_effort="high"', cmd)
         self.assertIn("fast_default_opt_out=true", cmd)
+        self.assertNotIn('model_provider="env_custom"', cmd)
+        self.assertNotIn('preferred_auth_method="apikey"', cmd)
         self.assertIn("--output-schema", cmd)
         self.assertEqual(cmd[-1], "prompt text")
+
+    def test_build_command_can_ignore_user_config_when_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp), ignore_user_config=True)
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+
+        self.assertIn("--ignore-user-config", cmd)
+
+    def test_build_command_ignores_env_provider_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"CODEX_OPENAI_BASE_URL": "http://127.0.0.1:8317/v1"},
+            clear=False,
+        ):
+            reviewer = self.make_reviewer(Path(tmp))
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+
+        self.assertNotIn('model_provider="env_custom"', cmd)
+        self.assertNotIn('model_providers.env_custom.base_url="http://127.0.0.1:8317/v1"', cmd)
+        self.assertNotIn('preferred_auth_method="apikey"', cmd)
+
+    def test_build_command_adds_env_provider_only_when_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"CODEX_OPENAI_BASE_URL": "http://127.0.0.1:8317/v1"},
+            clear=False,
+        ):
+            reviewer = self.make_reviewer(Path(tmp), env_provider_enabled=True)
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+
+        self.assertIn('model_provider="env_custom"', cmd)
+        self.assertIn('model_providers.env_custom.base_url="http://127.0.0.1:8317/v1"', cmd)
+        self.assertIn('preferred_auth_method="apikey"', cmd)
+
+    def test_codex_env_strips_api_env_in_default_oauth_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "CODEX_OPENAI_BASE_URL": "http://127.0.0.1:8317/v1",
+                "CODEX_OPENAI_API_KEY": "ccswitch-test-key",
+                "OPENAI_BASE_URL": "http://127.0.0.1:8317/v1",
+                "OPENAI_API_BASE": "http://127.0.0.1:8317/v1",
+                "OPENAI_API_KEY": "openai-test-key",
+            },
+            clear=False,
+        ):
+            reviewer = self.make_reviewer(Path(tmp))
+            env, meta = reviewer._codex_env()
+
+        self.assertNotIn("CODEX_OPENAI_BASE_URL", env)
+        self.assertNotIn("CODEX_OPENAI_API_KEY", env)
+        self.assertNotIn("OPENAI_BASE_URL", env)
+        self.assertNotIn("OPENAI_API_BASE", env)
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertFalse(meta["api_key_forwarded"])
+        self.assertFalse(meta["api_key_env_present"])
+        self.assertIn("CODEX_OPENAI_API_KEY", meta["stripped_env_vars"])
+
+    def test_codex_env_maps_namespaced_api_key_to_openai_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "CODEX_OPENAI_BASE_URL": "http://127.0.0.1:8317/v1",
+                "CODEX_OPENAI_API_KEY": "ccswitch-test-key",
+            },
+            clear=True,
+        ):
+            reviewer = self.make_reviewer(Path(tmp), env_provider_enabled=True)
+            env, meta = reviewer._codex_env()
+
+        self.assertEqual(env["OPENAI_API_KEY"], "ccswitch-test-key")
+        self.assertEqual(meta["api_key_env_var"], "CODEX_OPENAI_API_KEY")
+        self.assertTrue(meta["api_key_env_present"])
+        self.assertTrue(meta["api_key_forwarded"])
 
     def test_parse_result_marks_fixed_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,6 +215,63 @@ class CodexCliReviewerTests(unittest.TestCase):
         self.assertEqual(parsed[0]["reasoning_effort"], "high")
         self.assertEqual(parsed[0]["speed_tier"], "standard")
         self.assertEqual(parsed[0]["json_output_mode"], "output-schema")
+
+    def test_parse_result_classifies_api_key_error_as_auth_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(Path(tmp))
+            result = subprocess.CompletedProcess(
+                args=["codex"],
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "ERROR: unexpected status 401 Unauthorized: "
+                    "Incorrect API key provided: sk-***"
+                ),
+            )
+
+            with self.assertRaises(codex_cli_review.CodexCliAuthError):
+                reviewer._parse_result(result, items=[{"code": "000001", "strategy": "b1"}])
+
+
+    def test_explicit_unfixed_model_override_updates_command_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewer = self.make_reviewer(
+                Path(tmp),
+                model="gpt-5.4",
+                model_profile="gpt-5.4-medium-standard",
+                reasoning_effort="medium",
+                speed_tier="standard",
+                force_fixed_model=False,
+            )
+            chart = Path(tmp) / "000001_day.jpg"
+            schema = Path(tmp) / "schema.json"
+            output = Path(tmp) / "last_message.json"
+            chart.write_bytes(b"fake")
+            schema.write_text("{}", encoding="utf-8")
+
+            cmd = reviewer._build_command(
+                image_paths=[chart],
+                schema_path=schema,
+                output_path=output,
+                work_dir=Path(tmp),
+                prompt="prompt text",
+            )
+            result = subprocess.CompletedProcess(
+                args=["codex"],
+                returncode=0,
+                stdout=json.dumps({"reviews": [valid_review_payload()]}, ensure_ascii=False),
+                stderr="",
+            )
+            parsed = reviewer._parse_result(
+                result,
+                items=[{"code": "000001", "strategy": "b1"}],
+            )
+
+        self.assertIn("gpt-5.4", cmd)
+        self.assertIn('model_reasoning_effort="medium"', cmd)
+        self.assertEqual(parsed[0]["model"], "gpt-5.4")
+        self.assertEqual(parsed[0]["model_profile"], "gpt-5.4-medium-standard")
+        self.assertEqual(parsed[0]["reasoning_effort"], "medium")
 
     def test_output_schema_is_strict_for_codex_structured_output(self) -> None:
         schema = codex_cli_review.output_schema(2)
@@ -167,6 +338,88 @@ class CodexCliReviewerTests(unittest.TestCase):
 
         self.assertEqual(cfg["model"], "gpt-5.5")
         self.assertEqual(cfg["reasoning_effort"], "high")
+        self.assertEqual(cfg["speed_tier"], "standard")
+        self.assertEqual(cfg["auth_mode"], "local_oauth")
+        self.assertFalse(cfg["ignore_user_config"])
+        self.assertFalse(cfg["env_provider_enabled"])
+
+    def test_load_config_infers_legacy_env_provider_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "codex.yaml"
+            prompt = Path(tmp) / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    [
+                        f"prompt_path: {prompt}",
+                        f"kline_dir: {tmp}",
+                        f"output_dir: {tmp}/review",
+                        "candidates: data/candidates/candidates_latest.json",
+                        "env_provider_enabled: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = codex_cli_review.load_config(path)
+
+        self.assertEqual(cfg["auth_mode"], "env_provider")
+        self.assertTrue(cfg["env_provider_enabled"])
+        self.assertTrue(cfg["ignore_user_config"])
+
+    def test_load_config_local_oauth_auth_mode_overrides_stale_provider_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "codex.yaml"
+            prompt = Path(tmp) / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    [
+                        f"prompt_path: {prompt}",
+                        f"kline_dir: {tmp}",
+                        f"output_dir: {tmp}/review",
+                        "candidates: data/candidates/candidates_latest.json",
+                        "auth_mode: local_oauth",
+                        "ignore_user_config: true",
+                        "env_provider_enabled: true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = codex_cli_review.load_config(path)
+
+        self.assertEqual(cfg["auth_mode"], "local_oauth")
+        self.assertFalse(cfg["env_provider_enabled"])
+        self.assertFalse(cfg["ignore_user_config"])
+
+    def test_load_config_allows_model_override_when_explicitly_unfixed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "codex.yaml"
+            prompt = Path(tmp) / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            path.write_text(
+                "\n".join(
+                    [
+                        f"prompt_path: {prompt}",
+                        f"kline_dir: {tmp}",
+                        f"output_dir: {tmp}/review",
+                        "candidates: data/candidates/candidates_latest.json",
+                        "force_fixed_model: false",
+                        "model: gpt-5.4",
+                        "model_profile: gpt-5.4-medium-standard",
+                        "reasoning_effort: medium",
+                        "speed_tier: standard",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cfg = codex_cli_review.load_config(path)
+
+        self.assertEqual(cfg["model"], "gpt-5.4")
+        self.assertEqual(cfg["model_profile"], "gpt-5.4-medium-standard")
+        self.assertEqual(cfg["reasoning_effort"], "medium")
         self.assertEqual(cfg["speed_tier"], "standard")
 
 

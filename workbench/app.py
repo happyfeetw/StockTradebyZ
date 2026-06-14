@@ -17,6 +17,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,30 +28,107 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+try:
+    from tornado.iostream import StreamClosedError as _TornadoStreamClosedError
+    from tornado.websocket import WebSocketClosedError as _TornadoWebSocketClosedError
+except Exception:  # noqa: BLE001 - Streamlit may be stubbed in unit tests.
+    _TornadoStreamClosedError = None
+    _TornadoWebSocketClosedError = None
+
+
+class _ClosedWorkbenchWebSocketFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "Task exception was never retrieved" not in record.getMessage():
+            return True
+        exc = record.exc_info[1] if record.exc_info else None
+        if _TornadoWebSocketClosedError is not None and isinstance(exc, _TornadoWebSocketClosedError):
+            return False
+        if _TornadoStreamClosedError is not None and isinstance(exc, _TornadoStreamClosedError):
+            return False
+        return True
+
+
+def install_workbench_log_filters() -> None:
+    asyncio_logger = logging.getLogger("asyncio")
+    if not any(isinstance(item, _ClosedWorkbenchWebSocketFilter) for item in asyncio_logger.filters):
+        asyncio_logger.addFilter(_ClosedWorkbenchWebSocketFilter())
+
+
+install_workbench_log_filters()
+
 ROOT = Path(__file__).resolve().parent.parent
 WORKBENCH_DIR = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "data" / "runs"
 HISTORY_DIR = ROOT / "data" / "history"
 CONSENSUS_DIR = ROOT / "data" / "review_consensus"
+Z_QUALITY_DIR = ROOT / "data" / "z_quality"
 RUN_MODES = ["完整流程", "跳过抓取", "初选+导出图表", "只抓取数据", "只跑初选", "只导出图表", "只跑复评"]
 DEFAULT_CLASSIC_PATTERN_STRATEGIES = ("b1", "b2", "brick")
 FORMAL_REVIEW_SOURCE = "formal"
-AGY_REVIEW_SOURCE = "agy-cli-experimental"
+AGY_REVIEW_SOURCE = "agy-cli"
+LEGACY_AGY_REVIEW_SOURCE = "agy-cli-experimental"
 CODEX_REVIEW_SOURCE = "codex-cli"
+GEMINI_35_FLASH_HIGH = "gemini-3.5-flash-high"
+GEMINI_31_PRO_HIGH = "gemini-3.1-pro-high"
+GPT_55_HIGH = "gpt-5.5-high"
+REVIEW_MODEL_SPECS = {
+    GEMINI_35_FLASH_HIGH: {
+        "label": "Gemini 3.5 Flash High",
+        "backend": AGY_REVIEW_SOURCE,
+        "backend_model": "Gemini 3.5 Flash (High)",
+        "output_dir": f"data/review_models/{GEMINI_35_FLASH_HIGH}",
+    },
+    GEMINI_31_PRO_HIGH: {
+        "label": "Gemini 3.1 Pro High",
+        "backend": AGY_REVIEW_SOURCE,
+        "backend_model": "Gemini 3.1 Pro (High)",
+        "output_dir": f"data/review_models/{GEMINI_31_PRO_HIGH}",
+    },
+    GPT_55_HIGH: {
+        "label": "GPT-5.5 High",
+        "backend": CODEX_REVIEW_SOURCE,
+        "backend_model": "gpt-5.5",
+        "output_dir": f"data/review_models/{GPT_55_HIGH}",
+    },
+}
 REVIEW_SOURCE_LABELS = {
-    FORMAL_REVIEW_SOURCE: "正式 Gemini",
-    AGY_REVIEW_SOURCE: "AGY 实验",
+    FORMAL_REVIEW_SOURCE: "历史正式复评",
+    AGY_REVIEW_SOURCE: "AGY 旧结果",
+    LEGACY_AGY_REVIEW_SOURCE: "AGY 旧结果",
     CODEX_REVIEW_SOURCE: "Codex GPT-5.5",
+    **{key: str(spec["label"]) for key, spec in REVIEW_MODEL_SPECS.items()},
 }
 REVIEWER_OPTIONS = {
-    "gemini-cli": "Gemini CLI（本机登录）",
-    "agy-cli-experimental": "AGY CLI（实验）",
-    "codex-cli": "Codex GPT-5.5",
-    "multi-model": "多模型复评",
-    "gemini-api": "Gemini API Key",
+    GEMINI_35_FLASH_HIGH: REVIEW_MODEL_SPECS[GEMINI_35_FLASH_HIGH]["label"],
+    GEMINI_31_PRO_HIGH: REVIEW_MODEL_SPECS[GEMINI_31_PRO_HIGH]["label"],
+    GPT_55_HIGH: REVIEW_MODEL_SPECS[GPT_55_HIGH]["label"],
+    "multi-model": "三模型共识",
 }
 REVIEWER_WIDGET_KEY = "reviewer_choice"
+CODEX_AUTH_MODE_LOCAL_OAUTH = "local_oauth"
+CODEX_AUTH_MODE_ENV_PROVIDER = "env_provider"
+CODEX_AUTH_MODE_OPTIONS = {
+    CODEX_AUTH_MODE_LOCAL_OAUTH: "本机 Codex OAuth（默认）",
+    CODEX_AUTH_MODE_ENV_PROVIDER: "OpenAI-compatible 本地代理/API key",
+}
 AGY_MODELS_CACHE_KEY = "agy_models_cache"
+MODEL_PROGRESS_ROW_RE = re.compile(
+    r"^\s*-\s+(?P<key>[^:]+):\s+(?P<status>[^,]+)"
+    r"(?:,\s+exit=(?P<exit>-?\d+))?,\s+elapsed=(?P<elapsed>[^,]+),\s+"
+    r"progress=(?P<progress>.*?),\s+latest=(?P<latest>.*)$"
+)
+MODEL_CONFIG_ROW_RE = re.compile(r"\[(?:CONFIG|INFO)\]\s+reviewer config:\s+(?P<key>\S+)\s+->")
+MODEL_RUNTIME_CONFIG_ROW_RE = re.compile(r"\[CONFIG\]\s+(?P<key>\S+)\s+->")
+MODEL_START_ROW_RE = re.compile(r"\[(?:START|INFO)\].*?启动\s+(?P<key>\S+?)(?:\s+attempt=\d+|:|\s|$)")
+MODEL_DONE_ROW_RE = re.compile(
+    r"\[(?:DONE|INFO)\].*?(?P<key>[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)\s+结束"
+    r"(?:[，,]\s*exit=(?P<exit>-?\d+))?"
+)
+MODEL_OLD_RUNNING_ROW_RE = re.compile(r"多模型复评仍在运行：(?P<keys>.+)$")
+MODEL_PROGRESS_TEXT_RE = re.compile(r"(?P<completed>\d+)\s*/\s*(?P<total>\d+)\s*\((?P<pct>\d+)%\)")
+MODEL_SUCCESS_PROGRESS_TEXT_RE = re.compile(
+    r"成功\s*(?P<success>\d+)\s*/\s*(?P<total>\d+)[，,]\s*失败/跳过\s*(?P<failed>\d+)\s*\((?P<pct>\d+)%\)"
+)
 
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dashboard"))
@@ -155,7 +233,7 @@ def default_run_cfg() -> dict[str, Any]:
         "pick_date": dt.date.today().isoformat(),
         "end_date": "",
         "preselect_log_dir": "./data/logs",
-        "reviewer": "gemini-cli",
+        "reviewer": GEMINI_35_FLASH_HIGH,
     }
 
 
@@ -180,6 +258,52 @@ def project_path(value: Any, fallback: str) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
+def model_output_dir(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("output_dir") or f"data/review_models/{model_key}")
+
+
+def model_backend(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("backend") or "")
+
+
+def model_backend_name(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("backend_model") or "")
+
+
+def model_label(model_key: str) -> str:
+    spec = REVIEW_MODEL_SPECS.get(model_key) or {}
+    return str(spec.get("label") or model_key)
+
+
+def should_use_model_default_output_dir(current: Any) -> bool:
+    text = clean_text(current)
+    if not text:
+        return True
+    known_defaults = {
+        "data/review",
+        "./data/review",
+        "data/review/agy_cli",
+        "./data/review/agy_cli",
+        "data/review/agy_cli_experimental",
+        "./data/review/agy_cli_experimental",
+        "data/review/codex_cli",
+        "./data/review/codex_cli",
+        *[str(spec.get("output_dir") or "") for spec in REVIEW_MODEL_SPECS.values()],
+    }
+    return text in known_defaults
+
+
+def apply_model_defaults_to_config(cfg: dict[str, Any], reviewer: str) -> dict[str, Any]:
+    cfg["model_key"] = reviewer
+    cfg["model"] = model_backend_name(reviewer)
+    if should_use_model_default_output_dir(cfg.get("output_dir")):
+        cfg["output_dir"] = model_output_dir(reviewer)
+    return cfg
+
+
 def agy_review_base_dir() -> Path:
     cfg: dict[str, Any] = {}
     try:
@@ -190,7 +314,7 @@ def agy_review_base_dir() -> Path:
         cfg = {}
     if not cfg:
         cfg = load_yaml(ROOT / "config" / "agy_cli_review.yaml")
-    return project_path(cfg.get("output_dir"), "data/review/agy_cli_experimental")
+    return project_path(cfg.get("output_dir"), "data/review/agy_cli")
 
 
 def codex_review_base_dir() -> Path:
@@ -207,8 +331,12 @@ def codex_review_base_dir() -> Path:
 
 
 def review_base_dir(review_source: str = FORMAL_REVIEW_SOURCE) -> Path:
+    if review_source in REVIEW_MODEL_SPECS:
+        return project_path(model_output_dir(review_source), model_output_dir(review_source))
     if review_source == AGY_REVIEW_SOURCE:
         return agy_review_base_dir()
+    if review_source == LEGACY_AGY_REVIEW_SOURCE:
+        return ROOT / "data" / "review" / "agy_cli_experimental"
     if review_source == CODEX_REVIEW_SOURCE:
         return codex_review_base_dir()
     return ROOT / "data" / "review"
@@ -238,10 +366,18 @@ def review_source_has_data(pick_date: str, review_source: str = FORMAL_REVIEW_SO
 def review_sources_for_date(pick_date: str) -> list[str]:
     sources = [
         source
-        for source in (FORMAL_REVIEW_SOURCE, AGY_REVIEW_SOURCE, CODEX_REVIEW_SOURCE)
+        for source in (
+            GEMINI_35_FLASH_HIGH,
+            GEMINI_31_PRO_HIGH,
+            GPT_55_HIGH,
+            AGY_REVIEW_SOURCE,
+            LEGACY_AGY_REVIEW_SOURCE,
+            CODEX_REVIEW_SOURCE,
+            FORMAL_REVIEW_SOURCE,
+        )
         if review_source_has_data(pick_date, source)
     ]
-    return sources or [FORMAL_REVIEW_SOURCE]
+    return sources or [GEMINI_35_FLASH_HIGH]
 
 
 def render_review_source_selectbox(label: str, pick_date: str, key: str) -> str:
@@ -251,10 +387,12 @@ def render_review_source_selectbox(label: str, pick_date: str, key: str) -> str:
     return sources[labels.index(selected_label)]
 
 
-def latest_suggestion(review_source: str = FORMAL_REVIEW_SOURCE) -> dict[str, Any]:
+def latest_suggestion(review_source: str | None = None) -> dict[str, Any]:
     pick_date = latest_pick_date()
     if not pick_date:
         return {}
+    if not review_source:
+        review_source = review_sources_for_date(pick_date)[0]
     return load_review_suggestion(pick_date, review_source)
 
 
@@ -292,7 +430,6 @@ def environment_status() -> list[tuple[str, str, str]]:
     suggestion = latest_suggestion()
     return [
         ("Tushare", "ok" if token else "err", "已配置" if token else "未配置"),
-        ("Gemini CLI", "ok" if shutil.which("gemini") else "warn", "已安装" if shutil.which("gemini") else "未找到"),
         ("AGY CLI", "ok" if shutil.which("agy") else "warn", "已安装" if shutil.which("agy") else "未找到"),
         ("Codex CLI", "ok" if shutil.which("codex") else "warn", "已安装" if shutil.which("codex") else "未找到"),
         ("Gemini API", "ok" if gemini_api_key else "warn", "已配置" if gemini_api_key else "未配置"),
@@ -338,19 +475,52 @@ def ensure_session_state() -> None:
         st.session_state.last_run_dir = ""
 
 
+def has_run_artifacts(path: Path) -> bool:
+    return (
+        (path / "run_state.json").exists()
+        or (path / "run.log").exists()
+        or (path / "multi_model_logs").is_dir()
+    )
+
+
+def run_dir_updated_at(path: Path) -> float:
+    candidates = [path]
+    for name in ("run_state.json", "run.log"):
+        item = path / name
+        if item.exists():
+            candidates.append(item)
+    logs_dir = path / "multi_model_logs"
+    if logs_dir.is_dir():
+        candidates.extend(item for item in logs_dir.iterdir() if item.is_file())
+    return max(item.stat().st_mtime for item in candidates)
+
+
 def list_run_dirs() -> list[Path]:
     if not RUNS_DIR.exists():
         return []
-    return sorted([p for p in RUNS_DIR.iterdir() if p.is_dir()], reverse=True)
+
+    return sorted(
+        [p for p in RUNS_DIR.iterdir() if p.is_dir() and has_run_artifacts(p)],
+        key=run_dir_updated_at,
+        reverse=True,
+    )
 
 
 def latest_run_dir() -> Path | None:
+    for run_dir in list_run_dirs():
+        if is_run_active(run_dir):
+            st.session_state.last_run_dir = str(run_dir)
+            return run_dir
+    runs = list_run_dirs()
     if st.session_state.get("last_run_dir"):
         p = Path(str(st.session_state.last_run_dir))
-        if p.exists():
-            return p
-    runs = list_run_dirs()
-    return runs[0] if runs else None
+        if p.exists() and has_run_artifacts(p):
+            if not runs or p == runs[0] or run_dir_updated_at(p) >= run_dir_updated_at(runs[0]):
+                return p
+    latest = runs[0] if runs else None
+    if latest is not None:
+        st.session_state.last_run_dir = str(latest)
+    return latest
 
 
 def run_state(run_dir: Path | None = None) -> dict[str, Any]:
@@ -371,6 +541,53 @@ def is_pid_running(pid: int | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_table() -> list[dict[str, int]]:
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,pgid="],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001 - cleanup still falls back to the root process group.
+        return []
+
+    rows: list[dict[str, int]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            rows.append({"pid": int(parts[0]), "ppid": int(parts[1]), "pgid": int(parts[2])})
+        except ValueError:
+            continue
+    return rows
+
+
+def descendant_process_groups(root_pid: int) -> set[int]:
+    rows = _process_table()
+    children_by_parent: dict[int, list[dict[str, int]]] = {}
+    for row in rows:
+        children_by_parent.setdefault(row["ppid"], []).append(row)
+
+    pgids: set[int] = set()
+    stack = [root_pid]
+    seen: set[int] = set()
+    while stack:
+        parent = stack.pop()
+        if parent in seen:
+            continue
+        seen.add(parent)
+        for child in children_by_parent.get(parent, []):
+            pgids.add(child["pgid"])
+            stack.append(child["pid"])
+
+    root_row = next((row for row in rows if row["pid"] == root_pid), None)
+    if root_row:
+        pgids.add(root_row["pgid"])
+    return {pgid for pgid in pgids if pgid > 0 and pgid != os.getpgrp()}
 
 
 def is_run_active(run_dir: Path | None = None) -> bool:
@@ -442,9 +659,66 @@ def clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def config_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def normalize_codex_auth_mode(cfg: dict[str, Any] | None) -> str:
+    cfg = cfg or {}
+    raw = clean_text(cfg.get("auth_mode") or cfg.get("codex_auth_mode")).lower().replace("-", "_")
+    aliases = {
+        "oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "local": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "local_oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "codex_oauth": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "native": CODEX_AUTH_MODE_LOCAL_OAUTH,
+        "env": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "env_provider": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "local_proxy": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "proxy": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "apikey": CODEX_AUTH_MODE_ENV_PROVIDER,
+        "api_key": CODEX_AUTH_MODE_ENV_PROVIDER,
+    }
+    if raw:
+        return aliases.get(raw, CODEX_AUTH_MODE_LOCAL_OAUTH)
+    if config_bool(cfg.get("env_provider_enabled"), default=False):
+        return CODEX_AUTH_MODE_ENV_PROVIDER
+    return CODEX_AUTH_MODE_LOCAL_OAUTH
+
+
+def apply_codex_auth_mode(cfg: dict[str, Any], mode: str) -> dict[str, Any]:
+    previous_mode = normalize_codex_auth_mode(cfg)
+    mode = normalize_codex_auth_mode({"auth_mode": mode})
+    cfg["auth_mode"] = mode
+    if mode == CODEX_AUTH_MODE_ENV_PROVIDER:
+        cfg["env_provider_enabled"] = True
+        cfg["ignore_user_config"] = (
+            config_bool(cfg.get("ignore_user_config"), default=True)
+            if previous_mode == CODEX_AUTH_MODE_ENV_PROVIDER
+            else True
+        )
+    else:
+        cfg["env_provider_enabled"] = False
+        cfg["ignore_user_config"] = False
+    return cfg
+
+
 def normalize_reviewer(value: Any) -> str:
-    reviewer = clean_text(value) or "gemini-cli"
-    return reviewer if reviewer in REVIEWER_OPTIONS else "gemini-cli"
+    reviewer = clean_text(value) or GEMINI_35_FLASH_HIGH
+    aliases = {
+        "gemini-cli": GEMINI_35_FLASH_HIGH,
+        "agy-cli": GEMINI_35_FLASH_HIGH,
+        "agy-cli-experimental": GEMINI_35_FLASH_HIGH,
+        "codex-cli": GPT_55_HIGH,
+    }
+    reviewer = aliases.get(reviewer, reviewer)
+    return reviewer if reviewer in REVIEWER_OPTIONS else GEMINI_35_FLASH_HIGH
 
 
 def ensure_reviewer_widget_state() -> None:
@@ -457,6 +731,22 @@ def sync_reviewer_from_widget() -> None:
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
     run_cfg["reviewer"] = normalize_reviewer(st.session_state.get(REVIEWER_WIDGET_KEY))
     st.session_state.run_cfg = run_cfg
+
+
+def snapshot_reviewer_configs(reviewer: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    agy_cfg = dict(st.session_state.get("agy_review_cfg", {}) or {})
+    codex_cfg = dict(st.session_state.get("codex_review_cfg", {}) or {})
+    multi_cfg = dict(st.session_state.get("multi_model_review_cfg", {}) or {})
+
+    if reviewer not in REVIEW_MODEL_SPECS:
+        return agy_cfg, codex_cfg, multi_cfg
+
+    backend = model_backend(reviewer)
+    if backend == AGY_REVIEW_SOURCE:
+        agy_cfg = apply_model_defaults_to_config(agy_cfg, reviewer)
+    elif backend == CODEX_REVIEW_SOURCE:
+        codex_cfg = apply_model_defaults_to_config(codex_cfg, reviewer)
+    return agy_cfg, codex_cfg, multi_cfg
 
 
 def parse_agy_models_output(output: str) -> list[str]:
@@ -558,6 +848,73 @@ def render_classic_pattern_config(cfg: dict[str, Any], key_prefix: str) -> dict[
     return cfg
 
 
+def render_codex_auth_mode_config(cfg: dict[str, Any], key_prefix: str) -> dict[str, Any]:
+    mode = normalize_codex_auth_mode(cfg)
+    mode_keys = list(CODEX_AUTH_MODE_OPTIONS)
+    if mode not in mode_keys:
+        mode = CODEX_AUTH_MODE_LOCAL_OAUTH
+
+    selected_mode = st.radio(
+        "Codex 调用模式",
+        mode_keys,
+        index=mode_keys.index(mode),
+        format_func=lambda item: CODEX_AUTH_MODE_OPTIONS[item],
+        key=f"{key_prefix}_auth_mode",
+        help="默认使用本机 Codex CLI/App OAuth 登录态；只有明确需要本地 OpenAI-compatible 代理时才切换到 API key 模式。",
+    )
+    cfg = apply_codex_auth_mode(cfg, selected_mode)
+
+    if selected_mode == CODEX_AUTH_MODE_LOCAL_OAUTH:
+        st.info("默认模式：读取本机 Codex CLI OAuth 登录态和用户配置，不向子进程传递 API key 或本地 base URL 环境变量。")
+        return cfg
+
+    st.warning("本地代理/API key 是兼容模式；只有明确需要 CCSwitch 或其他 OpenAI-compatible 代理时使用。")
+    p1, p2 = st.columns(2)
+    with p1:
+        cfg["codex_provider_name"] = st.text_input(
+            "Provider 名称",
+            value=str(cfg.get("codex_provider_name", "env_custom")),
+            key=f"{key_prefix}_provider_name",
+        )
+        cfg["codex_base_url"] = st.text_input(
+            "固定 base URL",
+            value=str(cfg.get("codex_base_url", "")),
+            key=f"{key_prefix}_base_url",
+            help="留空时按下面的 base URL 环境变量顺序读取。",
+        )
+        cfg["ignore_user_config"] = st.toggle(
+            "忽略 ~/.codex/config.toml",
+            value=config_bool(cfg.get("ignore_user_config"), default=True),
+            key=f"{key_prefix}_ignore_user_config",
+            help="代理模式默认隔离用户配置，只使用本次命令注入的 provider。",
+        )
+    with p2:
+        base_vars = cfg.get("base_url_env_vars") or ["CODEX_OPENAI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"]
+        api_vars = cfg.get("api_key_env_vars") or ["CODEX_OPENAI_API_KEY", "OPENAI_API_KEY"]
+        base_vars_text = ",".join(str(item) for item in base_vars)
+        api_vars_text = ",".join(str(item) for item in api_vars)
+        cfg["base_url_env_vars"] = [
+            item.strip()
+            for item in st.text_input(
+                "base URL 环境变量",
+                value=base_vars_text,
+                key=f"{key_prefix}_base_url_env_vars",
+            ).split(",")
+            if item.strip()
+        ]
+        cfg["api_key_env_vars"] = [
+            item.strip()
+            for item in st.text_input(
+                "API key 环境变量",
+                value=api_vars_text,
+                key=f"{key_prefix}_api_key_env_vars",
+            ).split(",")
+            if item.strip()
+        ]
+    st.caption("代理模式会把 base URL 注入为 Codex CLI 的 model_provider，并把 API key 环境变量仅转发到子进程，不写入命令行。")
+    return cfg
+
+
 def parse_date_or_today(value: Any) -> dt.date:
     text = clean_text(value)
     if not text:
@@ -585,15 +942,17 @@ def create_run_snapshot(run_mode: str, *, owner: str = "run_center", owner_label
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    reviewer = normalize_reviewer(st.session_state.run_cfg.get("reviewer"))
+    st.session_state.run_cfg["reviewer"] = reviewer
+    agy_cfg, codex_cfg, multi_cfg = snapshot_reviewer_configs(reviewer)
     write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
-    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
-    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
-    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", agy_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", codex_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", multi_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
-    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
         run_dir / "run_config.json",
         {
@@ -625,17 +984,19 @@ def create_paper_run_snapshot() -> Path:
     run_id = make_run_id()
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    reviewer = normalize_reviewer(st.session_state.run_cfg.get("reviewer"))
+    st.session_state.run_cfg["reviewer"] = reviewer
+    agy_cfg, codex_cfg, multi_cfg = snapshot_reviewer_configs(reviewer)
     write_yaml(run_dir / "fetch_kline.yaml", st.session_state.fetch_cfg)
     write_yaml(run_dir / "rules_preselect.yaml", st.session_state.rules_cfg)
     write_yaml(run_dir / "gemini_cli_review.yaml", st.session_state.review_cfg)
     write_yaml(run_dir / "gemini_review.yaml", st.session_state.api_review_cfg)
-    write_yaml(run_dir / "agy_cli_review.yaml", st.session_state.agy_review_cfg)
-    write_yaml(run_dir / "codex_cli_review.yaml", st.session_state.codex_review_cfg)
-    write_yaml(run_dir / "multi_model_review.yaml", st.session_state.multi_model_review_cfg)
+    write_yaml(run_dir / "agy_cli_review.yaml", agy_cfg)
+    write_yaml(run_dir / "codex_cli_review.yaml", codex_cfg)
+    write_yaml(run_dir / "multi_model_review.yaml", multi_cfg)
     write_yaml(run_dir / "paper_trading.yaml", st.session_state.trading_cfg)
     write_json(run_dir / "run_options.json", st.session_state.run_cfg)
     command = [sys.executable, "-m", "paper_trading.daily_flow", "--run-dir", str(run_dir)]
-    reviewer = clean_text(st.session_state.run_cfg.get("reviewer")) or "gemini-cli"
     write_json(
         run_dir / "run_config.json",
         {
@@ -667,7 +1028,8 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
     rules_cfg = str(run_dir / "rules_preselect.yaml")
     run_id = run_dir.name
     run_cfg = st.session_state.get("run_cfg", default_run_cfg())
-    reviewer = clean_text(run_cfg.get("reviewer")) or "gemini-cli"
+    reviewer = normalize_reviewer(run_cfg.get("reviewer"))
+    backend = model_backend(reviewer)
     if reviewer == "gemini-api":
         review_step = ("Gemini API 复评", [python, "agent/gemini_review.py", "--config", str(run_dir / "gemini_review.yaml")])
     elif reviewer == "multi-model":
@@ -675,27 +1037,25 @@ def command_plan(run_mode: str, run_dir: Path) -> list[tuple[str, list[str]]]:
             "多模型复评与共识汇总",
             [python, "agent/multi_model_review.py", "--run-dir", str(run_dir)],
         )
-    elif reviewer == "codex-cli":
+    elif backend == CODEX_REVIEW_SOURCE:
         review_step = (
-            "Codex GPT-5.5 复评",
+            f"{model_label(reviewer)} 复评",
             [python, "agent/codex_cli_review.py", "--config", str(run_dir / "codex_cli_review.yaml")],
         )
-    elif reviewer == "agy-cli-experimental":
+    elif backend == AGY_REVIEW_SOURCE:
         review_step = (
-            "AGY CLI 实验复评",
+            f"{model_label(reviewer)} 复评",
             [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")],
         )
     else:
         review_step = (
-            "Gemini CLI 复评",
-            [python, "agent/gemini_cli_review.py", "--config", str(run_dir / "gemini_cli_review.yaml")],
+            f"{model_label(GEMINI_35_FLASH_HIGH)} 复评",
+            [python, "agent/agy_cli_review.py", "--config", str(run_dir / "agy_cli_review.yaml")],
         )
-    agy_output_dir = clean_text(st.session_state.get("agy_review_cfg", {}).get("output_dir"))
-    codex_output_dir = clean_text(st.session_state.get("codex_review_cfg", {}).get("output_dir"))
-    isolated_reviewer = (
-        reviewer == "multi-model"
-        or (reviewer == "agy-cli-experimental" and agy_output_dir not in {"data/review", "./data/review"})
-        or (reviewer == "codex-cli" and codex_output_dir not in {"data/review", "./data/review"})
+    agy_cfg, codex_cfg, _ = snapshot_reviewer_configs(reviewer)
+    output_dir = clean_text((codex_cfg if backend == CODEX_REVIEW_SOURCE else agy_cfg).get("output_dir"))
+    isolated_reviewer = reviewer == "multi-model" or (
+        reviewer in REVIEW_MODEL_SPECS and output_dir not in {"data/review", "./data/review"}
     )
     archive_step = [] if isolated_reviewer else [("归档当日结果", [python, "-m", "pipeline.archive_results", "--run-id", run_id])]
     preselect_cmd = [python, "-m", "pipeline.cli", "preselect", "--config", rules_cfg]
@@ -822,12 +1182,35 @@ def stop_background_run(run_dir: Path) -> None:
     state = run_state(run_dir)
     pid = int(state.get("runner_pid") or 0)
     if pid:
+        pgids = descendant_process_groups(pid) or {pid}
         try:
             os.killpg(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         except PermissionError:
             os.kill(pid, signal.SIGTERM)
+        for pgid in sorted(pgids):
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                try:
+                    os.kill(pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        time.sleep(1)
+        live_pgids = {row["pgid"] for row in _process_table() if row["pgid"] in pgids}
+        for pgid in sorted(live_pgids):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                try:
+                    os.kill(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
     write_json(
         run_dir / "run_state.json",
         {
@@ -883,6 +1266,237 @@ def escape_log(lines: list[str] | str) -> str:
         .replace(">", "&gt;")
         .replace("\n", "<br>")
     )
+
+
+def _progress_status_label(status: str, exit_code: str | None = None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized == "finished":
+        return "完成" if exit_code in {None, "", "0"} else "失败"
+    if normalized == "running":
+        return "运行中"
+    if normalized in {"starting", "configured", "waiting"}:
+        return "等待"
+    return str(status or "等待")
+
+
+def progress_model_key(raw_key: Any) -> str:
+    key = clean_text(raw_key)
+    aliases = {
+        "agy-cli/gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH,
+        "agy-cli-experimental/gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH,
+        "agy-cli/gemini-3.1-pro-high": GEMINI_31_PRO_HIGH,
+        "agy-cli-experimental/gemini-3.1-pro-high": GEMINI_31_PRO_HIGH,
+        "codex-cli/gpt-5.5-high": GPT_55_HIGH,
+        "codex-cli/gpt-5.5-high-standard": GPT_55_HIGH,
+    }
+    if key in aliases:
+        return aliases[key]
+    if "/" in key:
+        return key.rsplit("/", 1)[-1].strip() or key
+    return key or "unknown"
+
+
+def progress_model_display_name(model_key_value: Any) -> str:
+    key = progress_model_key(model_key_value)
+    return model_label(key) if key in REVIEW_MODEL_SPECS else key
+
+
+def progress_model_sort_index(model_key_value: Any, fallback: int) -> tuple[int, int, str]:
+    key = progress_model_key(model_key_value)
+    known_order = list(REVIEW_MODEL_SPECS)
+    if key in known_order:
+        return (0, known_order.index(key), key)
+    return (1, fallback, key)
+
+
+def _progress_row_defaults(key: str) -> dict[str, Any]:
+    model_key_value = progress_model_key(key)
+    return {
+        "key": model_key_value,
+        "display_key": progress_model_display_name(model_key_value),
+        "raw_keys": [key] if key and key != model_key_value else [],
+        "status": "waiting",
+        "status_label": "等待",
+        "exit_code": "",
+        "elapsed": "",
+        "completed": None,
+        "total": None,
+        "percent": 0,
+        "count_text": "等待输出",
+        "progress_text": "等待输出",
+        "latest": "",
+    }
+
+
+def _parse_progress_text(progress_text: str) -> tuple[int | None, int | None, int, str]:
+    text = str(progress_text or "")
+    success_match = MODEL_SUCCESS_PROGRESS_TEXT_RE.search(text)
+    if success_match:
+        success = int(success_match.group("success"))
+        total = int(success_match.group("total"))
+        failed = int(success_match.group("failed"))
+        percent = int(success_match.group("pct"))
+        completed = min(total, success + failed)
+        return completed, total, max(0, min(100, percent)), f"成功 {success}/{total}，失败/跳过 {failed}"
+
+    match = MODEL_PROGRESS_TEXT_RE.search(text)
+    if not match:
+        text = text.strip() or "等待输出"
+        return None, None, 0, text
+    completed = int(match.group("completed"))
+    total = int(match.group("total"))
+    percent = int(match.group("pct"))
+    return completed, total, max(0, min(100, percent)), f"处理到 {completed}/{total}"
+
+
+def multi_model_progress_rows(log_text: str) -> list[dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def ensure_row(key: str) -> dict[str, Any]:
+        raw_key = str(key or "").strip()
+        model_key_value = progress_model_key(raw_key)
+        if model_key_value not in rows:
+            rows[model_key_value] = _progress_row_defaults(raw_key or model_key_value)
+            order.append(model_key_value)
+        row = rows[model_key_value]
+        if raw_key and raw_key != model_key_value and raw_key not in row.get("raw_keys", []):
+            row.setdefault("raw_keys", []).append(raw_key)
+        return row
+
+    for raw_line in str(log_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        for pattern in (MODEL_CONFIG_ROW_RE, MODEL_RUNTIME_CONFIG_ROW_RE, MODEL_START_ROW_RE):
+            match = pattern.search(line)
+            if match:
+                row = ensure_row(match.group("key"))
+                if pattern is MODEL_START_ROW_RE:
+                    row["status"] = "running"
+                    row["status_label"] = "运行中"
+                break
+
+        running_match = MODEL_OLD_RUNNING_ROW_RE.search(line)
+        if running_match:
+            for key in running_match.group("keys").split(","):
+                row = ensure_row(key.strip())
+                if row.get("status") == "waiting":
+                    row["status"] = "running"
+                    row["status_label"] = "运行中"
+
+        done_match = MODEL_DONE_ROW_RE.search(line)
+        if done_match:
+            row = ensure_row(done_match.group("key"))
+            exit_code = (done_match.group("exit") or row.get("exit_code") or "").strip()
+            row["status"] = "finished"
+            row["exit_code"] = exit_code
+            row["status_label"] = _progress_status_label("finished", exit_code)
+
+        progress_match = MODEL_PROGRESS_ROW_RE.match(raw_line)
+        if not progress_match:
+            continue
+
+        key = progress_match.group("key").strip()
+        status = progress_match.group("status").strip()
+        exit_code = (progress_match.group("exit") or "").strip()
+        progress_text = progress_match.group("progress").strip()
+        completed, total, percent, count_text = _parse_progress_text(progress_text)
+        row = ensure_row(key)
+        row.update(
+            {
+                "status": status,
+                "status_label": _progress_status_label(status, exit_code),
+                "exit_code": exit_code,
+                "elapsed": progress_match.group("elapsed").strip(),
+                "completed": completed,
+                "total": total,
+                "percent": percent,
+                "count_text": count_text,
+                "progress_text": progress_text,
+                "latest": progress_match.group("latest").strip(),
+            }
+        )
+
+    ordered_keys = sorted(
+        order,
+        key=lambda key: progress_model_sort_index(key, order.index(key)),
+    )
+    return [rows[key] for key in ordered_keys]
+
+
+def compact_run_log_for_display(log_text: str) -> str:
+    if not multi_model_progress_rows(log_text):
+        return log_text
+
+    compacted: list[str] = []
+    for raw_line in str(log_text or "").splitlines():
+        line = raw_line.strip()
+        if "多模型复评进度 attempt=" in line:
+            continue
+        if MODEL_PROGRESS_ROW_RE.match(raw_line):
+            continue
+        if re.match(r"^\s+\[[^\]]+\]\s*$", raw_line):
+            continue
+        if MODEL_OLD_RUNNING_ROW_RE.search(line):
+            continue
+        compacted.append(raw_line)
+    return "\n".join(compacted)
+
+
+def multi_model_progress_html(rows: list[dict[str, Any]]) -> str:
+    rendered_rows: list[str] = []
+    for row in rows:
+        status = str(row.get("status_label") or "等待")
+        status_class = "ok" if status == "完成" else "error" if status == "失败" else "running"
+        percent = int(row.get("percent") or 0)
+        key = escape_log(str(row.get("display_key") or row.get("key") or ""))
+        count_text = escape_log(str(row.get("count_text") or row.get("progress_text") or "等待输出"))
+        elapsed = escape_log(str(row.get("elapsed") or ""))
+        rendered_rows.append(
+            "".join(
+                [
+                    '<div class="review-progress-row">',
+                    f'<div class="review-progress-model">{key}</div>',
+                    f'<div class="review-progress-status {status_class}">{escape_log(status)}</div>',
+                    f'<div class="review-progress-count">{count_text}</div>',
+                    f'<div class="review-progress-bar"><span style="width:{percent}%"></span></div>',
+                    f'<div class="review-progress-percent">{percent}%</div>',
+                    f'<div class="review-progress-elapsed">{elapsed}</div>',
+                    "</div>",
+                ]
+            )
+        )
+
+    return "\n".join(
+        [
+            "<style>",
+            ".review-progress-wrap { border: 1px solid #d9dee7; border-radius: 6px; margin: 0 0 10px; overflow: hidden; }",
+            ".review-progress-title { background: #f5f7fb; border-bottom: 1px solid #d9dee7; color: #273142; font-size: 13px; font-weight: 600; padding: 8px 10px; }",
+            ".review-progress-row { align-items: center; border-bottom: 1px solid #edf0f5; display: grid; gap: 10px; grid-template-columns: minmax(128px, 180px) 64px minmax(168px, max-content) minmax(120px, 1fr) 48px 60px; min-height: 34px; padding: 7px 10px; }",
+            ".review-progress-row:last-child { border-bottom: 0; }",
+            '.review-progress-model, .review-progress-count, .review-progress-percent, .review-progress-elapsed { color: #2f3848; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+            ".review-progress-status { border-radius: 4px; font-size: 12px; line-height: 20px; text-align: center; }",
+            ".review-progress-status.running { background: #e8f1ff; color: #1f5da8; }",
+            ".review-progress-status.ok { background: #e8f6ef; color: #167044; }",
+            ".review-progress-status.error { background: #fdecec; color: #b42318; }",
+            ".review-progress-bar { background: #e6eaf0; border-radius: 999px; height: 7px; overflow: hidden; }",
+            ".review-progress-bar span { background: #2f6fec; display: block; height: 100%; }",
+            "@media (max-width: 760px) { .review-progress-row { grid-template-columns: minmax(0, 1fr) 58px 72px 42px; } .review-progress-bar, .review-progress-elapsed { display: none; } }",
+            "</style>",
+            '<div class="review-progress-wrap">',
+            '<div class="review-progress-title">多模型复评进度</div>',
+            *rendered_rows,
+            "</div>",
+        ]
+    )
+
+
+def render_multi_model_progress(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    st.markdown(multi_model_progress_html(rows), unsafe_allow_html=True)
 
 
 def render_log_console(log_text: str, *, storage_key: str) -> None:
@@ -1022,8 +1636,11 @@ def render_run_log_panel(run_dir_str: str) -> None:
     state = run_state(run_dir)
     active = is_run_active(run_dir)
     status_label = "running" if active else display_run_status(run_dir)
+    log_text = read_run_log(run_dir)
+    progress_rows = multi_model_progress_rows(log_text)
     st.subheader(f"运行日志 · {status_label}")
-    render_log_console(read_run_log(run_dir), storage_key=str(run_dir or "default"))
+    render_multi_model_progress(progress_rows)
+    render_log_console(compact_run_log_for_display(log_text), storage_key=str(run_dir or "default"))
     if active:
         step = state.get("current_step") or "启动中"
         idx = state.get("step_index")
@@ -1308,7 +1925,7 @@ def render_review_config() -> None:
     run_cfg = st.session_state.run_cfg
     ensure_reviewer_widget_state()
     st.radio(
-        "复评方式",
+        "复评模型",
         list(REVIEWER_OPTIONS),
         format_func=lambda key: REVIEWER_OPTIONS[key],
         horizontal=True,
@@ -1358,43 +1975,26 @@ def render_review_config() -> None:
         st.session_state.api_review_cfg = cfg
         return
 
-    if reviewer == "agy-cli-experimental":
+    if reviewer in REVIEW_MODEL_SPECS and model_backend(reviewer) == AGY_REVIEW_SOURCE:
         cfg = st.session_state.agy_review_cfg
+        cfg = apply_model_defaults_to_config(cfg, reviewer)
         left, right = st.columns(2, gap="large")
         with left:
             cfg["agy_bin"] = st.text_input("AGY CLI 路径", value=str(cfg.get("agy_bin", "agy")))
             agy_bin = str(cfg.get("agy_bin", "agy"))
             model_options, model_error, model_fetched_at = cached_agy_model_options(agy_bin)
-            current_model = clean_text(cfg.get("model")) or (model_options[0] if model_options else "")
-            if model_options:
-                if current_model not in model_options:
-                    st.warning(f"当前配置模型 `{current_model}` 不在 `agy models` 列表中，已切换为 `{model_options[0]}`。")
-                    current_model = model_options[0]
-                if st.session_state.get("agy_model_choice") not in {None, *model_options}:
-                    st.session_state.pop("agy_model_choice", None)
-                cfg["model"] = st.selectbox(
-                    "模型 model",
-                    model_options,
-                    index=model_options.index(current_model),
-                    key="agy_model_choice",
-                    help="候选项直接来自 `agy models` 输出，名称不做改写。",
-                )
-                if model_fetched_at:
-                    st.caption(f"模型列表缓存于 {model_fetched_at}；如 AGY 已升级，请手动刷新。")
+            st.caption(f"复评模型：{model_label(reviewer)}")
+            st.caption(f"底层模型名：{cfg['model']}")
+            if model_options and cfg["model"] not in model_options:
+                st.warning(f"当前模型 `{cfg['model']}` 不在 `agy models` 列表中，请确认本机 AGY 版本和账号可用。")
+            elif model_fetched_at:
+                st.caption(f"AGY 模型列表缓存于 {model_fetched_at}。")
+            elif model_error:
+                st.warning(f"上次读取 AGY 模型列表失败：{model_error}")
             else:
-                cfg["model"] = st.text_input(
-                    "模型 model",
-                    value=current_model or "尚未加载 AGY 模型列表",
-                    disabled=True,
-                    key="agy_model_fallback",
-                    help="为避免切换到 AGY 时卡顿，页面不会自动执行 `agy models`；点击下面按钮后再生成下拉候选。",
-                )
-                if model_error:
-                    st.warning(f"上次读取 AGY 模型列表失败：{model_error}")
-                else:
-                    st.info("尚未加载 AGY 模型列表。当前模型来自配置，点击按钮后会从 `agy models` 读取严格候选。")
+                st.info("页面不会自动执行 `agy models`；需要校验本机可用模型时可手动刷新。")
             if st.button(
-                "加载/刷新 AGY 模型列表",
+                "校验/刷新 AGY 模型列表",
                 key="agy_model_refresh",
                 help="手动执行 `agy models`；本机实测约 4 秒。",
             ):
@@ -1402,22 +2002,29 @@ def render_review_config() -> None:
                     refreshed_models, refresh_error = fetch_agy_model_options(agy_bin)
                 store_agy_model_options(agy_bin, refreshed_models, refresh_error)
                 if refreshed_models:
-                    selected = current_model if current_model in refreshed_models else refreshed_models[0]
-                    st.session_state["agy_model_choice"] = selected
-                    cfg["model"] = selected
                     st.session_state.agy_review_cfg = cfg
                     st.rerun()
                 st.warning(f"读取 AGY 模型列表失败：{refresh_error or '未知错误'}")
-            cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "10m")))
-            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
+            cfg["print_timeout"] = st.text_input("print timeout", value=str(cfg.get("print_timeout", "3m")))
+            cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 180)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
-            cfg["max_items"] = st.number_input(
-                "实验复评上限 max_items",
-                min_value=1,
-                value=int(cfg.get("max_items", 1)),
-                help="本次 AGY 实验最多复评前 N 个候选；默认 1 用于 smoke test，避免误跑完整候选集。命令行 --limit 会覆盖此值。",
+            max_items_value = cfg.get("max_items")
+            limit_enabled = max_items_value not in {"", None, 0, "0"}
+            limit_enabled = st.toggle(
+                "限制复评数量",
+                value=limit_enabled,
+                key="agy_limit_enabled",
+                help="关闭时完整复评全部候选；开启后只复评前 N 个候选，适合 smoke test。",
             )
-            st.caption("实验复评上限只限制处理数量，不影响评分口径；候选顺序沿用复评器的策略优先级排序。")
+            if limit_enabled:
+                cfg["max_items"] = st.number_input(
+                    "复评上限 max_items",
+                    min_value=1,
+                    value=int(max_items_value or 1),
+                )
+            else:
+                cfg["max_items"] = None
+            st.caption("复评上限只限制处理数量，不影响评分口径；候选顺序沿用复评器的策略优先级排序。")
         with right:
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
@@ -1437,19 +2044,20 @@ def render_review_config() -> None:
                 cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
                 cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
             with p2:
-                cfg["output_dir"] = st.text_input("实验复评输出目录", value=str(cfg.get("output_dir", "data/review/agy_cli_experimental")))
+                cfg["output_dir"] = st.text_input("模型结果输出目录", value=str(cfg.get("output_dir", model_output_dir(reviewer))))
                 cfg["raw_log_dir"] = st.text_input("AGY 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/agy_cli_runs。")
                 cfg["settings_path"] = st.text_input("AGY settings 路径", value=str(cfg.get("settings_path", "~/.gemini/antigravity-cli/settings.json")))
 
         st.markdown(
-            "<div class='panel-note'>AGY 路径为实验 reviewer；默认输出到隔离目录，不覆盖正式 Gemini CLI 复评结果。若输出目录不是 <code>data/review</code>，运行计划会跳过归档步骤。</div>",
+            "<div class='panel-note'>当前选择的是 Google 模型，底层固定通过 AGY 执行。模型结果默认按模型 ID 隔离输出；若输出目录不是 <code>data/review</code>，运行计划会跳过归档步骤。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.agy_review_cfg = cfg
         return
 
-    if reviewer == "codex-cli":
+    if reviewer in REVIEW_MODEL_SPECS and model_backend(reviewer) == CODEX_REVIEW_SOURCE:
         cfg = st.session_state.codex_review_cfg
+        cfg = apply_model_defaults_to_config(cfg, reviewer)
         left, right = st.columns(2, gap="large")
         with left:
             cfg["codex_bin"] = st.text_input("Codex CLI 路径", value=str(cfg.get("codex_bin", "codex")))
@@ -1457,24 +2065,28 @@ def render_review_config() -> None:
             cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=60, value=int(cfg.get("timeout_seconds", 900)), step=30)
             cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 1)), step=1.0)
             cfg["max_items"] = st.number_input(
-                "实验复评上限 max_items",
+                "复评上限 max_items",
                 min_value=1,
                 value=int(cfg.get("max_items", 1)),
                 help="单独使用 Codex reviewer 时最多复评前 N 个候选；多模型复评会覆盖为完整候选集。",
             )
         with right:
-            st.caption("固定模型：GPT-5.5")
+            st.caption(f"复评模型：{model_label(reviewer)}")
+            st.caption(f"底层模型名：{cfg['model']}")
             st.caption("固定思考强度：high")
             st.caption("速度路径：standard（禁用 fast 默认路径）")
             cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
             cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
             cfg["save_raw_cli_io"] = st.toggle("保存 Codex 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
             cfg["fallback_to_single_on_batch_error"] = st.toggle(
-                "批量失败后降级逐只复评",
+                "批量失败后拆小批/逐只复评（同一模型）",
                 value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
             )
             codex_path = shutil.which(str(cfg.get("codex_bin", "codex")))
             st.caption(f"Codex CLI: {codex_path or '未找到'}")
+
+        with st.expander("Codex 调用模式", expanded=True):
+            cfg = render_codex_auth_mode_config(cfg, "codex_review")
 
         with st.expander("经典图形匹配", expanded=True):
             cfg = render_classic_pattern_config(cfg, "codex_review")
@@ -1486,11 +2098,11 @@ def render_review_config() -> None:
                 cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
                 cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
             with p2:
-                cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review/codex_cli")))
+                cfg["output_dir"] = st.text_input("模型结果输出目录", value=str(cfg.get("output_dir", model_output_dir(reviewer))))
                 cfg["raw_log_dir"] = st.text_input("Codex 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 output_dir/{pick_date}/codex_cli_runs。")
 
         st.markdown(
-            "<div class='panel-note'>Codex reviewer 固定使用 <code>gpt-5.5</code>、<code>high</code> 思考强度，并通过 <code>--output-schema</code> 返回 JSON；默认输出到隔离目录。</div>",
+            "<div class='panel-note'>当前选择的是 GPT 模型，底层固定通过 Codex CLI 执行。默认走本机 Codex OAuth，并通过 <code>--output-schema</code> 返回 JSON。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.codex_review_cfg = cfg
@@ -1507,6 +2119,16 @@ def render_review_config() -> None:
             cfg["batch_size"] = st.number_input("默认批处理大小", min_value=1, max_value=20, value=int(cfg.get("batch_size", 5)))
             cfg["strict_batch"] = st.toggle("批次完整性严格校验", value=bool(cfg.get("strict_batch", True)))
             cfg["skip_existing"] = st.toggle("各模型断点续跑", value=bool(cfg.get("skip_existing", True)))
+            cfg["no_model_substitution"] = st.toggle(
+                "禁止模型替换/降级",
+                value=bool(cfg.get("no_model_substitution", True)),
+                help="模型不可用或失败时只记录原因，并按同一模型重跑；不会自动替换成其它模型。",
+            )
+            cfg["rerun_failed_models_once"] = st.toggle(
+                "失败模型结束后重跑一次",
+                value=bool(cfg.get("rerun_failed_models_once", True)),
+                help="多模型首轮完成后，仅对失败模型按原模型再跑一次；已完成结果通过 skip_existing 跳过。",
+            )
             cfg["classic_pattern_enabled"] = st.toggle(
                 "统一启用经典图形匹配",
                 value=bool(cfg.get("classic_pattern_enabled", True)),
@@ -1521,15 +2143,23 @@ def render_review_config() -> None:
             cfg["consensus_dir"] = st.text_input("共识汇总目录", value=str(cfg.get("consensus_dir", "data/review_consensus")))
 
         st.subheader("参与复评的模型")
+        st.caption("Google 模型通过 AGY 执行；GPT 模型通过 Codex CLI 执行。共识、进度、筛选和导出都以模型 ID 为准。")
         reviewers = cfg.get("reviewers") or []
         for index, spec in enumerate(reviewers):
-            label = str(spec.get("label") or spec.get("reviewer_key") or f"model-{index + 1}")
-            c1, c2, c3 = st.columns([0.28, 0.48, 0.18])
+            label = str(spec.get("label") or spec.get("model_key") or spec.get("reviewer_key") or f"model-{index + 1}")
+            c1, c2, c3, c4 = st.columns([0.24, 0.30, 0.30, 0.12])
             with c1:
                 spec["enabled"] = st.toggle(label, value=bool(spec.get("enabled", True)), key=f"multi_model_enabled_{index}")
             with c2:
-                spec["model"] = st.text_input("模型", value=str(spec.get("model", "")), key=f"multi_model_model_{index}")
+                spec["model_key"] = st.text_input(
+                    "模型 ID",
+                    value=str(spec.get("model_key") or spec.get("model_profile") or ""),
+                    key=f"multi_model_model_key_{index}",
+                    help="共识汇总、进度日志、筛选和导出都使用这个模型 ID。",
+                )
             with c3:
+                spec["model"] = st.text_input("后端模型名", value=str(spec.get("model", "")), key=f"multi_model_model_{index}")
+            with c4:
                 spec["batch_size"] = st.number_input(
                     "batch",
                     min_value=1,
@@ -1538,74 +2168,22 @@ def render_review_config() -> None:
                     key=f"multi_model_batch_{index}",
                 )
         cfg["reviewers"] = reviewers
+        with st.expander("Codex 子模型调用模式", expanded=True):
+            st.caption("多模型复评会把这里的 Codex 配置写入本次 run snapshot；默认走本机 Codex OAuth。")
+            st.session_state.codex_review_cfg = render_codex_auth_mode_config(
+                st.session_state.codex_review_cfg,
+                "multi_model_codex",
+            )
         st.markdown(
-            "<div class='panel-note'>多模型复评会先冻结候选批次，再并行启动各 reviewer。每个模型写入 <code>data/review_runs/{batch_id}/{reviewer}/{model_profile}</code>，最后生成 <code>data/review_consensus/{batch_id}</code>。</div>",
+            "<div class='panel-note'>多模型复评会先冻结候选批次，再按模型 ID 并行启动。两个 Google 模型默认通过 AGY 执行，GPT 模型默认通过 Codex CLI 执行；共识、进度、筛选和导出以模型 ID 为维度。失败模型会记录日志和失败原因，可按原模型断点重跑，不会自动替换模型。</div>",
             unsafe_allow_html=True,
         )
         st.session_state.multi_model_review_cfg = cfg
         return
 
-    cfg = st.session_state.review_cfg
-    left, right = st.columns(2, gap="large")
-    with left:
-        cfg["gemini_bin"] = st.text_input("Gemini CLI 路径", value=str(cfg.get("gemini_bin", "gemini")))
-        cfg["model"] = st.text_input("模型 model", value=str(cfg.get("model", "")), placeholder="留空=Gemini CLI 默认模型")
-        cfg["batch_size"] = st.number_input("批处理大小 batch_size", min_value=1, max_value=2700, value=int(cfg.get("batch_size", 5)))
-        cfg["request_delay"] = st.number_input("请求间隔 request_delay", min_value=0.0, value=float(cfg.get("request_delay", 10)), step=1.0)
-        cfg["max_requests_per_run"] = st.number_input("单次请求上限", min_value=1, value=int(cfg.get("max_requests_per_run", 50)))
-        cfg["daily_request_budget"] = st.number_input("每日请求预算", min_value=1, value=int(cfg.get("daily_request_budget", 2000)))
-    with right:
-        output_format_options = ["stream-json", "json", "text"]
-        current_output_format = str(cfg.get("output_format", "stream-json"))
-        cfg["output_format"] = st.selectbox(
-            "CLI 输出格式",
-            output_format_options,
-            index=output_format_options.index(current_output_format) if current_output_format in output_format_options else 0,
-        )
-        cfg["timeout_seconds"] = st.number_input("单次超时秒数", min_value=30, value=int(cfg.get("timeout_seconds", 900)), step=30)
-        cfg["idle_timeout_seconds"] = st.number_input(
-            "空闲超时秒数",
-            min_value=0,
-            value=int(cfg.get("idle_timeout_seconds", 0) or 0),
-            step=30,
-            help="超过该时间没有 stdout/stderr 输出即中止；0 表示关闭空闲超时。",
-        )
-        cfg["suggest_min_score"] = st.number_input("推荐分数门槛", min_value=0.0, max_value=5.0, value=float(cfg.get("suggest_min_score", 4.0)), step=0.1)
-        retry_backoff = cfg.get("retry_backoff_seconds", [30, 90, 180, 480, 900])
-        if isinstance(retry_backoff, list):
-            retry_backoff_text = ",".join(str(int(x) if float(x).is_integer() else x) for x in retry_backoff)
-        else:
-            retry_backoff_text = str(retry_backoff)
-        retry_text = st.text_input("错误退避序列", value=retry_backoff_text, help="逗号分隔秒数，用于 429、容量不足、Premature close、超时等错误。")
-        cfg["retry_backoff_seconds"] = [float(x.strip()) for x in retry_text.split(",") if x.strip()]
-        cfg["retry_jitter_ratio"] = st.number_input("退避 jitter 比例", min_value=0.0, max_value=1.0, value=float(cfg.get("retry_jitter_ratio", 0.2)), step=0.05)
-        cfg["skip_existing"] = st.toggle("断点续跑 skip_existing", value=bool(cfg.get("skip_existing", True)))
-        cfg["save_raw_cli_io"] = st.toggle("保存 CLI 原始调用日志", value=bool(cfg.get("save_raw_cli_io", True)))
-        cfg["fallback_to_single_on_batch_error"] = st.toggle(
-            "批量失败后降级逐只复评",
-            value=bool(cfg.get("fallback_to_single_on_batch_error", True)),
-        )
-        cfg["stop_on_rate_limit"] = st.toggle("重试耗尽后命中限流则停止", value=bool(cfg.get("stop_on_rate_limit", False)))
-
-    with st.expander("经典图形匹配", expanded=True):
-        cfg = render_classic_pattern_config(cfg, "cli_review")
-
-    with st.expander("路径配置"):
-        p1, p2 = st.columns(2)
-        with p1:
-            cfg["candidates"] = st.text_input("候选列表 JSON", value=str(cfg.get("candidates", "data/candidates/candidates_latest.json")))
-            cfg["kline_dir"] = st.text_input("候选图表目录", value=str(cfg.get("kline_dir", "data/kline")))
-            cfg["prompt_path"] = st.text_input("提示词文件", value=str(cfg.get("prompt_path", "agent/prompt.md")))
-        with p2:
-            cfg["output_dir"] = st.text_input("复评输出目录", value=str(cfg.get("output_dir", "data/review")))
-            cfg["usage_file"] = st.text_input("每日使用计数文件", value=str(cfg.get("usage_file", "data/review/.gemini_cli_usage.json")))
-            cfg["raw_log_dir"] = st.text_input("CLI 原始日志目录", value=str(cfg.get("raw_log_dir", "")), help="留空时使用 data/review/{pick_date}/gemini_cli_runs。")
-
-    st.markdown(
-        "<div class='panel-note'>batch_size 默认 5；Gemini CLI 会在图片目录运行并引用本地 @图片文件；stream-json 原始输出会写入单独 raw log 目录，主运行日志只显示摘要。</div>",
-        unsafe_allow_html=True,
-    )
-    st.session_state.review_cfg = cfg
+    st.warning("未知复评模型，已切换到 Gemini 3.5 Flash High。")
+    run_cfg["reviewer"] = GEMINI_35_FLASH_HIGH
+    st.session_state.run_cfg = run_cfg
 
 
 def result_rows_from_candidates(
@@ -1701,20 +2279,21 @@ def result_center_dates() -> list[str]:
     latest = latest_pick_date()
     if latest:
         dates.add(latest)
-    agy_base = review_base_dir(AGY_REVIEW_SOURCE)
-    if agy_base.exists():
-        dates.update(
-            p.name
-            for p in agy_base.iterdir()
-            if p.is_dir() and review_source_has_data(p.name, AGY_REVIEW_SOURCE)
-        )
-    codex_base = review_base_dir(CODEX_REVIEW_SOURCE)
-    if codex_base.exists():
-        dates.update(
-            p.name
-            for p in codex_base.iterdir()
-            if p.is_dir() and review_source_has_data(p.name, CODEX_REVIEW_SOURCE)
-        )
+    for source in (
+        GEMINI_35_FLASH_HIGH,
+        GEMINI_31_PRO_HIGH,
+        GPT_55_HIGH,
+        AGY_REVIEW_SOURCE,
+        LEGACY_AGY_REVIEW_SOURCE,
+        CODEX_REVIEW_SOURCE,
+    ):
+        base = review_base_dir(source)
+        if base.exists():
+            dates.update(
+                p.name
+                for p in base.iterdir()
+                if p.is_dir() and review_source_has_data(p.name, source)
+            )
     return sorted(dates, reverse=True)
 
 
@@ -1932,6 +2511,115 @@ def render_tdx_browser_import(blocks: list[dict[str, Any]], pick_date: str, mode
     components.html(launcher, height=96)
 
 
+def render_tdx_blocks_preview(blocks: list[dict[str, Any]]) -> None:
+    total = sum(b["count"] for b in blocks)
+    st.caption(f"共 {len(blocks)} 个板块，{total} 只股票 — 板块名：{'、'.join(b['name'] for b in blocks)}")
+    st.table(
+        [
+            {
+                "板块名称": b["name"],
+                "股票数量": f"{b['count']}只",
+                "示例代码": "、".join(b.get("samples") or []),
+            }
+            for b in blocks
+        ]
+    )
+
+
+def render_tdx_import_tabs(
+    blocks: list[dict[str, Any]],
+    pick_date: str,
+    mode_label: str,
+    *,
+    key_suffix: str,
+) -> None:
+    tab_download, tab_browser, tab_local = st.tabs([
+        "下载一键导入脚本（推荐）",
+        "独立页面写入 .blk（诊断/备用）",
+        "直接写入本地路径（服务与软件在同台电脑）",
+    ])
+    safe_key = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(key_suffix or mode_label or "tdx"))
+
+    with tab_download:
+        st.write("##### **使用说明：**")
+        st.markdown(
+            "1. 点击下方按钮下载 `.bat` 脚本文件。\n"
+            "2. 将文件保存到 Windows 电脑上的**任意位置**。\n"
+            "3. **双击运行**该脚本，它会自动检测通达信目录，写入 `.blk` 板块数据并更新 `blocknew.cfg` 索引。\n"
+            "4. 运行完成后**重启通达信**即可在自定义板块中看到新板块。\n\n"
+            "> 说明：Chrome/Edge 会限制网页创建或按名称访问 `.cfg` 文件，`blocknew.cfg` 注册必须优先使用 Windows 本地脚本完成。"
+        )
+        try:
+            bat_content = tdx_export.generate_import_bat(blocks)
+            bat_bytes = bat_content.encode("ascii", errors="ignore")
+            bat_filename = tdx_export.import_bat_filename(pick_date)
+            st.caption(f"将下载：`{bat_filename}`")
+            st.download_button(
+                label="下载一键导入脚本 (.bat)",
+                data=bat_bytes,
+                file_name=bat_filename,
+                mime="application/octet-stream",
+                width="stretch",
+                key=f"tdx_bat_download_{tdx_export.date_suffix(pick_date)}_{safe_key}",
+            )
+        except Exception as e:
+            st.error(f"生成脚本失败: {e}")
+
+    with tab_browser:
+        st.markdown(
+            "这个页面只适合验证浏览器是否能写入 Windows 本机 `T0002\\blocknew` 目录下的 `.blk` 文件。"
+            "由于 Chrome/Edge 会限制 `.cfg` 文件访问，它不再作为完整导入路径。"
+        )
+        st.caption(
+            "如果这里写入成功但通达信不显示板块，仍需使用上方 `.bat` 脚本完成 blocknew.cfg 注册。"
+        )
+        render_tdx_browser_import(blocks, pick_date, mode_label)
+
+    with tab_local:
+        settings_path = ROOT / "config" / "tdx_settings.json"
+        settings = load_json(settings_path)
+        saved_path = settings.get("blocknew_dir", "")
+        blocknew_dir = st.text_input(
+            "通达信 blocknew 目录绝对路径",
+            value=saved_path,
+            key=f"blocknew_dir_input_{safe_key}",
+            help="请输入您通达信安装目录下的 T0002/blocknew 目录。例如：\n"
+                 "Windows: C:\\new_tdx\\T0002\\blocknew\n"
+                 "macOS (Wine/CrossOver): /Users/用户名/Library/Application Support/CrossOver/Bottles/.../drive_c/new_tdx/T0002/blocknew\n"
+                 "macOS (原生版): /Users/用户名/Library/Application Support/通达信/T0002/blocknew"
+        )
+        if not blocknew_dir:
+            st.info("💡 请先输入通达信 `blocknew` 目录的绝对路径。")
+
+        if st.button("🚀 一键写入", type="primary", disabled=not blocknew_dir, width="stretch", key=f"tdx_write_{safe_key}"):
+            path_obj = Path(blocknew_dir.strip())
+            if not path_obj.exists():
+                st.error("❌ 输入的路径不存在，请检查是否输入正确。")
+            elif not path_obj.is_dir():
+                st.error("❌ 输入的路径不是一个文件夹，请输入 blocknew 目录本身。")
+            else:
+                settings["blocknew_dir"] = str(path_obj.resolve())
+                try:
+                    settings_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(settings_path, "w", encoding="utf-8") as f:
+                        json.dump(settings, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.error("保存 tdx_settings.json 失败: %s", e)
+
+                with st.spinner("正在写入文件..."):
+                    res = tdx_export.export_to_tdx(path_obj, blocks)
+
+                if res["succeeded"] > 0:
+                    st.success(f"✅ 成功导入 {res['succeeded']} 个板块的文件！")
+                    if res["cfg_ok"]:
+                        st.success("✅ 成功在 blocknew.cfg 索引文件中完成板块注册！")
+                    else:
+                        st.warning(f"⚠️ 板块文件已写入，但在 blocknew.cfg 注册失败: {res['error']}")
+                    st.info("📌 **重要提示**：如果您的通达信软件已经打开，请**重新启动通达信软件**，以便重新加载自定义板块列表。")
+                else:
+                    st.error(f"❌ 导入失败: {res.get('error', '未知错误')}")
+
+
 @st.dialog("导入通达信")
 def render_tdx_import_dialog(pick_date: str) -> None:
     suggestion = load_json(ROOT / "data" / "review" / pick_date / "suggestion.json")
@@ -1948,112 +2636,8 @@ def render_tdx_import_dialog(pick_date: str) -> None:
         st.warning("没有可导入的板块数据")
         return
 
-    total = sum(b["count"] for b in blocks)
-    st.caption(f"共 {len(blocks)} 个板块，{total} 只股票 — 板块名：{'、'.join(b['name'] for b in blocks)}")
-
-    # ── 预览板块 ──
-    preview_data = []
-    for b in blocks:
-        preview_data.append({
-            "板块名称": b["name"],
-            "股票数量": f"{b['count']}只",
-        })
-    st.table(preview_data)
-
-    # ── 使用 Tabs ──
-    tab_download, tab_browser, tab_local = st.tabs([
-        "下载一键导入脚本（推荐）",
-        "独立页面写入 .blk（诊断/备用）",
-        "直接写入本地路径（服务与软件在同台电脑）",
-    ])
-
-    with tab_download:
-        st.write("##### **使用说明：**")
-        st.markdown(
-            "1. 点击下方按钮下载 `.bat` 脚本文件。\n"
-            "2. 将文件保存到 Windows 电脑上的**任意位置**。\n"
-            "3. **双击运行**该脚本，它会自动检测通达信目录，写入 `.blk` 板块数据并更新 `blocknew.cfg` 索引。\n"
-            "4. 运行完成后**重启通达信**即可在自定义板块中看到新板块。\n\n"
-            "> 说明：Chrome/Edge 会限制网页创建或按名称访问 `.cfg` 文件，`blocknew.cfg` 注册必须优先使用 Windows 本地脚本完成。"
-        )
-
-        try:
-            bat_content = tdx_export.generate_import_bat(blocks)
-            # bat 文件本身是纯 ASCII（PowerShell 脚本通过 base64 编码嵌入）
-            bat_bytes = bat_content.encode("ascii", errors="ignore")
-            bat_filename = tdx_export.import_bat_filename(pick_date)
-            st.caption(f"将下载：`{bat_filename}`")
-            st.download_button(
-                label="下载一键导入脚本 (.bat)",
-                data=bat_bytes,
-                file_name=bat_filename,
-                mime="application/octet-stream",
-                width="stretch",
-                key=f"tdx_bat_download_{tdx_export.date_suffix(pick_date)}_{mode_key}",
-            )
-        except Exception as e:
-            st.error(f"生成脚本失败: {e}")
-
-    with tab_browser:
-        st.markdown(
-            "这个页面只适合验证浏览器是否能写入 Windows 本机 `T0002\\blocknew` 目录下的 `.blk` 文件。"
-            "由于 Chrome/Edge 会限制 `.cfg` 文件访问，它不再作为完整导入路径。"
-        )
-        st.caption(
-            "如果这里写入成功但通达信不显示板块，仍需使用上方 `.bat` 脚本完成 blocknew.cfg 注册。"
-        )
-        render_tdx_browser_import(blocks, pick_date, mode)
-
-    with tab_local:
-        # ── 读取保存的通达信目录 ──
-        settings_path = ROOT / "config" / "tdx_settings.json"
-        settings = load_json(settings_path)
-        saved_path = settings.get("blocknew_dir", "")
-
-        # ── 输入通达信目录路径 ──
-        blocknew_dir = st.text_input(
-            "通达信 blocknew 目录绝对路径",
-            value=saved_path,
-            key="blocknew_dir_input",
-            help="请输入您通达信安装目录下的 T0002/blocknew 目录。例如：\n"
-                 "Windows: C:\\new_tdx\\T0002\\blocknew\n"
-                 "macOS (Wine/CrossOver): /Users/用户名/Library/Application Support/CrossOver/Bottles/.../drive_c/new_tdx/T0002/blocknew\n"
-                 "macOS (原生版): /Users/用户名/Library/Application Support/通达信/T0002/blocknew"
-        )
-
-        if not blocknew_dir:
-            st.info("💡 请先输入通达信 `blocknew` 目录的绝对路径。")
-
-        if st.button("🚀 一键写入", type="primary", disabled=not blocknew_dir, width="stretch"):
-            path_obj = Path(blocknew_dir.strip())
-            if not path_obj.exists():
-                st.error("❌ 输入的路径不存在，请检查是否输入正确。")
-            elif not path_obj.is_dir():
-                st.error("❌ 输入的路径不是一个文件夹，请输入 blocknew 目录本身。")
-            else:
-                # 保存有效路径
-                settings["blocknew_dir"] = str(path_obj.resolve())
-                try:
-                    settings_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(settings_path, "w", encoding="utf-8") as f:
-                        json.dump(settings, f, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    logger.error("保存 tdx_settings.json 失败: %s", e)
-
-                # 开始写入
-                with st.spinner("正在写入文件..."):
-                    res = tdx_export.export_to_tdx(path_obj, blocks)
-
-                if res["succeeded"] > 0:
-                    st.success(f"✅ 成功导入 {res['succeeded']} 个板块的文件！")
-                    if res["cfg_ok"]:
-                        st.success("✅ 成功在 blocknew.cfg 索引文件中完成板块注册！")
-                    else:
-                        st.warning(f"⚠️ 板块文件已写入，但在 blocknew.cfg 注册失败: {res['error']}")
-
-                    st.info("📌 **重要提示**：如果您的通达信软件已经打开，请**重新启动通达信软件**，以便重新加载自定义板块列表。")
-                else:
-                    st.error(f"❌ 导入失败: {res.get('error', '未知错误')}")
+    render_tdx_blocks_preview(blocks)
+    render_tdx_import_tabs(blocks, pick_date, mode, key_suffix=f"formal_{pick_date}_{mode_key}")
 
 def render_result_center() -> None:
     st.title("结果中心")
@@ -2130,6 +2714,31 @@ DECISION_BUCKET_LABELS = {
     "incomplete": "评分不完整",
 }
 
+Z_QUALITY_VERDICT_LABELS = {
+    "A_SELECT": "A精选",
+    "B_WATCH": "B观察",
+    "C_REVIEW_ONLY": "C复盘",
+    "REJECT": "剔除",
+}
+
+CONSENSUS_TDX_PRESETS = {
+    "共同推荐": {"prefix": "CA"},
+    "多模型推荐": {"prefix": "CM"},
+    "单模型推荐": {"prefix": "CS"},
+    "共同观察": {"prefix": "CWA"},
+    "多模型观察": {"prefix": "CW"},
+    "单模型观察": {"prefix": "CSW"},
+    "Z精选": {"prefix": "ZA", "block_prefix": "Z"},
+    "Z观察": {"prefix": "ZW", "block_prefix": "Z"},
+    "Z精选+观察": {"prefix": "ZQ", "block_prefix": "Z"},
+    "Z复盘样本": {"prefix": "ZR", "block_prefix": "Z"},
+    "分歧样本": {"prefix": "CD"},
+    "全部自定义": {"prefix": "C"},
+}
+
+MODEL_STATE_OPTIONS = ["推荐", "观察", "不推荐", "缺失"]
+CONSENSUS_VERDICT_OPTIONS = ["PASS", "WATCH", "FAIL", "INCOMPLETE"]
+
 
 def consensus_summary_files() -> list[Path]:
     if not CONSENSUS_DIR.exists():
@@ -2156,14 +2765,61 @@ def load_consensus_payload(summary_path: Path) -> tuple[dict[str, Any], list[dic
     return summary, decisions if isinstance(decisions, list) else [], details if isinstance(details, list) else []
 
 
-def consensus_decision_table_rows(decisions: list[dict[str, Any]], models: list[str]) -> list[dict[str, Any]]:
+def load_z_quality_decisions(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    z_quality = summary.get("z_quality") or {}
+    path_text = str(z_quality.get("decisions") or "")
+    if not path_text:
+        batch_id = str(summary.get("batch_id") or "")
+        if batch_id:
+            path_text = str(Z_QUALITY_DIR / batch_id / "decisions.json")
+    if not path_text:
+        return []
+    payload = load_json(Path(path_text))
+    return payload if isinstance(payload, list) else []
+
+
+def z_quality_by_key(z_decisions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in z_decisions:
+        key = str(item.get("review_key") or review_key(str(item.get("code") or ""), str(item.get("strategy") or "")))
+        if key:
+            by_key[key] = item
+    return by_key
+
+
+def z_quality_label(verdict: str) -> str:
+    verdict = str(verdict or "")
+    return Z_QUALITY_VERDICT_LABELS.get(verdict, verdict)
+
+
+def _join_short(values: Any, *, limit: int = 3) -> str:
+    if not isinstance(values, list):
+        return ""
+    return "；".join(str(item) for item in values[:limit] if str(item))
+
+
+def consensus_decision_table_rows(
+    decisions: list[dict[str, Any]],
+    models: list[str],
+    z_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    z_by_key = z_by_key or {}
     for decision in decisions:
+        item_key = str(decision.get("review_key") or review_key(str(decision.get("code") or ""), str(decision.get("strategy") or "")))
+        z_item = z_by_key.get(item_key, {})
+        z_score = z_item.get("z_quality_score")
         row: dict[str, Any] = {
             "排名": decision.get("rank"),
             "代码": decision.get("code"),
             "策略": decision.get("strategy"),
             "决策分组": DECISION_BUCKET_LABELS.get(str(decision.get("decision_bucket")), decision.get("decision_bucket")),
+            "Z裁决": z_quality_label(str(z_item.get("z_quality_verdict") or "")),
+            "Z分": float(z_score) if z_score not in {"", None} else None,
+            "Z硬否决": "、".join(str(item) for item in (z_item.get("hard_vetoes") or [])),
+            "Z观察限制": "、".join(str(item) for item in (z_item.get("watch_caps") or [])),
+            "Z理由": _join_short(z_item.get("quality_reasons")),
+            "Z风险": _join_short(z_item.get("quality_risks")),
             "推荐模型数": decision.get("recommended_count"),
             "完成模型数": decision.get("completed_count"),
             "模型总数": decision.get("total_models"),
@@ -2178,6 +2834,31 @@ def consensus_decision_table_rows(decisions: list[dict[str, Any]], models: list[
             row[f"{model} 结论"] = verdicts.get(model, "")
             row[f"{model} 推荐"] = "是" if recommended.get(model) else "否"
         rows.append(row)
+    return rows
+
+
+def z_quality_table_rows(z_decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in z_decisions:
+        score = item.get("z_quality_score")
+        rows.append(
+            {
+                "排名": item.get("rank"),
+                "代码": item.get("code"),
+                "策略": item.get("strategy"),
+                "Z裁决": z_quality_label(str(item.get("z_quality_verdict") or "")),
+                "Z裁决代码": item.get("z_quality_verdict") or "",
+                "Z分": float(score) if score not in {"", None} else None,
+                "共识分组": DECISION_BUCKET_LABELS.get(str(item.get("decision_bucket")), item.get("decision_bucket")),
+                "共识结论": item.get("consensus_verdict") or "",
+                "共识分": item.get("consensus_score"),
+                "推荐模型数": item.get("recommended_count"),
+                "硬否决": "、".join(str(value) for value in (item.get("hard_vetoes") or [])),
+                "观察限制": "、".join(str(value) for value in (item.get("watch_caps") or [])),
+                "理由": _join_short(item.get("quality_reasons")),
+                "风险": _join_short(item.get("quality_risks")),
+            }
+        )
     return rows
 
 
@@ -2200,6 +2881,421 @@ def consensus_detail_table_rows(details: list[dict[str, Any]]) -> list[dict[str,
     return rows
 
 
+def consensus_model_state(decision: dict[str, Any], model: str) -> str:
+    recommended = decision.get("recommended_by_model") or {}
+    verdicts = decision.get("verdicts_by_model") or {}
+    missing_models = set(decision.get("missing_models") or [])
+    verdict = str(verdicts.get(model) or "").upper()
+    if model in missing_models or not verdict:
+        return "缺失"
+    if bool(recommended.get(model)) and verdict == "PASS":
+        return "推荐"
+    if verdict == "WATCH":
+        return "观察"
+    return "不推荐"
+
+
+def consensus_export_rows(
+    decisions: list[dict[str, Any]],
+    models: list[str],
+    z_by_key: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    z_by_key = z_by_key or {}
+    for decision in decisions:
+        item_key = str(decision.get("review_key") or review_key(str(decision.get("code") or ""), str(decision.get("strategy") or "")))
+        z_item = z_by_key.get(item_key, {})
+        model_states = {model: consensus_model_state(decision, model) for model in models}
+        scores = decision.get("scores_by_model") or {}
+        score_values = [
+            float(scores.get(model))
+            for model in models
+            if scores.get(model) not in {"", None}
+        ]
+        pass_count = sum(1 for state in model_states.values() if state == "推荐")
+        watch_count = sum(1 for state in model_states.values() if state == "观察")
+        fail_count = sum(1 for state in model_states.values() if state == "不推荐")
+        missing_count = sum(1 for state in model_states.values() if state == "缺失")
+        consensus_score = decision.get("consensus_score")
+        z_score = z_item.get("z_quality_score")
+        z_hard_vetoes = [str(item) for item in (z_item.get("hard_vetoes") or []) if str(item)]
+        z_watch_caps = [str(item) for item in (z_item.get("watch_caps") or []) if str(item)]
+        rows.append(
+            {
+                "code": str(decision.get("code") or ""),
+                "strategy": str(decision.get("strategy") or ""),
+                "rank": decision.get("rank"),
+                "review_key": item_key,
+                "decision_bucket": str(decision.get("decision_bucket") or ""),
+                "decision_bucket_label": DECISION_BUCKET_LABELS.get(
+                    str(decision.get("decision_bucket") or ""),
+                    decision.get("decision_bucket"),
+                ),
+                "consensus_verdict": str(decision.get("consensus_verdict") or ""),
+                "consensus_score": float(consensus_score) if consensus_score not in {"", None} else None,
+                "agreement_score": float(decision.get("agreement_score") or 0),
+                "pass_count": pass_count,
+                "watch_count": watch_count,
+                "fail_count": fail_count,
+                "missing_count": missing_count,
+                "completed_count": int(decision.get("completed_count") or 0),
+                "model_count": int(decision.get("total_models") or len(models)),
+                "score_spread": round(max(score_values) - min(score_values), 3) if len(score_values) >= 2 else 0.0,
+                "model_states": model_states,
+                "z_quality_verdict": str(z_item.get("z_quality_verdict") or ""),
+                "z_quality_label": z_quality_label(str(z_item.get("z_quality_verdict") or "")),
+                "z_quality_score": float(z_score) if z_score not in {"", None} else None,
+                "z_hard_vetoes": z_hard_vetoes,
+                "z_watch_caps": z_watch_caps,
+                "z_quality_reasons": z_item.get("quality_reasons") or [],
+                "z_quality_risks": z_item.get("quality_risks") or [],
+            }
+        )
+    return rows
+
+
+def apply_consensus_tdx_preset(rows: list[dict[str, Any]], preset: str) -> list[dict[str, Any]]:
+    if preset == "共同推荐":
+        return [row for row in rows if int(row["pass_count"]) == int(row["model_count"])]
+    if preset == "多模型推荐":
+        return [row for row in rows if int(row["pass_count"]) >= max(1, int(row["model_count"]) // 2 + 1)]
+    if preset == "单模型推荐":
+        return [row for row in rows if int(row["pass_count"]) == 1]
+    if preset == "共同观察":
+        return [
+            row
+            for row in rows
+            if int(row["pass_count"]) == 0 and int(row["watch_count"]) == int(row["model_count"])
+        ]
+    if preset == "多模型观察":
+        return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) >= 2]
+    if preset == "单模型观察":
+        return [row for row in rows if int(row["pass_count"]) == 0 and int(row["watch_count"]) == 1]
+    if preset == "Z精选":
+        return [row for row in rows if row.get("z_quality_verdict") == "A_SELECT"]
+    if preset == "Z观察":
+        return [row for row in rows if row.get("z_quality_verdict") == "B_WATCH"]
+    if preset == "Z精选+观察":
+        return [row for row in rows if row.get("z_quality_verdict") in {"A_SELECT", "B_WATCH"}]
+    if preset == "Z复盘样本":
+        return [row for row in rows if row.get("z_quality_verdict") == "C_REVIEW_ONLY"]
+    if preset == "分歧样本":
+        return [row for row in rows if int(row["pass_count"]) >= 1 and int(row["fail_count"]) >= 1]
+    return rows
+
+
+def filter_consensus_tdx_rows(
+    rows: list[dict[str, Any]],
+    *,
+    strategies: list[str],
+    verdicts: list[str],
+    bucket_labels: list[str],
+    selected_models: list[str],
+    selected_model_states: list[str],
+    model_match: str,
+    pass_range: tuple[int, int],
+    watch_range: tuple[int, int],
+    fail_range: tuple[int, int],
+    score_range: tuple[float, float],
+    z_verdicts: list[str],
+    z_score_range: tuple[float, float],
+    exclude_z_hard_veto: bool,
+    exclude_z_watch_cap: bool,
+    complete_only: bool,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        if strategies and row["strategy"] not in strategies:
+            continue
+        if verdicts and row["consensus_verdict"] not in verdicts:
+            continue
+        if bucket_labels and row["decision_bucket_label"] not in bucket_labels:
+            continue
+        if complete_only and int(row["missing_count"]) > 0:
+            continue
+        if not (pass_range[0] <= int(row["pass_count"]) <= pass_range[1]):
+            continue
+        if not (watch_range[0] <= int(row["watch_count"]) <= watch_range[1]):
+            continue
+        if not (fail_range[0] <= int(row["fail_count"]) <= fail_range[1]):
+            continue
+        score = row["consensus_score"]
+        if score is not None and not (score_range[0] <= float(score) <= score_range[1]):
+            continue
+        z_verdict = str(row.get("z_quality_verdict") or "")
+        if z_verdicts and z_verdict not in z_verdicts:
+            continue
+        z_score = row.get("z_quality_score")
+        if z_score is not None and not (z_score_range[0] <= float(z_score) <= z_score_range[1]):
+            continue
+        if exclude_z_hard_veto and row.get("z_hard_vetoes"):
+            continue
+        if exclude_z_watch_cap and row.get("z_watch_caps"):
+            continue
+        if selected_models and selected_model_states:
+            states = [row["model_states"].get(model, "缺失") for model in selected_models]
+            if model_match == "所有选中模型满足":
+                if any(state not in selected_model_states for state in states):
+                    continue
+            elif not any(state in selected_model_states for state in states):
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def sort_consensus_tdx_rows(rows: list[dict[str, Any]], sort_by: str, limit: int) -> list[dict[str, Any]]:
+    sorters = {
+        "共识分": lambda row: float(row["consensus_score"] or 0),
+        "Z质量分": lambda row: float(row.get("z_quality_score") or 0),
+        "推荐模型数": lambda row: int(row["pass_count"]),
+        "观察模型数": lambda row: int(row["watch_count"]),
+        "最高分歧": lambda row: float(row["score_spread"] or 0),
+        "原始排名": lambda row: -int(row["rank"] or 10**9),
+    }
+    key_fn = sorters.get(sort_by, sorters["共识分"])
+    sorted_rows = sorted(rows, key=key_fn, reverse=True)
+    return sorted_rows[:limit] if limit > 0 else sorted_rows
+
+
+@st.dialog("导入通达信 - 共识结果")
+def render_consensus_tdx_import_dialog(
+    summary: dict[str, Any],
+    decisions: list[dict[str, Any]],
+    models: list[str],
+    z_decisions: list[dict[str, Any]] | None = None,
+) -> None:
+    pick_date = str(summary.get("pick_date") or "")
+    batch_id = str(summary.get("batch_id") or "")
+    model_count = max(1, int(summary.get("model_count") or len(models) or 1))
+    z_by_key = z_quality_by_key(z_decisions or [])
+    all_rows = consensus_export_rows(decisions, models, z_by_key)
+
+    st.caption(f"复评批次：**{batch_id}**；选股日期：**{pick_date}**")
+    if not summary.get("complete"):
+        st.warning("当前批次存在缺失模型结果，导入前建议先补跑缺失项。")
+
+    preset = st.selectbox(
+        "快捷方案",
+        list(CONSENSUS_TDX_PRESETS.keys()),
+        key=f"consensus_tdx_preset_{batch_id}",
+    )
+    preset_rows = apply_consensus_tdx_preset(all_rows, preset)
+
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        strategy_options = sorted({row["strategy"] for row in all_rows if row["strategy"]})
+        strategies = st.multiselect(
+            "策略",
+            strategy_options,
+            default=strategy_options,
+            key=f"consensus_tdx_strategy_{batch_id}",
+        )
+    with f2:
+        verdicts = st.multiselect(
+            "共识结论",
+            CONSENSUS_VERDICT_OPTIONS,
+            default=CONSENSUS_VERDICT_OPTIONS,
+            key=f"consensus_tdx_verdict_{batch_id}",
+        )
+    with f3:
+        complete_only = st.toggle(
+            "排除缺失模型",
+            value=True,
+            key=f"consensus_tdx_complete_{batch_id}",
+        )
+
+    bucket_options = sorted({row["decision_bucket_label"] for row in all_rows if row["decision_bucket_label"]})
+    bucket_labels = st.multiselect(
+        "决策分组",
+        bucket_options,
+        default=bucket_options,
+        key=f"consensus_tdx_bucket_{batch_id}",
+    )
+
+    z_options = ["A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT"]
+    present_z_options = [item for item in z_options if any(row.get("z_quality_verdict") == item for row in all_rows)]
+    z1, z2, z3 = st.columns(3)
+    with z1:
+        z_verdicts = st.multiselect(
+            "Z裁决",
+            present_z_options,
+            default=present_z_options,
+            format_func=z_quality_label,
+            key=f"consensus_tdx_z_verdict_{batch_id}",
+            disabled=not present_z_options,
+        )
+    with z2:
+        z_score_range = st.slider(
+            "Z质量分",
+            0.0,
+            5.0,
+            (0.0, 5.0),
+            step=0.05,
+            key=f"consensus_tdx_z_score_range_{batch_id}",
+            disabled=not present_z_options,
+        )
+    with z3:
+        exclude_z_hard_veto = st.toggle(
+            "排除Z硬否决",
+            value=False,
+            key=f"consensus_tdx_z_hard_veto_{batch_id}",
+            disabled=not present_z_options,
+        )
+        exclude_z_watch_cap = st.toggle(
+            "排除Z观察限制",
+            value=False,
+            key=f"consensus_tdx_z_watch_cap_{batch_id}",
+            disabled=not present_z_options,
+        )
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        selected_models = st.multiselect(
+            "指定模型",
+            models,
+            default=models,
+            key=f"consensus_tdx_models_{batch_id}",
+        )
+    with m2:
+        selected_model_states = st.multiselect(
+            "模型状态",
+            MODEL_STATE_OPTIONS,
+            default=MODEL_STATE_OPTIONS,
+            key=f"consensus_tdx_model_states_{batch_id}",
+        )
+    with m3:
+        model_match = st.radio(
+            "模型条件",
+            ["任一选中模型满足", "所有选中模型满足"],
+            horizontal=True,
+            key=f"consensus_tdx_model_match_{batch_id}",
+        )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        pass_range = st.slider(
+            "推荐模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_pass_range_{batch_id}",
+        )
+    with c2:
+        watch_range = st.slider(
+            "观察模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_watch_range_{batch_id}",
+        )
+    with c3:
+        fail_range = st.slider(
+            "不推荐模型数",
+            0,
+            model_count,
+            (0, model_count),
+            key=f"consensus_tdx_fail_range_{batch_id}",
+        )
+
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        score_range = st.slider(
+            "共识分",
+            0.0,
+            5.0,
+            (0.0, 5.0),
+            step=0.05,
+            key=f"consensus_tdx_score_range_{batch_id}",
+        )
+    with s2:
+        sort_by = st.selectbox(
+            "排序",
+            ["共识分", "Z质量分", "推荐模型数", "观察模型数", "最高分歧", "原始排名"],
+            key=f"consensus_tdx_sort_{batch_id}",
+        )
+    with s3:
+        limit = st.number_input(
+            "最多导入",
+            min_value=0,
+            max_value=max(1, len(all_rows)),
+            value=0,
+            step=1,
+            help="0 表示不限制",
+            key=f"consensus_tdx_limit_{batch_id}",
+        )
+
+    filtered_rows = filter_consensus_tdx_rows(
+        preset_rows,
+        strategies=strategies,
+        verdicts=verdicts,
+        bucket_labels=bucket_labels,
+        selected_models=selected_models,
+        selected_model_states=selected_model_states,
+        model_match=model_match,
+        pass_range=pass_range,
+        watch_range=watch_range,
+        fail_range=fail_range,
+        score_range=score_range,
+        z_verdicts=z_verdicts,
+        z_score_range=z_score_range,
+        exclude_z_hard_veto=exclude_z_hard_veto,
+        exclude_z_watch_cap=exclude_z_watch_cap,
+        complete_only=complete_only,
+    )
+    filtered_rows = sort_consensus_tdx_rows(filtered_rows, sort_by, int(limit))
+
+    st.caption(f"当前筛选结果：{len(filtered_rows)} / {len(all_rows)} 条")
+    if filtered_rows:
+        preview = pd.DataFrame(
+            [
+                {
+                    "代码": row["code"],
+                    "策略": row["strategy"],
+                    "共识结论": row["consensus_verdict"],
+                    "共识分": row["consensus_score"],
+                    "Z裁决": row["z_quality_label"],
+                    "Z分": row["z_quality_score"],
+                    "推荐": row["pass_count"],
+                    "观察": row["watch_count"],
+                    "不推荐": row["fail_count"],
+                    "分歧": row["score_spread"],
+                }
+                for row in filtered_rows[:80]
+            ]
+        )
+        st.dataframe(preview, width="stretch", hide_index=True)
+
+    if not filtered_rows:
+        st.warning("当前筛选条件没有可导入股票")
+        return
+
+    block_items = [
+        {
+            "code": row["code"],
+            "strategy": row["strategy"],
+            "score": row["z_quality_score"] if sort_by == "Z质量分" or preset.startswith("Z") else row["consensus_score"],
+            "recommended": int(row["pass_count"]) > 0,
+            "rank": row["rank"],
+        }
+        for row in filtered_rows
+    ]
+    preset_config = CONSENSUS_TDX_PRESETS.get(preset, CONSENSUS_TDX_PRESETS["全部自定义"])
+    prefix = preset_config["prefix"]
+    block_prefix = preset_config.get("block_prefix", prefix)
+    blocks = tdx_export.build_blocks_from_items(pick_date, block_items, name_prefix=block_prefix)
+    if not blocks:
+        st.warning("筛选结果没有可转换为通达信代码的股票")
+        return
+
+    render_tdx_blocks_preview(blocks)
+    render_tdx_import_tabs(
+        blocks,
+        pick_date,
+        f"共识结果-{preset}",
+        key_suffix=f"consensus_{batch_id}_{prefix}",
+    )
+
+
 def render_consensus_center() -> None:
     st.title("共识结果")
     summary_files = consensus_summary_files()
@@ -2212,8 +3308,12 @@ def render_consensus_center() -> None:
     summary_path = summary_files[labels.index(selected_label)]
     summary, decisions, details = load_consensus_payload(summary_path)
     models = [str(model) for model in summary.get("models", [])]
+    z_decisions = load_z_quality_decisions(summary)
+    z_by_key = z_quality_by_key(z_decisions)
 
     bucket_counts = summary.get("decision_bucket_counts") or {}
+    z_quality = summary.get("z_quality") or {}
+    z_counts = z_quality.get("verdict_counts") or {}
     st.markdown(
         f"""
         <div class="metric-row">
@@ -2221,6 +3321,8 @@ def render_consensus_center() -> None:
           <div class="metric-card"><div class="metric-label">候选数量</div><div class="metric-value">{summary.get('candidate_count', 0)}</div></div>
           <div class="metric-card"><div class="metric-label">参与模型</div><div class="metric-value">{summary.get('model_count', 0)}</div></div>
           <div class="metric-card"><div class="metric-label">全票推荐 / 不完整</div><div class="metric-value">{bucket_counts.get('all_models_recommended', 0)} / {bucket_counts.get('incomplete', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">Z精选 / Z观察</div><div class="metric-value">{z_counts.get('A_SELECT', 0)} / {z_counts.get('B_WATCH', 0)}</div></div>
+          <div class="metric-card"><div class="metric-label">Z复盘 / 剔除</div><div class="metric-value">{z_counts.get('C_REVIEW_ONLY', 0)} / {z_counts.get('REJECT', 0)}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2229,26 +3331,68 @@ def render_consensus_center() -> None:
         st.warning("存在 score>=阈值 但 verdict!=PASS 的历史结果，请查看 summary.json 的 invariant_violations。")
     if not summary.get("complete"):
         st.warning("当前批次存在模型缺失评分，不能作为最终全票推荐结果；可断点重跑多模型复评。")
+    if not z_decisions:
+        st.info("当前批次还没有 Z 质量裁决结果；可在配置中启用 z_quality 后重跑共识后处理。")
 
-    tab_decision, tab_detail = st.tabs(["决策结果集", "模型评分明细"])
+    with st.columns([0.7, 0.3])[1]:
+        if st.button(
+            "📊 导入通达信",
+            width="stretch",
+            disabled=not decisions,
+            help="按共识结果筛选股票并导入通达信自定义板块",
+            key=f"consensus_tdx_import_open_{summary.get('batch_id')}",
+        ):
+            render_consensus_tdx_import_dialog(summary, decisions, models, z_decisions)
+
+    tab_decision, tab_z_quality, tab_detail = st.tabs(["决策结果集", "Z质量裁决", "模型评分明细"])
     with tab_decision:
-        decision_df = pd.DataFrame(consensus_decision_table_rows(decisions, models))
+        decision_df = pd.DataFrame(consensus_decision_table_rows(decisions, models, z_by_key))
         if decision_df.empty:
             st.info("没有决策结果。")
         else:
-            f1, f2 = st.columns(2)
+            f1, f2, f3 = st.columns(3)
             with f1:
                 strategies = sorted([x for x in decision_df["策略"].dropna().unique() if x])
                 strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"consensus_strategy_{summary.get('batch_id')}")
             with f2:
                 bucket_labels = ["全部"] + [DECISION_BUCKET_LABELS.get(key, key) for key in sorted(bucket_counts)]
                 bucket_label = st.selectbox("决策分组", bucket_labels, key=f"consensus_bucket_{summary.get('batch_id')}")
+            with f3:
+                z_labels = ["全部"] + [label for label in [z_quality_label(key) for key in ("A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT")] if label in set(decision_df["Z裁决"].dropna())]
+                z_label = st.selectbox("Z裁决", z_labels, key=f"consensus_z_verdict_{summary.get('batch_id')}")
             filtered = decision_df
             if strategy != "全部":
                 filtered = filtered[filtered["策略"] == strategy]
             if bucket_label != "全部":
                 filtered = filtered[filtered["决策分组"] == bucket_label]
+            if z_label != "全部":
+                filtered = filtered[filtered["Z裁决"] == z_label]
             st.caption(f"当前筛选结果：{len(filtered)} 条")
+            st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
+
+    with tab_z_quality:
+        z_df = pd.DataFrame(z_quality_table_rows(z_decisions))
+        if z_df.empty:
+            st.info("没有 Z 质量裁决结果。")
+        else:
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                strategies = sorted([x for x in z_df["策略"].dropna().unique() if x])
+                strategy = st.selectbox("策略筛选", ["全部"] + strategies, key=f"z_quality_strategy_{summary.get('batch_id')}")
+            with f2:
+                z_labels = ["全部"] + [label for label in [z_quality_label(key) for key in ("A_SELECT", "B_WATCH", "C_REVIEW_ONLY", "REJECT")] if label in set(z_df["Z裁决"].dropna())]
+                z_label = st.selectbox("Z裁决", z_labels, key=f"z_quality_verdict_{summary.get('batch_id')}")
+            with f3:
+                exclude_hard_veto = st.toggle("排除硬否决", value=False, key=f"z_quality_exclude_hard_veto_{summary.get('batch_id')}")
+            filtered = z_df
+            if strategy != "全部":
+                filtered = filtered[filtered["策略"] == strategy]
+            if z_label != "全部":
+                filtered = filtered[filtered["Z裁决"] == z_label]
+            if exclude_hard_veto:
+                filtered = filtered[filtered["硬否决"] == ""]
+            filtered = filtered.sort_values(["Z分", "排名"], ascending=[False, True], na_position="last")
+            st.caption(f"当前筛选结果：{len(filtered)} 条；result_mode={z_quality.get('result_mode') or '-'}")
             st.dataframe(filtered.reset_index(drop=True), width="stretch", hide_index=True)
 
     with tab_detail:

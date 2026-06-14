@@ -1,8 +1,18 @@
 # AGY CLI 复评迁移探索设计
 
-状态：实验 reviewer 迁移中，维护分支 `codex/agy-reviewer-migration`，更新日期 2026-06-05。
+状态：AGY 已成为默认 Google 订阅登录复评路径；早期探索记录保留在本文，更新日期 2026-06-12。
 
-## 当前决策
+## 2026-06-12 当前口径
+
+Gemini CLI 本机 Google 登录服务不可用后，默认多模型复评不再使用 `gemini-cli` 后端。当前按模型 ID 组织复评：
+
+- `gemini-3.5-flash-high`：AGY CLI 执行，后端模型名 `Gemini 3.5 Flash (High)`
+- `gemini-3.1-pro-high`：AGY CLI 执行，后端模型名 `Gemini 3.1 Pro (High)`
+- `gpt-5.5-high`：Codex CLI 执行，`gpt-5.5` + `reasoning_effort=high`
+
+下方“AGY 仍是实验 reviewer / Gemini CLI 仍是默认生产路径”等表述仅作为历史迁移记录，不再代表当前默认运行口径。
+
+## 早期探索决策
 
 本分支用于探索把现有 `gemini-cli` K 线图复评迁移到 Antigravity CLI（`agy`）的可行性。探索目标不是直接替换生产链路，而是用最小可验证实现回答三个问题：
 
@@ -40,7 +50,7 @@ Phase 1/2 曾在 AGY 1.0.1 下通过；AGY 1.0.5 已新增 per-call `--model`，
 
 - 已新增 `scripts/agy_cli_probe.py`，用于输出 AGY CLI 能力和非交互 JSON 探针报告。
 - 已新增 `agent/agy_cli_review.py`，用于单股 AGY 实验复评。
-- 已新增 `config/agy_cli_review.yaml`，默认 `max_items=1`，避免误跑完整批次。
+- 已新增 `config/agy_cli_review.yaml`；当前默认 `max_items` 留空，表示完整复评。需要 smoke test 时可通过 Workbench 开启数量限制或命令行 `--limit` 覆盖。
 - 探针报告默认写入 `data/review/agy_cli_probe/`，该目录位于已忽略的 `data/` 下，不进入版本库。
 - 探针会从临时目录运行 `agy --print`，避免 AGY 在仓库 worktree 内留下运行痕迹。
 - 探针会脱敏 Google OAuth URL，并显式识别 `authentication required`、`authorization code`、`authentication timed out` 等认证阻断文本。
@@ -135,7 +145,7 @@ agy --model "Gemini 3.5 Flash (Low)" --print-timeout 5m --print "Return exactly 
 - 调用 `agy --model <model> --print-timeout <duration> --print <prompt>`。
 - 输出结果写入实验目录 `data/review/agy_cli_experimental/{pick_date}/{code}.json`，避免和正式结果混淆。
 - 保存 prompt、stdout、stderr、returncode、duration、resolved model evidence。
-- `max_items` 表示本次实验复评最多处理前 N 个候选，默认 1 只用于 smoke test；命令行 `--limit` 可覆盖。
+- `max_items` 表示本次复评最多处理前 N 个候选；留空表示完整复评，命令行 `--limit` 可覆盖。
 - 本地校验必需字段：reasoning 字段、`scores` 五项分数、`total_score`、`signal_type`、`verdict`、`comment`。
 - 如果首次 stdout 无法提取 JSON 或 schema 不完整，启用一次 JSON repair prompt；repair 仍不合格则该股票失败并进入 pending。
 
@@ -194,12 +204,16 @@ python3 agent/agy_cli_review.py --limit 1 \
 - 等单股成功率稳定后，再尝试 2 到 5 张图的小批量。
 - 复用 Gemini CLI 的退避思想：先 retry 原请求，再拆分，最后逐只处理。
 - 因 `agy` 当前无 `stream-json` 参数，不以流式事件作为进度判断，只以总超时和进程退出为准。
+- 认证错误必须从普通 JSON 失败中拆出来处理。AGY stdout/stderr 出现 `Authentication required`、`Waiting for authentication`、`authorization code`、`authentication timed out`、`keyringAuth: timed out`、`silent auth failed` 时，应视为 `AgyCliAuthError`。
+- `AgyCliAuthError` 不进入 JSON repair，不触发拆批和逐只 fallback；这些动作只适用于模型正文格式错误。认证失败时继续启动新 `agy` 子进程只会放大浏览器 OAuth 弹窗。
+- 多模型复评接入前应增加 AGY preflight。preflight 通过后再运行批量 reviewer；preflight 失败时应跳过或终止 AGY reviewer，并保留已完成结果供 `skip_existing` 续跑。
 
 验收：
 
 - 5 支样本全部输出 JSON。
 - 中断后可通过 `skip_existing` 续跑。
 - 失败股票有单独失败记录，成功结果不被覆盖。
+- 认证失败时不会触发 JSON repair，不会进入批量拆分或逐只 fallback。
 
 ### Phase 5：接入运行入口（已接入为显式实验选项）
 

@@ -10,6 +10,16 @@
 2. 是否存在官方支持的免交互方案。
 3. 该问题对 K 线图批量复评迁移是否构成阻断。
 
+## 2026-06-12 当前口径
+
+Gemini CLI 本机 Google 登录服务不可用后，默认 Google 订阅登录复评路径已切换到 AGY。多模型复评不再使用 `gemini-cli` 作为正式模型后端，而是以模型 ID 为维度：
+
+- `gemini-3.5-flash-high` -> AGY CLI `Gemini 3.5 Flash (High)`
+- `gemini-3.1-pro-high` -> AGY CLI `Gemini 3.1 Pro (High)`
+- `gpt-5.5-high` -> Codex CLI `gpt-5.5`
+
+下方早期“继续保留 Gemini CLI 作为默认路径”的结论仅保留为历史记录，已经被本节取代。
+
 ## 2026-06-05 更新结论
 
 AGY CLI 1.0.5 已解除上一轮模型控制阻断。依据：
@@ -24,6 +34,71 @@ AGY CLI 1.0.5 已解除上一轮模型控制阻断。依据：
 1. AGY CLI 1.0.5 仍未暴露 `--output-format json/stream-json` 参数。
 2. 输出只能通过 prompt 约束和后处理 JSON 抽取，批量稳定性需要继续验证。
 3. 认证问题已从硬阻断变成回归观察项：每次升级后仍需跑探针，确认本轮 `current_run_keyring_auth_timeout_seen=false`。
+
+## 2026-06-09 运行中回归结论
+
+AGY CLI 1.0.6 在批量多模型复评中重新暴露出认证不稳定问题。当前不是“完全没有登录”，而是 **新启动的 `agy --print` 子进程偶发无法在 5 秒内从 macOS Keychain 完成静默认证**：
+
+- 当前 `agy --version` 为 `1.0.6`。
+- 批次 `2026-06-09_5aa9d352` 的 AGY 内部日志中，22:36 后 23 次调用里有 20 次 `authenticated via keyring` / `silent auth succeeded`，3 次出现 `keyringAuth: timed out after 5s`。
+- 失败链路为：`Print mode: not authenticated` -> `keyringAuth: timed out after 5s` -> `silent auth failed, triggering OAuth` -> `auth timed out`。
+- AGY 在这些认证失败场景下仍可能返回进程退出码 `0`，但 stdout 是 `Authentication required ... Error: authentication timed out`，不是模型 JSON。
+
+这说明认证态存在，但 AGY CLI 1.0.6 的 keyring 读取在高频新进程调用下不稳定。项目侧当前把这类 stdout 当作 JSON 契约失败，随后触发 JSON repair、批量拆分和单票 fallback，反而继续启动新的 `agy` 子进程，放大浏览器登录弹窗次数。
+
+### 项目侧修复方案
+
+1. 在 `agent/agy_cli_review.py` 中增加认证失败分类，stdout/stderr 命中以下文本时直接抛出 `AgyCliAuthError`：
+   - `Authentication required`
+   - `Waiting for authentication`
+   - `authorization code`
+   - `authentication timed out`
+   - `keyringAuth: timed out`
+   - `silent auth failed, triggering OAuth`
+2. `AgyCliAuthError` 不进入 JSON repair，因为认证输出不是模型正文，修复 prompt 没有意义。
+3. 批量调用遇到 `AgyCliAuthError` 时，不再拆批、不再逐只 fallback；应让 AGY reviewer 快速失败并保留已成功写出的单股结果，后续依靠 `skip_existing` 断点续跑。
+4. 多模型复评启动前可增加 AGY preflight：用极短 `agy --print` 探针确认本轮 keyring 可用。探针失败时跳过或终止 AGY reviewer，避免进入几百只股票后才连续弹浏览器。
+5. 文档和日志中将 AGY 作为正式 Google 模型执行后端记录；在官方提供稳定 token/API key/cache 控制前，不做手工 token 保存或二进制 patch。
+
+## 2026-06-11 运行时恢复机制
+
+6 月 11 日全流程运行中，AGY 首批 5 只已成功写出，第二批触发 OAuth：
+
+```text
+Authentication required. Please visit the URL to log in:
+  https://accounts.google.com/o/oauth2/auth?...
+Waiting for authentication (timeout 30s)...
+Or, paste the authorization code here and press Enter:
+Error: authentication timed out.
+```
+
+该 AGY 子进程已经退出，不能再向已退出的 stdin 补授权码。但同一时刻独立执行极小
+`agy --print` 探针可以恢复为 `OK`，说明登录态可通过外部浏览器操作恢复。
+
+项目侧新增短期恢复机制：
+
+1. `AgyCliAuthError` 不再直接终止当前 reviewer，而是进入认证恢复等待。
+2. reviewer 写入 `auth_recovery_status.json`，记录上下文、认证 URL、探测结果和超时。
+3. 常规非交互复评默认使用 `stdin_mode: devnull`，让 AGY `--print` 立即读到 EOF，避免 stdin 管道悬空导致无输出挂起。
+4. 如果必须向活跃 AGY 子进程粘贴 `authorization code`，可临时改为 `stdin_mode: pipe`；reviewer 会短暂监听 `auth_code.txt`，操作者把浏览器返回的 code 写入该文件后，reviewer 会写入 AGY 子进程 stdin，并立即删除 code 文件。
+5. 如果活跃子进程已经超时退出，等待期间会定期执行同一模型的极小 `agy --print` 探针。
+6. 探针通过后，使用同一模型重试当前批次或当前单股。
+7. 如果等待超时或恢复后再次认证失败，仍按失败退出，由多模型编排记录失败原因，并按 `rerun_failed_models_once` 做原模型断点重跑。
+
+默认配置：
+
+```yaml
+auth_recovery_enabled: true
+auth_recovery_wait_seconds: 900
+auth_recovery_check_interval: 15
+auth_recovery_probe_timeout_seconds: 90
+stdin_mode: devnull
+dangerously_skip_permissions: false
+auth_code_file: ""
+auth_code_wait_seconds: 25
+```
+
+这个机制不做模型降级，不保存授权码，不默认绕过 AGY/Google 的登录机制。需要人工介入时，优先完成浏览器登录并等待探针恢复；只有显式切到 `stdin_mode: pipe` 时，才按 `auth_recovery_status.json` 中的 `auth_code_file` 写入授权码。若活跃子进程已经退出，也可以在另一个终端运行一次极小 `agy --print` 来完成同一登录态刷新。`dangerously_skip_permissions` 仅作为显式开关保留，默认关闭。
 
 ## 2026-05-22 更新结论
 
@@ -129,17 +204,17 @@ Print mode: auth timed out
 1. 输出不可结构化指定：当前未发现 `--output-format json/stream-json`，只能依赖 prompt 级 JSON、本地 schema 校验和一次 JSON repair，失败率需要继续用小批量样本验证。
 2. 认证静默恢复需要每次升级后继续探针回归，避免历史 keyring 超时问题复发。
 
-因此，AGY CLI 已具备显式实验 reviewer 条件，并能通过 `--model` 指定 Gemini 3.5 Flash；在小批量 JSON 稳定性验证通过前，仍不作为默认生产 reviewer。实验结果必须带上 `reviewer=agy-cli-experimental`、`model`、`model_evidence` 和 `json_output_mode=prompt-json`，并保持输出目录隔离。
+因此，AGY CLI 已作为正式 Google 模型执行后端接入，并能通过 `--model` 指定 Gemini 3.5 Flash / Gemini 3.1 Pro。结果带上 `reviewer=agy-cli`、`model`、`model_evidence` 和 `json_output_mode=prompt-json`，单模型输出按模型 ID 隔离，多模型输出按 `review_runs/{batch_id}/agy-cli/{model_profile}` 隔离。
 
 ## 当前可行策略
 
-### 短期生产路径：继续保留 Gemini CLI 作为默认路径
+### 短期生产路径：AGY 承接 Google 订阅登录模型
 
-这是当前最稳的短期路径。AGY 迁移探索以显式实验 reviewer 方式推进，不影响默认 `gemini-cli` 复评。
+当前 Google 订阅登录复评默认走 AGY。Gemini CLI 路径仅作为历史兼容脚本保留，不再进入默认 Workbench 或多模型配置。
 
-### AGY 探索路径：进入实验 reviewer
+### AGY 探索路径：已转为正式 Google 模型执行后端
 
-AGY 分支已满足进入单股实验 reviewer 的前置条件：
+AGY 分支已满足正式接入的前置条件：
 
 - `scripts/agy_cli_probe.py --json-probe-timeout 120` 的 `json_probe_failed=false`。
 - `scripts/agy_cli_probe.py --image-path <真实K线图>` 的 `image_probe_failed=false`。

@@ -33,6 +33,21 @@ FIXED_MODEL_PROFILE = "gpt-5.5-high-standard"
 FIXED_REASONING_EFFORT = "high"
 FIXED_SPEED_TIER = "standard"
 DEFAULT_BATCH_SIZE = 5
+AUTH_MODE_LOCAL_OAUTH = "local_oauth"
+AUTH_MODE_ENV_PROVIDER = "env_provider"
+AUTH_MODE_ALIASES = {
+    "oauth": AUTH_MODE_LOCAL_OAUTH,
+    "local": AUTH_MODE_LOCAL_OAUTH,
+    "local_oauth": AUTH_MODE_LOCAL_OAUTH,
+    "codex_oauth": AUTH_MODE_LOCAL_OAUTH,
+    "native": AUTH_MODE_LOCAL_OAUTH,
+    "env": AUTH_MODE_ENV_PROVIDER,
+    "env_provider": AUTH_MODE_ENV_PROVIDER,
+    "local_proxy": AUTH_MODE_ENV_PROVIDER,
+    "proxy": AUTH_MODE_ENV_PROVIDER,
+    "apikey": AUTH_MODE_ENV_PROVIDER,
+    "api_key": AUTH_MODE_ENV_PROVIDER,
+}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidates": "data/candidates/candidates_latest.json",
@@ -44,6 +59,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model_profile": FIXED_MODEL_PROFILE,
     "reasoning_effort": FIXED_REASONING_EFFORT,
     "speed_tier": FIXED_SPEED_TIER,
+    "force_fixed_model": True,
+    "auth_mode": AUTH_MODE_LOCAL_OAUTH,
+    "ignore_user_config": False,
+    "env_provider_enabled": False,
+    "codex_provider_name": "env_custom",
+    "codex_base_url": "",
+    "base_url_env_vars": ["CODEX_OPENAI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"],
+    "api_key_env_vars": ["CODEX_OPENAI_API_KEY", "OPENAI_API_KEY"],
     "timeout_seconds": 900,
     "request_delay": 1,
     "batch_size": DEFAULT_BATCH_SIZE,
@@ -55,6 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fallback_to_single_on_batch_error": True,
     "retry_backoff_seconds": [30, 90],
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 REQUIRED_TEXT_FIELDS: tuple[str, ...] = (
@@ -83,6 +107,10 @@ class CodexCliError(RuntimeError):
     pass
 
 
+class CodexCliAuthError(CodexCliError):
+    pass
+
+
 class CodexCliJsonContractError(CodexCliError):
     pass
 
@@ -106,6 +134,61 @@ def _float_list(value: Any) -> list[float]:
     return [float(item) for item in value]
 
 
+def _string_list(value: Any) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _bool_value(value: Any, *, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(str(value))
+
+
+def _safe_provider_name(value: Any) -> str:
+    raw = str(value or "env_custom").strip() or "env_custom"
+    safe = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in raw)
+    if not safe or not (safe[0].isalpha() or safe[0] == "_"):
+        safe = f"provider_{safe}"
+    return safe
+
+
+def _normalize_auth_mode(cfg: dict[str, Any]) -> str:
+    raw = str(cfg.get("auth_mode") or cfg.get("codex_auth_mode") or "").strip().lower().replace("-", "_")
+    if raw:
+        return AUTH_MODE_ALIASES.get(raw, AUTH_MODE_LOCAL_OAUTH)
+    if _bool_value(cfg.get("env_provider_enabled"), default=False):
+        return AUTH_MODE_ENV_PROVIDER
+    return AUTH_MODE_LOCAL_OAUTH
+
+
+def _is_auth_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "401 unauthorized",
+            "incorrect api key",
+            "invalid api key",
+            "no api key provided",
+            "missing api key",
+            "authentication failed",
+            "unauthorized",
+        )
+    )
+
+
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg_path = config_path or _DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
@@ -114,6 +197,9 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
         raw = yaml.safe_load(f) or {}
 
     cfg = {**DEFAULT_CONFIG, **raw}
+    ignore_user_config_configured = "ignore_user_config" in raw
+    if "auth_mode" not in raw and "codex_auth_mode" not in raw:
+        cfg.pop("auth_mode", None)
     for key in ("candidates", "kline_dir", "output_dir", "prompt_path"):
         cfg[key] = _resolve_cfg_path(cfg[key])
     cfg["raw_log_dir"] = _resolve_cfg_path(cfg["raw_log_dir"]) if str(cfg.get("raw_log_dir") or "").strip() else None
@@ -122,11 +208,31 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     cfg["batch_size"] = max(1, int(cfg.get("batch_size", DEFAULT_BATCH_SIZE)))
     cfg["max_items"] = _optional_int(cfg.get("max_items"))
     cfg["retry_backoff_seconds"] = _float_list(cfg.get("retry_backoff_seconds", [30, 90]))
+    cfg["auth_mode"] = _normalize_auth_mode(cfg)
+    if cfg["auth_mode"] == AUTH_MODE_ENV_PROVIDER:
+        cfg["env_provider_enabled"] = True
+        cfg["ignore_user_config"] = _bool_value(
+            cfg.get("ignore_user_config") if ignore_user_config_configured else None,
+            default=True,
+        )
+    else:
+        cfg["env_provider_enabled"] = False
+        cfg["ignore_user_config"] = False
+    cfg["codex_provider_name"] = _safe_provider_name(cfg.get("codex_provider_name"))
+    cfg["codex_base_url"] = str(cfg.get("codex_base_url") or "").strip()
+    cfg["base_url_env_vars"] = _string_list(cfg.get("base_url_env_vars"))
+    cfg["api_key_env_vars"] = _string_list(cfg.get("api_key_env_vars"))
 
-    cfg["model"] = FIXED_MODEL
-    cfg["model_profile"] = FIXED_MODEL_PROFILE
-    cfg["reasoning_effort"] = FIXED_REASONING_EFFORT
-    cfg["speed_tier"] = FIXED_SPEED_TIER
+    if bool(cfg.get("force_fixed_model", True)):
+        cfg["model"] = FIXED_MODEL
+        cfg["model_profile"] = FIXED_MODEL_PROFILE
+        cfg["reasoning_effort"] = FIXED_REASONING_EFFORT
+        cfg["speed_tier"] = FIXED_SPEED_TIER
+    else:
+        cfg["model"] = str(cfg.get("model") or FIXED_MODEL)
+        cfg["model_profile"] = str(cfg.get("model_profile") or cfg["model"])
+        cfg["reasoning_effort"] = str(cfg.get("reasoning_effort") or FIXED_REASONING_EFFORT)
+        cfg["speed_tier"] = str(cfg.get("speed_tier") or FIXED_SPEED_TIER)
     return cfg
 
 
@@ -200,6 +306,7 @@ def output_schema(item_count: int) -> dict[str, Any]:
             "signal_reasoning",
             "classic_pattern_type",
             "classic_pattern_reasoning",
+            "common_gate",
             "scores",
             "total_score",
             "signal_type",
@@ -216,6 +323,34 @@ def output_schema(item_count: int) -> dict[str, Any]:
             "signal_reasoning": {"type": "string"},
             "classic_pattern_type": {"type": "string"},
             "classic_pattern_reasoning": {"type": "string"},
+            "common_gate": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["scores", "hard_veto", "hard_veto_reasons", "comment"],
+                "properties": {
+                    "scores": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "trend_qualification",
+                            "support_stop_loss_control",
+                            "overhead_room",
+                            "volume_health",
+                            "post_entry_discipline",
+                        ],
+                        "properties": {
+                            "trend_qualification": {"type": "number", "minimum": 0, "maximum": 5},
+                            "support_stop_loss_control": {"type": "number", "minimum": 0, "maximum": 5},
+                            "overhead_room": {"type": "number", "minimum": 0, "maximum": 5},
+                            "volume_health": {"type": "number", "minimum": 0, "maximum": 5},
+                            "post_entry_discipline": {"type": "number", "minimum": 0, "maximum": 5},
+                        },
+                    },
+                    "hard_veto": {"type": "boolean"},
+                    "hard_veto_reasons": {"type": "array", "items": {"type": "string"}},
+                    "comment": {"type": "string"},
+                },
+            },
             "scores": {
                 "type": "object",
                 "required": list(REQUIRED_SCORE_FIELDS),
@@ -250,6 +385,10 @@ class CodexCliReviewer(BaseReviewer):
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
         self.codex_bin = str(config.get("codex_bin", "codex"))
+        self.model = str(config.get("model") or FIXED_MODEL)
+        self.model_profile = str(config.get("model_profile") or self.model)
+        self.reasoning_effort = str(config.get("reasoning_effort") or FIXED_REASONING_EFFORT)
+        self.speed_tier = str(config.get("speed_tier") or FIXED_SPEED_TIER)
         self.timeout_seconds = int(config.get("timeout_seconds", 900))
         self.raw_log_root: Path | None = None
         self.cli_call_index = 0
@@ -290,7 +429,86 @@ class CodexCliReviewer(BaseReviewer):
     def _write_json(path: Path, payload: Any) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def _base_url_source(self) -> tuple[str, str]:
+        configured = str(self.config.get("codex_base_url") or "").strip()
+        if configured:
+            return "config.codex_base_url", configured
+        for env_name in _string_list(self.config.get("base_url_env_vars")):
+            value = os.environ.get(env_name, "").strip()
+            if value:
+                return env_name, value
+        return "", ""
+
+    def _api_key_env_source(self) -> tuple[str, str]:
+        for env_name in _string_list(self.config.get("api_key_env_vars")):
+            value = os.environ.get(env_name, "").strip()
+            if value:
+                return env_name, value
+        return "", ""
+
+    def _provider_override_meta(self) -> dict[str, Any]:
+        enabled = _bool_value(self.config.get("env_provider_enabled"), default=False)
+        source, base_url = self._base_url_source()
+        provider_name = _safe_provider_name(self.config.get("codex_provider_name"))
+        return {
+            "enabled": enabled and bool(base_url),
+            "provider_name": provider_name,
+            "base_url": base_url,
+            "base_url_source": source,
+        }
+
+    def _provider_override_args(self) -> list[str]:
+        meta = self._provider_override_meta()
+        if not meta["enabled"]:
+            return []
+        provider_name = str(meta["provider_name"])
+        base_url = str(meta["base_url"])
+        return [
+            "-c",
+            f"model_provider={_toml_string(provider_name)}",
+            "-c",
+            f"model_providers.{provider_name}.name={_toml_string(provider_name)}",
+            "-c",
+            f"model_providers.{provider_name}.wire_api={_toml_string('responses')}",
+            "-c",
+            f"model_providers.{provider_name}.requires_openai_auth=true",
+            "-c",
+            f"model_providers.{provider_name}.base_url={_toml_string(base_url)}",
+            "-c",
+            f"preferred_auth_method={_toml_string('apikey')}",
+        ]
+
+    def _codex_env(self) -> tuple[dict[str, str], dict[str, Any]]:
+        env = {**os.environ, "NO_COLOR": "1"}
+        provider_meta = self._provider_override_meta()
+        api_key_env_var = ""
+        api_key = ""
+        stripped_env_vars: list[str] = []
+        if provider_meta["enabled"]:
+            api_key_env_var, api_key = self._api_key_env_source()
+            if api_key:
+                env["OPENAI_API_KEY"] = api_key
+        else:
+            strip_names = {
+                *_string_list(self.config.get("base_url_env_vars")),
+                *_string_list(self.config.get("api_key_env_vars")),
+                "OPENAI_API_KEY",
+                "OPENAI_BASE_URL",
+                "OPENAI_API_BASE",
+            }
+            for env_name in sorted(name for name in strip_names if name):
+                if env_name in env:
+                    env.pop(env_name, None)
+                    stripped_env_vars.append(env_name)
+        return env, {
+            "api_key_env_var": api_key_env_var,
+            "api_key_env_present": bool(api_key),
+            "api_key_forwarded": bool(api_key and provider_meta["enabled"]),
+            "stripped_env_vars": stripped_env_vars,
+        }
+
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        prompt = self.prompt_for_strategy(prompt, self.batch_strategy(items))
         lines = [
             prompt,
             "",
@@ -319,19 +537,21 @@ class CodexCliReviewer(BaseReviewer):
             "--ask-for-approval",
             "never",
             "exec",
-            "--ignore-user-config",
             "--ignore-rules",
             "-c",
-            f'model_reasoning_effort="{FIXED_REASONING_EFFORT}"',
+            f'model_reasoning_effort="{self.reasoning_effort}"',
             "-c",
             "fast_default_opt_out=true",
             "--model",
-            FIXED_MODEL,
+            self.model,
             "--sandbox",
             "read-only",
             "--ephemeral",
             "--skip-git-repo-check",
         ]
+        if self.config.get("ignore_user_config", False):
+            cmd.insert(4, "--ignore-user-config")
+        cmd.extend(self._provider_override_args())
         for image_path in image_paths:
             cmd.extend(["--image", str(image_path.resolve())])
         cmd.extend(
@@ -369,13 +589,19 @@ class CodexCliReviewer(BaseReviewer):
                 work_dir=work_dir,
                 prompt=prompt_text,
             )
+            provider_meta = self._provider_override_meta()
+            codex_env, env_meta = self._codex_env()
+            provider_text = ""
+            if provider_meta["enabled"]:
+                provider_text = f" provider={provider_meta['provider_name']} base_url={provider_meta['base_url']}"
             print(
                 "[Command] Codex CLI 实际命令: "
-                f"{self.codex_bin} exec --model {FIXED_MODEL} "
-                f"-c model_reasoning_effort={FIXED_REASONING_EFFORT} "
-                f"-c fast_default_opt_out=true --image <{len(image_paths)} files> --output-schema <schema> <prompt>"
+                f"{self.codex_bin} exec --model {self.model} "
+                f"-c model_reasoning_effort={self.reasoning_effort} "
+                f"-c fast_default_opt_out=true{provider_text} "
+                f"--image <{len(image_paths)} files> --output-schema <schema> <prompt>"
             )
-            print(f"[INFO] Codex model: {FIXED_MODEL}, reasoning={FIXED_REASONING_EFFORT}, speed={FIXED_SPEED_TIER}")
+            print(f"[INFO] Codex model: {self.model}, reasoning={self.reasoning_effort}, speed={self.speed_tier}")
             if raw_dir is not None:
                 print(f"[INFO] Codex CLI raw log: {raw_dir}")
                 self._write_json(
@@ -386,10 +612,13 @@ class CodexCliReviewer(BaseReviewer):
                         "command": cmd,
                         "codes": codes,
                         "image_paths": [str(path) for path in image_paths],
-                        "model": FIXED_MODEL,
-                        "model_profile": FIXED_MODEL_PROFILE,
-                        "reasoning_effort": FIXED_REASONING_EFFORT,
-                        "speed_tier": FIXED_SPEED_TIER,
+                        "model": self.model,
+                        "model_profile": self.model_profile,
+                        "reasoning_effort": self.reasoning_effort,
+                        "speed_tier": self.speed_tier,
+                        "ignore_user_config": bool(self.config.get("ignore_user_config", False)),
+                        "provider_override": provider_meta,
+                        "env": env_meta,
                         "timeout_seconds": self.timeout_seconds,
                     },
                 )
@@ -401,7 +630,7 @@ class CodexCliReviewer(BaseReviewer):
                 capture_output=True,
                 timeout=self.timeout_seconds,
                 check=False,
-                env={**os.environ, "NO_COLOR": "1"},
+                env=codex_env,
             )
             output_text = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
             # `codex exec -o` writes the final structured message to output_path,
@@ -423,10 +652,13 @@ class CodexCliReviewer(BaseReviewer):
                         "codes": codes,
                         "image_paths": [str(path) for path in image_paths],
                         "exit_code": result.returncode,
-                        "model": FIXED_MODEL,
-                        "model_profile": FIXED_MODEL_PROFILE,
-                        "reasoning_effort": FIXED_REASONING_EFFORT,
-                        "speed_tier": FIXED_SPEED_TIER,
+                        "model": self.model,
+                        "model_profile": self.model_profile,
+                        "reasoning_effort": self.reasoning_effort,
+                        "speed_tier": self.speed_tier,
+                        "ignore_user_config": bool(self.config.get("ignore_user_config", False)),
+                        "provider_override": provider_meta,
+                        "env": env_meta,
                         "timeout_seconds": self.timeout_seconds,
                     },
                 )
@@ -476,6 +708,8 @@ class CodexCliReviewer(BaseReviewer):
     def _parse_result(self, result: subprocess.CompletedProcess[str], *, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
+            if _is_auth_error(combined_output):
+                raise CodexCliAuthError(f"Codex CLI 认证失败: {combined_output[:1200]}")
             raise CodexCliError(f"Codex CLI 退出码 {result.returncode}: {combined_output[:1200]}")
 
         reviews = _parse_reviews_text(result.stdout, raise_on_error=False)
@@ -494,10 +728,10 @@ class CodexCliReviewer(BaseReviewer):
             payload["code"] = code
             payload["strategy"] = strategy or payload.get("strategy", "")
             payload["reviewer"] = REVIEWER_KEY
-            payload["model"] = FIXED_MODEL
-            payload["model_profile"] = FIXED_MODEL_PROFILE
-            payload["reasoning_effort"] = FIXED_REASONING_EFFORT
-            payload["speed_tier"] = FIXED_SPEED_TIER
+            payload["model"] = self.model
+            payload["model_profile"] = self.model_profile
+            payload["reasoning_effort"] = self.reasoning_effort
+            payload["speed_tier"] = self.speed_tier
             payload["json_output_mode"] = "output-schema"
             payload["json_schema_valid"] = True
             normalized.append(payload)
@@ -547,6 +781,9 @@ class CodexCliReviewer(BaseReviewer):
                 for result in results:
                     print(f"    {result['code']} — verdict={result.get('verdict', '?')}, score={result.get('total_score', '?')}")
                 return results, []
+            except CodexCliAuthError as exc:
+                print(f"认证失败 — {exc}")
+                raise
             except Exception as exc:  # noqa: BLE001 - fallback below decides whether to split.
                 print(f"失败 — {exc}")
                 if attempt < len(retry_delays):
@@ -569,7 +806,7 @@ class CodexCliReviewer(BaseReviewer):
                     time.sleep(delay)
                 right_results, right_failed = self._review_batch_items(items[mid:], total_candidates)
                 return left_results + right_results, left_failed + right_failed
-            print("[INFO] Codex 小批量失败，降级为逐只复评。")
+            print("[INFO] Codex 小批量失败，使用同一模型逐只复评。")
             results: list[dict[str, Any]] = []
             failed: list[str] = []
             for item in items:
@@ -591,7 +828,7 @@ class CodexCliReviewer(BaseReviewer):
             candidates = candidates[: int(max_items)]
         batch_size = int(self.config.get("batch_size", DEFAULT_BATCH_SIZE))
         print(f"[INFO] pick_date={pick_date}，Codex 复评股票数={len(candidates)}，batch_size={batch_size}")
-        print(f"[INFO] Codex reviewer 固定模型：{FIXED_MODEL} / reasoning={FIXED_REASONING_EFFORT} / speed={FIXED_SPEED_TIER}")
+        print(f"[INFO] Codex reviewer 模型：{self.model} / reasoning={self.reasoning_effort} / speed={self.speed_tier}")
 
         out_dir = self.output_dir / pick_date
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -627,6 +864,14 @@ class CodexCliReviewer(BaseReviewer):
                 failed_codes.append(item_key)
                 continue
 
+            if review_batch and self.batch_strategy(review_batch) != strategy:
+                results, failed = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                if i < len(candidates) and float(self.config.get("request_delay", 1)) > 0:
+                    time.sleep(float(self.config.get("request_delay", 1)))
+
             review_batch.append(
                 {
                     "index": i,
@@ -656,7 +901,7 @@ class CodexCliReviewer(BaseReviewer):
             print(f"[WARN] 未处理股票：{failed_codes}")
         if not all_results:
             print("[ERROR] 没有可用的 Codex 复评结果，跳过汇总。")
-            return
+            raise SystemExit(1)
 
         suggestion = self.generate_suggestion(
             pick_date=pick_date,
@@ -669,10 +914,10 @@ class CodexCliReviewer(BaseReviewer):
         suggestion.update(
             {
                 "reviewer": REVIEWER_KEY,
-                "model": FIXED_MODEL,
-                "model_profile": FIXED_MODEL_PROFILE,
-                "reasoning_effort": FIXED_REASONING_EFFORT,
-                "speed_tier": FIXED_SPEED_TIER,
+                "model": self.model,
+                "model_profile": self.model_profile,
+                "reasoning_effort": self.reasoning_effort,
+                "speed_tier": self.speed_tier,
                 "review_complete": not failed_codes and not pending,
                 "total_candidates": len(candidates),
                 "failed_or_skipped": failed_codes,
@@ -682,6 +927,8 @@ class CodexCliReviewer(BaseReviewer):
         suggestion_file = out_dir / "suggestion.json"
         self._write_json(suggestion_file, suggestion)
         print(f"[INFO] Codex 汇总已写入: {suggestion_file}")
+        if not suggestion["review_complete"]:
+            raise SystemExit(1)
 
 
 def main() -> None:

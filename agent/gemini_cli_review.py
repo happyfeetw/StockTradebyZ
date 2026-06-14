@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "fallback_to_single_on_batch_error": True,
     "retry_backoff_seconds": [30, 90, 180, 480, 900],
     "retry_jitter_ratio": 0.2,
-    "max_requests_per_run": 50,
+    "max_requests_per_run": 2000,
     "daily_request_budget": 2000,
     "usage_file": "data/review/.gemini_cli_usage.json",
     "stop_on_rate_limit": False,
@@ -78,6 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "skip_existing": True,
     "suggest_min_score": 4.0,
     "classic_pattern_enabled": True,
+    "group_review_by_strategy": True,
 }
 
 RATE_LIMIT_MARKERS = (
@@ -474,6 +475,7 @@ class GeminiCliReviewer(BaseReviewer):
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def _build_prompt(self, *, code: str, chart_ref: str, prompt: str, strategy: str = "") -> str:
+        prompt = self.prompt_for_strategy(prompt, strategy)
         strategy_line = f"来源策略：{strategy}\n" if strategy else ""
         return (
             f"{prompt}\n\n"
@@ -486,6 +488,7 @@ class GeminiCliReviewer(BaseReviewer):
         )
 
     def _build_batch_prompt(self, *, items: list[dict[str, Any]], prompt: str) -> str:
+        prompt = self.prompt_for_strategy(prompt, self.batch_strategy(items))
         lines = [
             f"{prompt}",
             "",
@@ -1125,10 +1128,10 @@ class GeminiCliReviewer(BaseReviewer):
             return left_results + right_results, left_failed + right_failed, right_reason
 
         if delay:
-            print(f"[INFO] 小批量仍失败，{delay} 秒后降级为逐只复评。")
+            print(f"[INFO] 小批量仍失败，{delay} 秒后使用同一模型逐只复评。")
             time.sleep(delay)
         else:
-            print("[INFO] 小批量仍失败，降级为逐只复评。")
+            print("[INFO] 小批量仍失败，使用同一模型逐只复评。")
         return self._review_single_items(items, total_candidates)
 
     def run(self):
@@ -1202,6 +1205,22 @@ class GeminiCliReviewer(BaseReviewer):
                 failed_codes.append(review_key)
                 continue
 
+            if review_batch and self.batch_strategy(review_batch) != strategy:
+                results, failed, reason = self._review_batch_items(review_batch, len(candidates))
+                all_results.extend(results)
+                failed_codes.extend(failed)
+                review_batch = []
+                review_batch_estimated_tokens = ESTIMATED_PROMPT_TOKEN_RESERVE
+                if reason:
+                    stop_reason = reason
+                    break
+                ok, next_reason = self._can_start_request()
+                if not ok:
+                    stop_reason = next_reason
+                    print(f"[STOP] {next_reason}")
+                    break
+                time.sleep(self.config.get("request_delay", 10))
+
             if review_batch and review_batch_estimated_tokens + item_estimated_tokens > MAX_CONTEXT_TOKENS:
                 print(
                     f"[INFO] 当前批次估算 {review_batch_estimated_tokens:,} tokens，"
@@ -1272,7 +1291,7 @@ class GeminiCliReviewer(BaseReviewer):
 
         if not all_results:
             print("[ERROR] 没有可用的评分结果，跳过汇总。")
-            return
+            raise SystemExit(1)
 
         min_score = self.config.get("suggest_min_score", 4.0)
         suggestion = self.generate_suggestion(
@@ -1304,6 +1323,8 @@ class GeminiCliReviewer(BaseReviewer):
 
         print("\n✅ 全部完成。")
         print(f"   输出目录: {out_dir}")
+        if not suggestion["review_complete"]:
+            raise SystemExit(1)
 
 
 def main():

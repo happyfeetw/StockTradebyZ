@@ -28,6 +28,10 @@
 4. Gemini CLI 复评（运行中心 / `POST /api/runs/review/provider`）
 5. 归档与查看推荐结果（运行中心 / `POST /api/runs/archive`）
 
+运行中心页面包含“流程计划”，用于选择当前 candidate batch，并按每日数据下载、
+量化初选、图表导出、Gemini CLI 复评、归档和分析查看的顺序触发下一步。每个步骤
+仍然创建独立 run，运行详情中可以查看配置快照、进度、控制台日志、失败诊断和产物。
+
 legacy 文件输出链路：
 
 - data/raw：原始日线 CSV

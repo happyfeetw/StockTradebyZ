@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import sys
+from copy import deepcopy
 from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Callable
@@ -45,6 +46,7 @@ class PreselectParameters:
     data_dir: str | None = None
     pick_date: str | None = None
     end_date: str | None = None
+    strategy_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +90,12 @@ class PreselectExecutionPort(Protocol):
     def load_config(self, config_path: str | None = None) -> dict[str, Any]:
         ...
 
-    def run_preselect(self, parameters: PreselectParameters) -> tuple[Any, list[Any]]:
+    def run_preselect(
+        self,
+        parameters: PreselectParameters,
+        *,
+        config: dict[str, Any] | None = None,
+    ) -> tuple[Any, list[Any]]:
         ...
 
 
@@ -162,6 +169,27 @@ def _enabled_strategies(config: dict[str, Any]) -> list[str]:
     if config.get("brick", {}).get("enabled", True):
         strategies.append("brick")
     return strategies
+
+
+def _config_with_strategy_overrides(
+    config: dict[str, Any],
+    strategy_ids: tuple[str, ...] | None,
+) -> dict[str, Any]:
+    if strategy_ids is None:
+        return config
+
+    strategy_order = ("b1", "b2", "brick")
+    unknown = sorted(set(strategy_ids) - set(strategy_order))
+    if unknown:
+        raise ValueError(f"unsupported strategy_ids: {', '.join(unknown)}")
+
+    selected = set(strategy_ids)
+    effective_config = deepcopy(config)
+    for strategy in strategy_order:
+        section = dict(effective_config.get(strategy, {}))
+        section["enabled"] = strategy in selected
+        effective_config[strategy] = section
+    return effective_config
 
 
 def _strategy_candidate_counts(strategies: list[str], candidates: list[SelectionCandidate]) -> dict[str, int]:
@@ -772,8 +800,13 @@ class LegacyPreselectExecutionPort:
     def load_config(self, config_path: str | None = None) -> dict[str, Any]:
         return self.module.load_config(config_path)
 
-    def run_preselect(self, parameters: PreselectParameters) -> tuple[Any, list[Any]]:
-        config = self.load_config(parameters.config_path)
+    def run_preselect(
+        self,
+        parameters: PreselectParameters,
+        *,
+        config: dict[str, Any] | None = None,
+    ) -> tuple[Any, list[Any]]:
+        config = config or self.load_config(parameters.config_path)
         settings = _execution_settings(self.module, config=config, parameters=parameters)
         raw_data = self.market_data.load_raw_data(settings, parameters)
         prepared = self.market_preparation.prepare(
@@ -810,7 +843,10 @@ class PreselectService:
 
     def run(self, parameters: PreselectParameters, *, run_date: str | None = None) -> PreselectResult:
         config = (self.config_loader or self.port.load_config)(parameters.config_path)
+        effective_config = _config_with_strategy_overrides(config, parameters.strategy_ids)
         if self.runner is not None:
+            if parameters.strategy_ids is not None:
+                raise ValueError("strategy_ids are not supported by the legacy runner path")
             pick_ts, legacy_candidates = self.runner(
                 config_path=parameters.config_path,
                 data_dir=parameters.data_dir,
@@ -818,16 +854,18 @@ class PreselectService:
                 pick_date=parameters.pick_date,
             )
         else:
-            pick_ts, legacy_candidates = self.port.run_preselect(parameters)
+            pick_ts, legacy_candidates = self.port.run_preselect(parameters, config=effective_config)
 
         pick_date = pick_ts.strftime("%Y-%m-%d")
         candidates = [_selection_candidate_from_port(candidate) for candidate in legacy_candidates]
-        executed_strategies = _enabled_strategies(config)
+        executed_strategies = _enabled_strategies(effective_config)
         meta = {
+            "mode": "preselect",
             "config": parameters.config_path,
             "data_dir": parameters.data_dir,
             "requested_pick_date": parameters.pick_date,
             "end_date": parameters.end_date,
+            "strategy_ids": list(parameters.strategy_ids) if parameters.strategy_ids is not None else None,
             "total": len(candidates),
             "executed_strategies": executed_strategies,
             "strategy_candidate_counts": _strategy_candidate_counts(executed_strategies, candidates),

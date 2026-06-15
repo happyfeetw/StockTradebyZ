@@ -175,9 +175,14 @@ class PreselectDomainContractTests(unittest.TestCase):
                 "data_dir": "data/raw",
                 "pick_date": "2026-05-23",
                 "end_date": "2026-05-23",
+                "strategy_ids": ["b1", "brick"],
             }
         )
         self.assertEqual(request.pick_date, "2026-05-23")
+        self.assertEqual(request.strategy_ids, ["b1", "brick"])
+
+        with self.assertRaises(ValueError):
+            PreselectRunRequest.model_validate({"strategy_ids": ["b1", "b1"]})
 
         candidate = CandidateResponse.model_validate(
             {
@@ -258,7 +263,7 @@ class FixturePort:
             "brick": {{"enabled": False}},
         }}
 
-    def run_preselect(self, parameters):
+    def run_preselect(self, parameters, *, config=None):
         return dt.date.fromisoformat("2026-05-22"), [
             SimpleNamespace(
                 code="000001",
@@ -289,6 +294,47 @@ print("pipeline.select_stock" in sys.modules)
                 "False",
             ],
         )
+
+    def test_preselect_strategy_ids_override_config_for_current_run_only(self) -> None:
+        class CapturingPort:
+            def __init__(self) -> None:
+                self.source_config = {
+                    "b1": {"enabled": True},
+                    "b2": {"enabled": True},
+                    "brick": {"enabled": True},
+                }
+                self.effective_config: dict | None = None
+
+            def load_config(self, config_path=None):
+                return self.source_config
+
+            def run_preselect(self, parameters, *, config=None):
+                self.effective_config = config
+                return dt.date.fromisoformat("2026-05-22"), [
+                    SimpleNamespace(
+                        code="000001",
+                        date="2026-05-22",
+                        strategy="brick",
+                        close=12.0,
+                        turnover_n=5.0,
+                        brick_growth=0.2,
+                        extra={},
+                    )
+                ]
+
+        port = CapturingPort()
+        result = PreselectService(port=port).run(
+            PreselectParameters(strategy_ids=("brick",), pick_date="2026-05-23"),
+            run_date="2026-05-27",
+        )
+
+        self.assertEqual(result.meta["strategy_ids"], ["brick"])
+        self.assertEqual(result.meta["executed_strategies"], ["brick"])
+        self.assertEqual(result.strategy_counts, {"brick": 1})
+        self.assertEqual(port.effective_config["b1"]["enabled"], False)
+        self.assertEqual(port.effective_config["b2"]["enabled"], False)
+        self.assertEqual(port.effective_config["brick"]["enabled"], True)
+        self.assertEqual(port.source_config["b1"]["enabled"], True)
 
     def test_product_pick_date_port_matches_legacy_resolution(self) -> None:
         prepared = {

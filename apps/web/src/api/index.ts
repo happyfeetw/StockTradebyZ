@@ -246,6 +246,7 @@ export interface PreselectRunRequest {
   data_dir?: string
   pick_date?: string
   end_date?: string
+  strategy_ids?: StrategyPreferenceId[]
 }
 
 export interface MarketDataRunRequest {

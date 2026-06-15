@@ -31,6 +31,7 @@ import {
   Terminal,
   Upload,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react'
 import '../../App.css'
 import { UiPreferenceProvider, useUiPreferences, type AppLanguage, type AppThemePreference } from './uiPreferences'
@@ -73,6 +74,7 @@ import {
   type Candidate,
   type CandidateBatchSummary,
   type CandidateFilters,
+  type ExternalIntegrationStatus,
   type JobEvent,
   type LegacyImportIssue,
   type LegacyImportSectionReport,
@@ -116,6 +118,16 @@ const statusLabels: Record<RunStatus, string> = {
 }
 
 const MARKET_DATA_DEFAULT_START_DATE = '2019-01-01'
+
+type PreselectFormState = {
+  config_path: string
+  data_dir: string
+  pick_date: string
+  end_date: string
+  strategy_ids: StrategyPreferenceId[]
+}
+
+type PreselectTextField = Exclude<keyof PreselectFormState, 'strategy_ids'>
 
 const legacyMigrationScopes: { value: LegacyImportVerifyScope; label: string; description: string }[] = [
   { value: 'candidates', label: 'Candidates', description: 'Batch files and strategy counts' },
@@ -998,6 +1010,16 @@ function CandidatesView() {
           <div className="empty-state batch-empty">
             <Database size={24} aria-hidden="true" />
             <h3>{normalizedFilters.pick_date || normalizedFilters.run_id ? t('No batches match the filters') : t('No candidate batches yet')}</h3>
+            <div className="empty-actions">
+              <Link className="action-button" to="/runs">
+                <Activity size={17} aria-hidden="true" />
+                <span>{t('Open Run Center')}</span>
+              </Link>
+              <Link className="action-button secondary" to="/migrations">
+                <Upload size={17} aria-hidden="true" />
+                <span>{t('Import legacy data')}</span>
+              </Link>
+            </div>
           </div>
         ) : null}
 
@@ -1100,6 +1122,16 @@ function CandidatesView() {
             <div className="empty-state">
               <Search size={24} aria-hidden="true" />
               <h3>{hasFilters ? t('No candidates match the filters') : t('No candidate rows yet')}</h3>
+              <div className="empty-actions">
+                <Link className="action-button" to="/runs">
+                  <Activity size={17} aria-hidden="true" />
+                  <span>{t('Run preselect')}</span>
+                </Link>
+                <Link className="action-button secondary" to="/migrations">
+                  <Upload size={17} aria-hidden="true" />
+                  <span>{t('Import legacy data')}</span>
+                </Link>
+              </div>
             </div>
           ) : null}
 
@@ -1308,6 +1340,16 @@ function ReviewsView() {
             <div className="empty-state">
               <FileSearch size={24} aria-hidden="true" />
               <h3>{hasFilters ? t('No reviews match the filters') : t('No review rows yet')}</h3>
+              <div className="empty-actions">
+                <Link className="action-button" to="/runs">
+                  <Activity size={17} aria-hidden="true" />
+                  <span>{t('Run review')}</span>
+                </Link>
+                <Link className="action-button secondary" to="/candidates">
+                  <Search size={17} aria-hidden="true" />
+                  <span>{t('Choose candidate batch')}</span>
+                </Link>
+              </div>
             </div>
           ) : null}
 
@@ -1519,6 +1561,16 @@ function ArchiveView() {
             <div className="empty-state">
               <Archive size={24} aria-hidden="true" />
               <h3>{t('No archive snapshots yet')}</h3>
+              <div className="empty-actions">
+                <Link className="action-button" to="/runs">
+                  <Activity size={17} aria-hidden="true" />
+                  <span>{t('Open Run Center')}</span>
+                </Link>
+                <Link className="action-button secondary" to="/reviews">
+                  <FileSearch size={17} aria-hidden="true" />
+                  <span>{t('Open reviews')}</span>
+                </Link>
+              </div>
             </div>
           ) : null}
 
@@ -1573,6 +1625,12 @@ function ArchiveView() {
             <div className="empty-state">
               <Search size={24} aria-hidden="true" />
               <h3>{hasFilters ? t('No archive rows match the filters') : t('No rows for this archive date')}</h3>
+              <div className="empty-actions">
+                <Link className="action-button" to="/runs">
+                  <Activity size={17} aria-hidden="true" />
+                  <span>{t('Archive selected')}</span>
+                </Link>
+              </div>
             </div>
           ) : null}
           {!activePickDate && !snapshotsQuery.isLoading ? (
@@ -1865,16 +1923,28 @@ function RunsView() {
     log_path: '',
     workers: '',
   })
-  const [preselectForm, setPreselectForm] = useState<Record<keyof PreselectRunRequest, string>>({
+  const [preselectForm, setPreselectForm] = useState<PreselectFormState>({
     config_path: '',
     data_dir: '',
     pick_date: '',
     end_date: '',
+    strategy_ids: [],
   })
+  const [preselectStrategiesTouched, setPreselectStrategiesTouched] = useState(false)
+  const [workflowBatchId, setWorkflowBatchId] = useState('')
 
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 10_000 })
+  const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings, staleTime: 30_000 })
+  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: getStrategies, staleTime: 30_000 })
+  const workflowBatchesQuery = useQuery({
+    queryKey: ['candidate-batches', 'workflow'],
+    queryFn: () => listCandidateBatches(),
+    refetchInterval: 15_000,
+  })
   const runs = runsQuery.data?.runs ?? []
+  const workflowBatches = workflowBatchesQuery.data?.batches ?? []
+  const activeWorkflowBatch = workflowBatches.find((batch) => batch.id === workflowBatchId) ?? workflowBatches[0] ?? null
   const activeRunId = selectedRunId ?? (requestedRunId || runs[0]?.id || '')
   const activeRunSummary = runs.find((run) => run.id === activeRunId)
   const activeRunIsLive = Boolean(
@@ -1899,6 +1969,27 @@ function RunsView() {
     queryFn: () => getRunArtifacts(activeRunId),
     enabled: Boolean(activeRunId),
   })
+
+  const defaultStrategyIds = settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? []
+  const defaultStrategyKey = defaultStrategyIds.join('|')
+
+  useEffect(() => {
+    if (preselectStrategiesTouched || defaultStrategyIds.length === 0) return
+    setPreselectForm((current) => {
+      if (current.strategy_ids.length > 0) return current
+      return { ...current, strategy_ids: [...defaultStrategyIds] }
+    })
+  }, [defaultStrategyKey, defaultStrategyIds, preselectStrategiesTouched])
+
+  useEffect(() => {
+    if (workflowBatches.length === 0) {
+      if (workflowBatchId) setWorkflowBatchId('')
+      return
+    }
+    if (!workflowBatchId || !workflowBatches.some((batch) => batch.id === workflowBatchId)) {
+      setWorkflowBatchId(workflowBatches[0].id)
+    }
+  }, [workflowBatches, workflowBatchId])
 
   const createMutation = useMutation({
     mutationFn: () => createDiagnosticRun(false),
@@ -1941,6 +2032,61 @@ function RunsView() {
       selectRun(response.run.id)
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['candidates'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+    },
+  })
+
+  const workflowChartExportMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) =>
+      createChartExportRun({
+        candidate_batch_id: batch.id,
+      }),
+    onSuccess: (response) => {
+      selectRun(response.run.id)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
+    },
+  })
+
+  const workflowReviewMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) =>
+      createReviewProviderRun({
+        candidate_batch_id: batch.id,
+        provider: 'gemini-cli',
+        require_charts: true,
+        provider_config: {
+          skip_existing: true,
+        },
+      }),
+    onSuccess: (response) => {
+      selectRun(response.run.id)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
+      queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
+    },
+  })
+
+  const workflowArchiveMutation = useMutation({
+    mutationFn: (batch: CandidateBatchSummary) => {
+      if (!batch.latest_review_run_id) {
+        throw new Error(t('Selected batch has no review run to archive'))
+      }
+      return createArchiveRun({
+        candidate_batch_id: batch.id,
+        review_run_id: batch.latest_review_run_id,
+      })
+    },
+    onSuccess: (response) => {
+      selectRun(response.run.id)
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
+      queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
     },
   })
@@ -1962,8 +2108,19 @@ function RunsView() {
     setMarketDataForm((current) => ({ ...current, [key]: value }))
   }
 
-  function updatePreselectField(key: keyof PreselectRunRequest, value: string) {
+  function updatePreselectField(key: PreselectTextField, value: string) {
     setPreselectForm((current) => ({ ...current, [key]: value }))
+  }
+
+  function togglePreselectStrategy(strategyId: StrategyPreferenceId) {
+    setPreselectStrategiesTouched(true)
+    setPreselectForm((current) => {
+      const selected = current.strategy_ids.includes(strategyId)
+      const strategyIds = selected
+        ? current.strategy_ids.filter((id) => id !== strategyId)
+        : [...current.strategy_ids, strategyId]
+      return { ...current, strategy_ids: strategyIds }
+    })
   }
 
   function selectRun(runId: string) {
@@ -1997,6 +2154,49 @@ function RunsView() {
           <span>{errorText(healthQuery.error ?? runsQuery.error)}</span>
         </div>
       ) : null}
+
+      {workflowBatchesQuery.isError || settingsQuery.isError || strategiesQuery.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(workflowBatchesQuery.error ?? settingsQuery.error ?? strategiesQuery.error)}</span>
+        </div>
+      ) : null}
+
+      {workflowChartExportMutation.isError || workflowReviewMutation.isError || workflowArchiveMutation.isError ? (
+        <div className="alert" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <span>{errorText(workflowChartExportMutation.error ?? workflowReviewMutation.error ?? workflowArchiveMutation.error)}</span>
+        </div>
+      ) : null}
+
+      <WorkflowPlanPanel
+        runs={runs}
+        batches={workflowBatches}
+        activeBatch={activeWorkflowBatch}
+        activeBatchId={workflowBatchId}
+        integrations={settingsQuery.data?.external_integrations ?? []}
+        strategies={strategiesQuery.data?.strategies ?? []}
+        selectedStrategyIds={preselectForm.strategy_ids}
+        onBatchChange={setWorkflowBatchId}
+        onDownloadData={() => marketDataMutation.mutate()}
+        onRunPreselect={() => preselectMutation.mutate()}
+        onExportCharts={() => {
+          if (activeWorkflowBatch) workflowChartExportMutation.mutate(activeWorkflowBatch)
+        }}
+        onRunReview={() => {
+          if (activeWorkflowBatch) workflowReviewMutation.mutate(activeWorkflowBatch)
+        }}
+        onArchive={() => {
+          if (activeWorkflowBatch) workflowArchiveMutation.mutate(activeWorkflowBatch)
+        }}
+        pending={{
+          marketData: marketDataMutation.isPending,
+          preselect: preselectMutation.isPending,
+          chartExport: workflowChartExportMutation.isPending,
+          review: workflowReviewMutation.isPending,
+          archive: workflowArchiveMutation.isPending,
+        }}
+      />
 
       <div className="workspace-grid">
         <section className="run-list-panel" aria-label={t('Runs')}>
@@ -2129,7 +2329,29 @@ function RunsView() {
               value={preselectForm.pick_date}
               onChange={(value) => updatePreselectField('pick_date', value)}
             />
-            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending}>
+            <fieldset className="run-strategy-selector">
+              <legend>{t('Strategies for this run')}</legend>
+              <div className="run-strategy-grid">
+                {(strategiesQuery.data?.strategies ?? []).map((strategy) => {
+                  const selected = preselectForm.strategy_ids.includes(strategy.id)
+                  return (
+                    <label key={strategy.id} className={selected ? 'strategy-option selected' : 'strategy-option'}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => togglePreselectStrategy(strategy.id)}
+                      />
+                      <span>
+                        <strong>{strategy.label}</strong>
+                        <small>{strategy.description}</small>
+                      </span>
+                    </label>
+                  )
+                })}
+                {strategiesQuery.isLoading ? <p className="muted">{t('Loading strategies')}</p> : null}
+              </div>
+            </fieldset>
+            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending || preselectForm.strategy_ids.length === 0}>
               {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
               <span>{t('Run preselect')}</span>
             </button>
@@ -2175,6 +2397,10 @@ function RunsView() {
                 <span className="run-row-main">
                   <span className="run-kind">{run.kind}</span>
                   <span className="run-id">{run.id}</span>
+                  <span className="run-row-context">
+                    {run.pick_date ?? t('No pick date')} / {formatDateTime(run.created_at)}
+                    {run.summary ? ` / ${runInlineSummary(run)}` : ''}
+                  </span>
                 </span>
                 <StatusBadge status={run.status} />
               </button>
@@ -2202,6 +2428,259 @@ function RunsView() {
         </section>
       </div>
     </div>
+  )
+}
+
+type WorkflowStepState = 'done' | 'ready' | 'running' | 'blocked' | 'waiting'
+
+type WorkflowPendingState = {
+  marketData: boolean
+  preselect: boolean
+  chartExport: boolean
+  review: boolean
+  archive: boolean
+}
+
+type WorkflowStep = {
+  id: string
+  title: string
+  detail: string
+  icon: LucideIcon
+  state: WorkflowStepState
+  actionLabel?: string
+  onAction?: () => void
+  disabled?: boolean
+  to?: string
+}
+
+function WorkflowPlanPanel({
+  runs,
+  batches,
+  activeBatch,
+  activeBatchId,
+  integrations,
+  strategies,
+  selectedStrategyIds,
+  onBatchChange,
+  onDownloadData,
+  onRunPreselect,
+  onExportCharts,
+  onRunReview,
+  onArchive,
+  pending,
+}: {
+  runs: RunSummary[]
+  batches: CandidateBatchSummary[]
+  activeBatch: CandidateBatchSummary | null
+  activeBatchId: string
+  integrations: ExternalIntegrationStatus[]
+  strategies: StrategyDefinition[]
+  selectedStrategyIds: StrategyPreferenceId[]
+  onBatchChange: (batchId: string) => void
+  onDownloadData: () => void
+  onRunPreselect: () => void
+  onExportCharts: () => void
+  onRunReview: () => void
+  onArchive: () => void
+  pending: WorkflowPendingState
+}) {
+  const { t } = useUiPreferences()
+  const tushare = findIntegration(integrations, 'tushare')
+  const gemini = findIntegration(integrations, 'gemini_cli')
+  const latestMarketData = findLatestRun(runs, 'market_data', 'succeeded')
+  const runningMarketData = findActiveRun(runs, 'market_data')
+  const runningPreselect = findActiveRun(runs, 'preselect')
+  const runningChartExport = activeBatch ? findActiveRun(runs, 'chart_export', activeBatch.id) : null
+  const runningReview = activeBatch ? findActiveRun(runs, 'review', activeBatch.id) : null
+  const runningArchive = activeBatch ? findActiveRun(runs, 'archive', activeBatch.id) : null
+  const chartExportRun = activeBatch ? findLatestRun(runs, 'chart_export', 'succeeded', activeBatch.id) : null
+  const hasCandidateBatch = Boolean(activeBatch)
+  const hasChartExport = Boolean(chartExportRun)
+  const hasReview = Boolean(activeBatch?.latest_review_run_id)
+  const hasArchive = Boolean(activeBatch && activeBatch.archive_snapshot_count > 0)
+  const selectedStrategyLabel = selectedStrategyIds.length
+    ? selectedStrategyIds.map((id) => strategies.find((strategy) => strategy.id === id)?.label ?? id).join(', ')
+    : t('No strategy selected')
+  const marketBlocked = Boolean(tushare && !tushare.configured)
+  const reviewBlocked = Boolean(gemini && !gemini.configured)
+
+  const steps: WorkflowStep[] = [
+    {
+      id: 'market-data',
+      title: t('Daily data download'),
+      detail: runningMarketData
+        ? `${t('Running')} ${runningMarketData.id}`
+        : latestMarketData
+          ? `${t('Latest local date')}: ${summaryText(latestMarketData.summary, 'local_latest_date')}`
+          : marketBlocked
+            ? t('Tushare token is not configured')
+            : t('Default range starts from 2019-01-01 and ends today.'),
+      icon: Database,
+      state: runningMarketData ? 'running' : latestMarketData ? 'done' : marketBlocked ? 'blocked' : 'ready',
+      actionLabel: t('Download daily data'),
+      onAction: onDownloadData,
+      disabled: pending.marketData || marketBlocked,
+    },
+    {
+      id: 'preselect',
+      title: t('Quant preselect'),
+      detail: runningPreselect
+        ? `${t('Running')} ${runningPreselect.id}`
+        : hasCandidateBatch
+          ? `${activeBatch?.pick_date} / ${activeBatch?.candidate_count ?? 0} ${t('candidates')}`
+          : selectedStrategyIds.length === 0
+            ? t('Choose at least one strategy before running preselect.')
+            : `${t('Strategies for this run')}: ${selectedStrategyLabel}`,
+      icon: Search,
+      state: runningPreselect ? 'running' : hasCandidateBatch ? 'done' : selectedStrategyIds.length === 0 ? 'blocked' : 'ready',
+      actionLabel: t('Run preselect'),
+      onAction: onRunPreselect,
+      disabled: pending.preselect || selectedStrategyIds.length === 0,
+    },
+    {
+      id: 'chart-export',
+      title: t('Chart export'),
+      detail: runningChartExport
+        ? `${t('Running')} ${runningChartExport.id}`
+        : hasChartExport
+          ? `${t('Chart run')} ${chartExportRun?.id}`
+          : hasCandidateBatch
+            ? t('Ready after a candidate batch exists.')
+            : t('Create a candidate batch first.'),
+      icon: ImageIcon,
+      state: runningChartExport ? 'running' : hasChartExport ? 'done' : hasCandidateBatch ? 'ready' : 'waiting',
+      actionLabel: t('Export charts'),
+      onAction: onExportCharts,
+      disabled: pending.chartExport || !hasCandidateBatch,
+    },
+    {
+      id: 'review',
+      title: t('Gemini review'),
+      detail: runningReview
+        ? `${t('Running')} ${runningReview.id}`
+        : hasReview
+          ? `${t('Review run')}: ${activeBatch?.latest_review_run_id}`
+          : reviewBlocked
+            ? t('Gemini CLI is not configured')
+            : hasChartExport
+              ? t('Charts are ready; review can start.')
+              : t('Export charts before review.'),
+      icon: FileSearch,
+      state: runningReview ? 'running' : hasReview ? 'done' : reviewBlocked || (hasCandidateBatch && !hasChartExport) ? 'blocked' : hasCandidateBatch ? 'ready' : 'waiting',
+      actionLabel: t('Gemini review'),
+      onAction: onRunReview,
+      disabled: pending.review || !hasCandidateBatch || !hasChartExport || reviewBlocked,
+    },
+    {
+      id: 'archive',
+      title: t('Archive selected'),
+      detail: runningArchive
+        ? `${t('Running')} ${runningArchive.id}`
+        : hasArchive
+          ? `${activeBatch?.archive_snapshot_count ?? 0} ${t('archives')}`
+          : hasReview
+            ? t('Review run is ready for archive.')
+            : t('Run review before archive.'),
+      icon: Archive,
+      state: runningArchive ? 'running' : hasArchive ? 'done' : hasReview ? 'ready' : 'waiting',
+      actionLabel: t('Archive selected'),
+      onAction: onArchive,
+      disabled: pending.archive || !hasReview,
+    },
+    {
+      id: 'analytics',
+      title: t('Analytics'),
+      detail: hasArchive ? t('Archive evidence is ready for analysis.') : t('Archive first to lock the acceptance snapshot.'),
+      icon: BarChart3,
+      state: hasArchive ? 'ready' : 'waiting',
+      actionLabel: t('Open analytics'),
+      to: hasArchive && activeBatch ? `/analytics?pick_date=${encodeURIComponent(activeBatch.pick_date)}` : undefined,
+      disabled: !hasArchive,
+    },
+  ]
+
+  return (
+    <section className="workflow-plan-panel" aria-label={t('Workflow plan')}>
+      <div className="panel-heading workflow-plan-heading">
+        <div>
+          <h2>{t('Workflow plan')}</h2>
+          <p>{t('Run the product workflow from daily data to archive evidence.')}</p>
+        </div>
+        <div className="workflow-readiness">
+          <IntegrationChip status={tushare} fallbackLabel="Tushare" />
+          <IntegrationChip status={gemini} fallbackLabel="Gemini CLI" />
+        </div>
+      </div>
+
+      <div className="workflow-batch-row">
+        <label className="filter-field workflow-batch-select">
+          <span>{t('Active candidate batch')}</span>
+          <select
+            value={activeBatch?.id ?? activeBatchId}
+            onChange={(event) => onBatchChange(event.target.value)}
+            disabled={batches.length === 0}
+          >
+            {batches.length === 0 ? <option value="">{t('No candidate batches yet')}</option> : null}
+            {batches.map((batch) => (
+              <option key={batch.id} value={batch.id}>
+                {batch.pick_date} / {batch.candidate_count} {t('candidates')} / {batch.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="workflow-batch-summary">
+          <DataPair label="Batch" value={activeBatch?.id ?? t('Not linked')} />
+          <DataPair label="Pick date" value={activeBatch?.pick_date ?? t('Not set')} />
+          <DataPair label="Strategies" value={activeBatch ? Object.keys(activeBatch.strategy_counts ?? {}).join(', ') || t('none') : selectedStrategyLabel} />
+        </div>
+      </div>
+
+      <div className="workflow-step-list">
+        {steps.map((step) => {
+          const Icon = step.icon
+          return (
+            <article className={`workflow-step-card ${step.state}`} key={step.id}>
+              <div className="workflow-step-icon" aria-hidden="true">
+                <Icon size={18} />
+              </div>
+              <div className="workflow-step-copy">
+                <span className={`workflow-state-chip ${step.state}`}>{t(workflowStateLabel(step.state))}</span>
+                <h3>{step.title}</h3>
+                <p>{step.detail}</p>
+              </div>
+              {step.to ? (
+                <Link className="action-button secondary workflow-step-action" to={step.to}>
+                  <ExternalLink size={15} aria-hidden="true" />
+                  <span>{step.actionLabel}</span>
+                </Link>
+              ) : step.onAction ? (
+                <button
+                  type="button"
+                  className="action-button secondary workflow-step-action"
+                  onClick={step.onAction}
+                  disabled={step.disabled}
+                >
+                  {step.state === 'running' || step.disabled && step.state === 'ready' ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
+                  <span>{step.actionLabel}</span>
+                </button>
+              ) : null}
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function IntegrationChip({ status, fallbackLabel }: { status: ExternalIntegrationStatus | null; fallbackLabel: string }) {
+  const { t } = useUiPreferences()
+  const configured = status?.configured ?? false
+  return (
+    <span className={configured ? 'integration-chip ready' : 'integration-chip blocked'}>
+      {configured ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldAlert size={15} aria-hidden="true" />}
+      <span>{status?.label ?? fallbackLabel}</span>
+      <strong>{configured ? t('Configured') : t('Not configured')}</strong>
+    </span>
   )
 }
 
@@ -2246,6 +2725,7 @@ function RunDetailPanel({
         <Metric label="Finished" value={formatDateTime(run.finished_at)} />
       </div>
 
+      <RunConfigSnapshotPanel run={run} />
       {progress ? <RunProgressPanel progress={progress} status={run.status} /> : null}
       {diagnostic ? <FailureDiagnosticPanel diagnostic={diagnostic} /> : null}
 
@@ -2306,6 +2786,86 @@ function RunDetailPanel({
         ))}
       </section>
     </div>
+  )
+}
+
+const runConfigSnapshotKeys = [
+  'mode',
+  'config_path',
+  'config',
+  'data_dir',
+  'start',
+  'end',
+  'requested_pick_date',
+  'pick_date',
+  'end_date',
+  'out_dir',
+  'log_path',
+  'workers',
+  'strategy_ids',
+  'executed_strategies',
+  'candidate_batch_id',
+  'review_run_id',
+  'provider',
+  'reviewer',
+  'min_score_threshold',
+  'require_charts',
+  'csv_file_count',
+  'candidate_count',
+  'reviewed_count',
+  'recommended_count',
+  'exported_count',
+  'skipped_count',
+  'local_latest_date',
+] as const
+
+const runConfigSnapshotLabels: Record<string, string> = {
+  mode: 'Mode',
+  config_path: 'Config path',
+  config: 'Config path',
+  data_dir: 'Data dir',
+  start: 'Start date',
+  end: 'End date',
+  requested_pick_date: 'Requested pick date',
+  pick_date: 'Pick date',
+  end_date: 'End date',
+  out_dir: 'Output dir',
+  log_path: 'Log path',
+  workers: 'Workers',
+  strategy_ids: 'Strategies',
+  executed_strategies: 'Executed strategies',
+  candidate_batch_id: 'Candidate batch',
+  review_run_id: 'Review run',
+  provider: 'Provider',
+  reviewer: 'Reviewer',
+  min_score_threshold: 'Threshold',
+  require_charts: 'Require charts',
+  csv_file_count: 'CSV files',
+  candidate_count: 'Candidates',
+  reviewed_count: 'Reviewed',
+  recommended_count: 'Recommended',
+  exported_count: 'Exported',
+  skipped_count: 'Skipped',
+  local_latest_date: 'Latest local date',
+}
+
+function RunConfigSnapshotPanel({ run }: { run: RunSummary }) {
+  const { t } = useUiPreferences()
+  const entries = runConfigSnapshotEntries(run)
+  if (entries.length === 0) return null
+
+  return (
+    <section className="run-config-snapshot-panel" aria-label={t('Run config snapshot')}>
+      <div className="run-config-heading">
+        <SlidersHorizontal size={17} aria-hidden="true" />
+        <h3>{t('Run config snapshot')}</h3>
+      </div>
+      <div className="run-config-grid">
+        {entries.map((entry) => (
+          <DataPair key={entry.key} label={entry.label} value={entry.value} />
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -3376,6 +3936,63 @@ function archiveChartState(row: ArchiveRow) {
   return 'Not linked'
 }
 
+function findIntegration(integrations: ExternalIntegrationStatus[], token: string) {
+  const normalized = token.toLowerCase()
+  return integrations.find((integration) => {
+    return integration.key.toLowerCase().includes(normalized)
+      || integration.label.toLowerCase().includes(normalized)
+  }) ?? null
+}
+
+function isLiveStatus(status: RunStatus) {
+  return status === 'queued' || status === 'running' || status === 'cancelling'
+}
+
+function runMatchesBatch(run: RunSummary, batchId?: string) {
+  if (!batchId) return true
+  return run.summary?.candidate_batch_id === batchId
+}
+
+function findActiveRun(runs: RunSummary[], kind: RunSummary['kind'], batchId?: string) {
+  return runs.find((run) => run.kind === kind && isLiveStatus(run.status) && runMatchesBatch(run, batchId)) ?? null
+}
+
+function findLatestRun(runs: RunSummary[], kind: RunSummary['kind'], status: RunStatus, batchId?: string) {
+  return runs.find((run) => run.kind === kind && run.status === status && runMatchesBatch(run, batchId)) ?? null
+}
+
+function workflowStateLabel(state: WorkflowStepState) {
+  if (state === 'done') return 'Done'
+  if (state === 'running') return 'Running'
+  if (state === 'blocked') return 'Blocked'
+  if (state === 'ready') return 'Ready'
+  return 'Waiting'
+}
+
+function runConfigSnapshotEntries(run: RunSummary) {
+  const summary = run.summary
+  if (!summary || typeof summary !== 'object') return []
+  const entries: { key: string; label: string; value: string }[] = []
+  for (const key of runConfigSnapshotKeys) {
+    const text = snapshotValueText(summary[key])
+    if (!text) continue
+    entries.push({
+      key,
+      label: runConfigSnapshotLabels[key] ?? key,
+      value: text,
+    })
+  }
+  return entries
+}
+
+function snapshotValueText(value: unknown) {
+  if (value === null || value === undefined || value === '') return ''
+  if (Array.isArray(value)) return value.length ? value.map((item) => String(item)).join(', ') : 'none'
+  if (typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  return String(value)
+}
+
 function formatArchiveRank(row: ArchiveRow) {
   return row.rank ? `#${row.rank}` : 'No rank'
 }
@@ -3564,8 +4181,14 @@ function archiveStatusValue(value: string | null): ArchiveStatus {
   return 'all'
 }
 
-function compactPreselectRequest(form: Record<keyof PreselectRunRequest, string>): PreselectRunRequest {
-  return Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]))
+function compactPreselectRequest(form: PreselectFormState): PreselectRunRequest {
+  const request: PreselectRunRequest = {}
+  for (const key of ['config_path', 'data_dir', 'pick_date', 'end_date'] as const) {
+    const value = form[key].trim()
+    if (value) request[key] = value
+  }
+  if (form.strategy_ids.length > 0) request.strategy_ids = form.strategy_ids
+  return request
 }
 
 function compactMarketDataRequest(form: Record<keyof MarketDataRunRequest, string>): MarketDataRunRequest {
@@ -3579,11 +4202,25 @@ function compactMarketDataRequest(form: Record<keyof MarketDataRunRequest, strin
   return request
 }
 
-function summaryText(summary: Record<string, unknown>, key: string) {
-  const value = summary[key]
+function summaryText(summary: Record<string, unknown> | null | undefined, key: string) {
+  const value = summary?.[key]
   if (value === null || value === undefined || value === '') return 'Not set'
   if (Array.isArray(value)) return value.length ? value.join(', ') : 'none'
   return String(value)
+}
+
+function runInlineSummary(run: RunSummary) {
+  const summary = run.summary
+  if (!summary) return ''
+  const keys = ['candidate_batch_id', 'review_run_id', 'csv_file_count', 'total', 'candidate_count', 'reviewed_count', 'recommended_count', 'provider'] as const
+  const parts = keys
+    .map((key) => {
+      const value = summary[key]
+      if (value === null || value === undefined || value === '') return null
+      return `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`
+    })
+    .filter((value): value is string => value !== null)
+  return parts.slice(0, 2).join(' / ')
 }
 
 function languageConfirmText(t: (text: string) => string, pickDate: string, candidateCount: number) {

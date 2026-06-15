@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
+import multiprocessing as mp
+import queue
 import re
+import traceback
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -30,10 +34,59 @@ class CreatedMarketDataDownload:
     artifacts: list[Artifact]
 
 
+def _fetch_kline_child_main(
+    config_path: str,
+    log_path: str,
+    cancel_event: Any,
+    progress_queue: Any,
+) -> None:
+    try:
+        from pipeline import fetch_kline
+
+        def should_cancel() -> bool:
+            return bool(cancel_event.is_set())
+
+        def report_progress(payload: dict[str, Any]) -> None:
+            progress_queue.put({"type": "progress", "payload": payload})
+
+        fetch_kline.main(
+            config_path=Path(config_path),
+            log_path=Path(log_path),
+            should_cancel=should_cancel,
+            progress_callback=report_progress,
+        )
+        progress_queue.put({"type": "done"})
+        progress_queue.close()
+        progress_queue.join_thread()
+    except BaseException as exc:  # pragma: no cover - exercised through parent process tests.
+        progress_queue.put(
+            {
+                "type": "error",
+                "class": exc.__class__.__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        progress_queue.close()
+        progress_queue.join_thread()
+        raise
+
+
 class MarketDataDownloadService:
-    def __init__(self, run_repository: RunRepository, *, artifact_root: str | Path) -> None:
+    def __init__(
+        self,
+        run_repository: RunRepository,
+        *,
+        artifact_root: str | Path,
+        execution_mode: str = "subprocess",
+        cancel_grace_seconds: float = 2.0,
+    ) -> None:
+        if execution_mode not in {"subprocess", "in_process"}:
+            raise ValueError("execution_mode must be subprocess or in_process")
         self.run_repository = run_repository
         self.artifact_root = _resolve_root(artifact_root)
+        self.execution_mode = execution_mode
+        self.cancel_grace_seconds = max(0.0, float(cancel_grace_seconds))
 
     def run(
         self,
@@ -79,20 +132,20 @@ class MarketDataDownloadService:
         )
 
         try:
-            from pipeline import fetch_kline
-
             raise_if_cancelled(should_cancel)
-            fetch_kline.main(
+            self._run_fetch_kline(
                 config_path=effective_config_path,
                 log_path=log_path,
                 should_cancel=should_cancel,
                 progress_callback=progress_callback,
             )
             raise_if_cancelled(should_cancel)
-            local_latest = fetch_kline._latest_date_from_csv_dir(output_dir) or "无"
+            local_latest = _latest_date_from_csv_dir(output_dir) or "无"
         except SystemExit as exc:
             raise MarketDataDownloadError(f"market data download exited with status {exc.code}") from exc
         except WorkflowCancellationRequested:
+            raise
+        except (MarketDataDownloadError, MarketDataDownloadValidationError):
             raise
         except (FileNotFoundError, ValueError) as exc:
             raise MarketDataDownloadValidationError(str(exc)) from exc
@@ -151,6 +204,131 @@ class MarketDataDownloadService:
             "local_latest_date": local_latest,
         }
         return CreatedMarketDataDownload(summary=summary, artifacts=artifacts)
+
+    def _run_fetch_kline(
+        self,
+        *,
+        config_path: Path,
+        log_path: Path,
+        should_cancel: CancellationCheck | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        if self.execution_mode == "in_process":
+            _run_fetch_kline_in_process(
+                config_path=config_path,
+                log_path=log_path,
+                should_cancel=should_cancel,
+                progress_callback=progress_callback,
+            )
+            return
+        _run_fetch_kline_subprocess(
+            config_path=config_path,
+            log_path=log_path,
+            should_cancel=should_cancel,
+            progress_callback=progress_callback,
+            cancel_grace_seconds=self.cancel_grace_seconds,
+        )
+
+
+def _run_fetch_kline_in_process(
+    *,
+    config_path: Path,
+    log_path: Path,
+    should_cancel: CancellationCheck | None,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    from pipeline import fetch_kline
+
+    fetch_kline.main(
+        config_path=config_path,
+        log_path=log_path,
+        should_cancel=should_cancel,
+        progress_callback=progress_callback,
+    )
+
+
+def _run_fetch_kline_subprocess(
+    *,
+    config_path: Path,
+    log_path: Path,
+    should_cancel: CancellationCheck | None,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    cancel_grace_seconds: float,
+) -> None:
+    context = mp.get_context("spawn")
+    progress_queue = context.Queue()
+    cancel_event = context.Event()
+    process = context.Process(
+        target=_fetch_kline_child_main,
+        args=(str(config_path), str(log_path), cancel_event, progress_queue),
+        name="stocktrade-market-data-download",
+    )
+    process.start()
+    child_error: dict[str, Any] | None = None
+    try:
+        while process.is_alive():
+            child_error = _drain_fetch_kline_messages(progress_queue, progress_callback) or child_error
+            if should_cancel is not None and should_cancel():
+                cancel_event.set()
+                process.join(timeout=cancel_grace_seconds)
+                child_error = _drain_fetch_kline_messages(progress_queue, progress_callback) or child_error
+                if process.is_alive():
+                    _terminate_process(process)
+                raise WorkflowCancellationRequested("market data download cancelled by user request")
+            process.join(timeout=0.2)
+
+        child_error = _drain_fetch_kline_messages(progress_queue, progress_callback) or child_error
+        if child_error is not None:
+            _raise_child_error(child_error)
+        if process.exitcode not in (0, None):
+            raise MarketDataDownloadError(f"market data subprocess exited with status {process.exitcode}")
+    finally:
+        if process.is_alive():
+            _terminate_process(process)
+        progress_queue.close()
+        progress_queue.join_thread()
+
+
+def _drain_fetch_kline_messages(
+    progress_queue: Any,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+) -> dict[str, Any] | None:
+    child_error: dict[str, Any] | None = None
+    while True:
+        try:
+            message = progress_queue.get_nowait()
+        except queue.Empty:
+            return child_error
+        if not isinstance(message, dict):
+            continue
+        if message.get("type") == "progress" and progress_callback is not None:
+            payload = message.get("payload")
+            if isinstance(payload, dict):
+                progress_callback(payload)
+        elif message.get("type") == "error":
+            child_error = message
+
+
+def _raise_child_error(error: dict[str, Any]) -> None:
+    error_class = str(error.get("class") or "Exception")
+    message = str(error.get("message") or error_class)
+    if error_class == "FetchKlineCancelled":
+        raise WorkflowCancellationRequested(message)
+    if error_class in {"FileNotFoundError", "ValueError"}:
+        raise MarketDataDownloadValidationError(message)
+    raise MarketDataDownloadError(f"{error_class}: {message}")
+
+
+def _terminate_process(process: Any) -> None:
+    process.terminate()
+    process.join(timeout=1.0)
+    if process.is_alive():
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            kill()
+        else:
+            process.terminate()
+        process.join(timeout=1.0)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -226,6 +404,37 @@ def _count_csv_files(out_dir: Path) -> int:
     if not out_dir.is_dir():
         return 0
     return sum(1 for path in out_dir.glob("*.csv") if path.is_file())
+
+
+def _latest_date_from_csv_dir(out_dir: Path) -> str | None:
+    if not out_dir.is_dir():
+        return None
+    latest: str | None = None
+    for path in out_dir.glob("*.csv"):
+        try:
+            last_line = ""
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        last_line = line.strip()
+            if not last_line or last_line.startswith("date,"):
+                continue
+            normalized = _normalize_csv_date(last_line.split(",", 1)[0])
+            if normalized is not None and (latest is None or normalized > latest):
+                latest = normalized
+        except OSError:
+            continue
+    return latest
+
+
+def _normalize_csv_date(value: str) -> str | None:
+    text = value.strip()
+    if re.fullmatch(r"\d{8}", text):
+        return f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+    try:
+        return datetime.fromisoformat(text[:10]).date().isoformat()
+    except ValueError:
+        return None
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

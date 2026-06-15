@@ -163,6 +163,7 @@ def create_preselect_run(
         data_dir=request.data_dir,
         pick_date=request.pick_date,
         end_date=request.end_date,
+        strategy_ids=tuple(request.strategy_ids) if request.strategy_ids is not None else None,
     )
     try:
         run, batch, _result = runtime.run_preselect_job(

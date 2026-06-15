@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .runs import RunSummary
+from .settings import StrategyPreferenceId
 
 
 class PreselectRunRequest(BaseModel):
@@ -13,6 +14,14 @@ class PreselectRunRequest(BaseModel):
     data_dir: str | None = None
     pick_date: str | None = None
     end_date: str | None = None
+    strategy_ids: list[StrategyPreferenceId] | None = Field(default=None, min_length=1, max_length=3)
+
+    @field_validator("strategy_ids")
+    @classmethod
+    def validate_strategy_ids(cls, value: list[StrategyPreferenceId] | None) -> list[StrategyPreferenceId] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("strategy_ids must be unique")
+        return value
 
 
 class CandidateResponse(BaseModel):

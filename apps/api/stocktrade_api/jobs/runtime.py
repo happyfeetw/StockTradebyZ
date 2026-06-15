@@ -161,7 +161,15 @@ class JobRuntime:
         run = self.repository.create_run(
             kind="preselect",
             pick_date=parameters.pick_date,
-            summary={"mode": "preselect", "message": "queued"},
+            summary={
+                "mode": "preselect",
+                "config_path": parameters.config_path,
+                "data_dir": parameters.data_dir,
+                "requested_pick_date": parameters.pick_date,
+                "end_date": parameters.end_date,
+                "strategy_ids": list(parameters.strategy_ids) if parameters.strategy_ids is not None else None,
+                "message": "queued",
+            },
         )
         step = self.repository.add_step(run.id, name="preselect")
         self.repository.append_event(run.id, message="Preselect job queued")

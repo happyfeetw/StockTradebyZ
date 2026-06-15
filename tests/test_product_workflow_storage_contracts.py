@@ -65,6 +65,8 @@ class FixturePreselectService:
                 "mode": "fixture_preselect",
                 "strategy_candidate_counts": {"b2": 1, "brick": 1},
                 "data_dir": parameters.data_dir,
+                "strategy_ids": list(parameters.strategy_ids) if parameters.strategy_ids is not None else None,
+                "executed_strategies": list(parameters.strategy_ids) if parameters.strategy_ids is not None else ["b2", "brick"],
             },
         )
 
@@ -157,13 +159,19 @@ class ProductWorkflowStorageContractTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 preselect_response = await client.post(
                     "/api/runs/preselect",
-                    json={"pick_date": "2026-05-25", "data_dir": raw_dir.as_posix()},
+                    json={
+                        "pick_date": "2026-05-25",
+                        "data_dir": raw_dir.as_posix(),
+                        "strategy_ids": ["b2", "brick"],
+                    },
                 )
                 self.assertEqual(preselect_response.status_code, 200, preselect_response.text)
                 preselect = preselect_response.json()
                 batch_id = preselect["batch"]["id"]
                 self.assertEqual(preselect["batch"]["total"], 2)
                 self.assertEqual(preselect_service.parameters[0].data_dir, raw_dir.as_posix())
+                self.assertEqual(preselect_service.parameters[0].strategy_ids, ("b2", "brick"))
+                self.assertEqual(preselect["run"]["summary"]["strategy_ids"], ["b2", "brick"])
 
                 chart_response = await client.post(
                     "/api/runs/chart-export",

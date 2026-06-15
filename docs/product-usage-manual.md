@@ -12,6 +12,10 @@
 - 不要把 `TUSHARE_TOKEN`、`GEMINI_API_KEY`、Gemini OAuth 文件、`data/`、
   `var/` 或 provider raw logs 提交到 Git。
 
+推荐使用仓库 `.venv` 或其它已安装 `requirements.txt` 的 Python 环境运行
+后端和测试。不要混用没有项目依赖的系统 Python；例如缺少 `httpx` 或 `numba`
+版本不匹配时，测试可能在导入阶段失败或变慢。
+
 首次安装：
 
 ```bash
@@ -92,6 +96,25 @@ FastAPI 产品后端启动时会对文件型 SQLite 数据库执行
 
 ## 6. 运行中心工作流
 
+运行中心是新版产品的主工作台。页面顶部的“流程计划”按旧 Workbench 的常用顺序
+组织环节：
+
+1. 每日数据下载。
+2. 量化初选。
+3. 图表导出。
+4. Gemini CLI 复评。
+5. 归档。
+6. 分析查看。
+
+每个环节仍会创建独立 run，因此运行详情、取消、进度、控制台日志、失败诊断和产物
+索引都保留在各自 run 下。流程计划面板只负责判断当前批次的下一步是否已完成、可运行、
+等待前置步骤或被配置阻塞。候选批次下拉框用于选择当前流程上下文；没有批次时，图表、
+复评、归档会等待初选先生成 candidate batch。
+
+运行详情中的“运行配置快照”展示本次 run 的关键输入和输出摘要，例如日期、数据目录、
+策略集合、候选批次、复评 provider、CSV 数量、候选数、推荐数等。它是验收和排障时
+优先查看的结构化信息；完整事件仍在“运行控制台”，大文件仍在 artifacts。
+
 ### 6.1 每日数据下载
 
 每日行情下载已经进入产品运行中心，不需要回到 legacy workbench。
@@ -168,30 +191,40 @@ var/acceptance/tushare-e2e/<timestamp>/summary.md
 - Data dir: 默认可留空，等价于 legacy raw 数据目录。
 - Pick date: 选择本次初选交易日。正常产品流程只需要单日选股日期；API
   兼容字段中仍保留 `end_date`，用于后续需要显式范围时扩展，但页面默认不暴露。
+- 本次运行策略：默认读取设置页的“默认策略”，也可以在运行中心针对当前 run
+  临时勾选 `b1`、`b2`、`brick`。这个选择会写入 run summary 和初选 meta，
+  不会直接改写 `config/rules_preselect.yaml`。
 
 运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
 候选 identity 始终是 `(code, strategy)`。
 
 ### 6.3 图表导出
 
-在候选批次页面选择批次后导出图表。产品图表产物写入 `var/artifacts/{run_id}/`
-并通过 artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
+在运行中心的流程计划中选择当前 candidate batch 后点击“导出图表”，也可以在候选批次
+页面对所选批次导出图表。产品图表产物写入 `var/artifacts/{run_id}/` 并通过
+artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
 
 ### 6.4 Gemini CLI 复评
 
-Review 页面可对 candidate batch 发起 `provider=gemini-cli` 的复评。要求：
+在运行中心的流程计划中选择当前 candidate batch 后点击“Gemini 复评”，也可以在候选批次
+页面对所选批次发起 `provider=gemini-cli` 的复评。要求：
 
 - Gemini CLI 已安装并能在当前 shell 中运行。
 - 本机 Gemini CLI 已完成登录。
-- 若要求图表，先完成 chart export。
+- 当前产品入口默认 `require_charts=true`，所以需要先完成 chart export。运行中心会在
+  没有图表导出 run 时显示阻塞状态，避免点了复评才失败。
 
 provider raw prompt、stdout/stderr、checkpoint、usage、result cache 会作为 product
 artifact evidence 建索引；原始路径不会直接暴露给前端。
 
 ### 6.5 归档
 
-Archive 会把 candidate batch + review run 固化为日级归档快照，并把推荐状态、
-rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
+在运行中心选择当前 candidate batch 后点击“归档所选”。Archive 会把 candidate batch
+和 review run 固化为日级归档快照，并把推荐状态、rank、chart artifact link 和
+review payload 写入 SQLite/DuckDB。
+
+候选、复评、归档页面的空状态会给出回到运行中心或导入旧数据的入口。若页面为空，
+优先回运行中心检查流程计划和当前候选批次。
 
 ## 7. 迁移页面
 

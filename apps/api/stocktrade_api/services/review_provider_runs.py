@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from stocktrade.domain.review import candidate_review_key, result_review_key
@@ -75,9 +75,18 @@ class ReviewProviderRunService:
         run_id: str,
         request: ReviewProviderRunCreateRequest,
         should_cancel: CancellationCheck | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> CreatedReviewRun:
         sources = self.repository.get_review_provider_sources(request.candidate_batch_id)
         raise_if_cancelled(should_cancel)
+        _report_provider_progress(
+            progress_callback,
+            phase="读取候选",
+            current=0,
+            total=0,
+            message="正在读取 provider 复评输入",
+            force=True,
+        )
         items = _provider_items(
             sources.candidate_batch,
             chart_artifacts_by_review_key=sources.chart_artifacts_by_review_key,
@@ -88,6 +97,14 @@ class ReviewProviderRunService:
         )
         if not items:
             raise ReviewProviderValidationError("candidate filters selected no provider review items")
+        _report_provider_progress(
+            progress_callback,
+            phase="调用复评提供方",
+            current=0,
+            total=len(items),
+            message=f"准备复评 {len(items)} 个候选",
+            force=True,
+        )
 
         reviewer = request.reviewer or request.provider
         provider_input = ReviewProviderInput(
@@ -101,6 +118,14 @@ class ReviewProviderRunService:
         raise_if_cancelled(should_cancel)
         raw_results = self.executor.run(provider_input)
         raise_if_cancelled(should_cancel)
+        _report_provider_progress(
+            progress_callback,
+            phase="解析复评结果",
+            current=len(raw_results),
+            total=len(items),
+            message=f"复评提供方返回 {len(raw_results)} 条结果",
+            force=True,
+        )
         results = _results_with_lineage(raw_results, items=items, reviewer=reviewer)
         if self.run_repository is not None and self.artifact_root is not None:
             raise_if_cancelled(should_cancel)
@@ -137,7 +162,13 @@ class ReviewProviderRunService:
             results=results,
         )
         raise_if_cancelled(should_cancel)
-        return self.review_service.run(run_id=run_id, request=review_request, source=source, should_cancel=should_cancel)
+        return self.review_service.run(
+            run_id=run_id,
+            request=review_request,
+            source=source,
+            should_cancel=should_cancel,
+            progress_callback=progress_callback,
+        )
 
 
 def _provider_items(
@@ -237,6 +268,30 @@ def _candidate_payload(candidate: Candidate) -> dict[str, Any]:
     if candidate.extra_json:
         payload.update(candidate.extra_json)
     return payload
+
+
+def _report_provider_progress(
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    phase: str,
+    current: int,
+    total: int,
+    message: str,
+    force: bool = False,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "label": "复评进度",
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "unit": "候选",
+            "message": message,
+            "force": force,
+        }
+    )
 
 
 def _attach_provider_evidence_artifacts(

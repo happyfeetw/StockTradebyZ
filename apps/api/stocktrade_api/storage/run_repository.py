@@ -115,7 +115,23 @@ class RunRepository:
             if pick_date is not None:
                 run.pick_date = pick_date
             if summary is not None:
+                if isinstance(run.summary_json, dict) and "progress" in run.summary_json and "progress" not in summary:
+                    summary = {**summary, "progress": run.summary_json["progress"]}
                 run.summary_json = summary
+            session.commit()
+            session.refresh(run)
+            return run
+
+    def update_run_progress(self, run_id: str, progress: dict[str, Any]) -> Run:
+        with self.session_factory() as session:
+            run = session.get(Run, run_id)
+            if run is None:
+                raise RunNotFoundError(run_id)
+            if run.status in TERMINAL_STATUSES:
+                return run
+            summary = dict(run.summary_json or {})
+            summary["progress"] = progress
+            run.summary_json = summary
             session.commit()
             session.refresh(run)
             return run
@@ -142,6 +158,8 @@ class RunRepository:
                         "message": message,
                         "previous_status": previous_status,
                     }
+                    if isinstance(run.summary_json, dict) and "progress" in run.summary_json:
+                        recovery["progress"] = run.summary_json["progress"]
                     run.status = target_status
                     run.finished_at = now
                     run.summary_json = recovery

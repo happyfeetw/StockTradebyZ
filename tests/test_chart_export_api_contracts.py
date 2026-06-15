@@ -15,6 +15,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stocktrade_api.main import create_app  # noqa: E402
 from stocktrade_api.schemas.charts import ChartExportRunCreateResponse  # noqa: E402
+from stocktrade_api.schemas.charts import ChartExportRunCreateRequest  # noqa: E402
+from stocktrade_api.services.cancellation import WorkflowCancellationRequested  # noqa: E402
+from stocktrade_api.services.chart_runs import ChartExportRunService  # noqa: E402
+from stocktrade_api.storage.candidate_repository import CandidateRepository  # noqa: E402
+from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 from stocktrade_api.storage.sqlite_models import Candidate, CandidateBatch, Run  # noqa: E402
 
@@ -92,6 +97,41 @@ def write_raw_csv(raw_dir: Path, code: str = "000001") -> None:
 
 
 class ChartExportApiContractTests(unittest.IsolatedAsyncioTestCase):
+    def test_chart_export_propagates_cancellation_inside_export_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            raw_dir = tmp / "raw"
+            artifact_root = tmp / "artifacts"
+            migrate_sqlite(db_path)
+            seed_historical_batch(db_path)
+            write_raw_csv(raw_dir)
+            engine = create_sqlite_engine(db_path)
+            session_factory = create_session_factory(engine)
+            run_repository = RunRepository(session_factory)
+            run = run_repository.create_run(kind="chart_export", status="running", run_id="run-chart-cancel")
+            service = ChartExportRunService(
+                CandidateRepository(session_factory),
+                run_repository,
+                artifact_root=artifact_root,
+            )
+            checks = 0
+
+            def should_cancel() -> bool:
+                nonlocal checks
+                checks += 1
+                return checks >= 3
+
+            with self.assertRaises(WorkflowCancellationRequested):
+                service.run(
+                    run_id=run.id,
+                    request=ChartExportRunCreateRequest(candidate_batch_id="batch-history", raw_dir=str(raw_dir), bars=3),
+                    should_cancel=should_cancel,
+                )
+
+            self.assertEqual(run_repository.list_artifacts(run.id), [])
+            engine.dispose()
+
     async def test_chart_export_generates_product_artifacts_from_selected_historical_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

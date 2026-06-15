@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import time
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..services.cancellation import WorkflowCancellationRequested
 from ..services.diagnostics import build_failure_payload, format_failure_event
-from ..storage.run_repository import TERMINAL_STATUSES, RunRepository
+from ..storage.run_repository import TERMINAL_STATUSES, RunRepository, utc_now
 from ..storage.sqlite_models import CandidateBatch, Run
 
 if TYPE_CHECKING:
@@ -107,6 +108,39 @@ class JobRuntime:
         self.repository.append_event(run_id, step_id=step_id, level="error", message=format_failure_event(error))
         return self.repository.transition_run(run_id, status="failed", summary=error)
 
+    def _progress_reporter(
+        self,
+        run_id: str,
+        step_id: int,
+        *,
+        mode: str,
+    ) -> Callable[[dict[str, Any]], None]:
+        state: dict[str, Any] = {"summary_bucket": None, "event_bucket": -10, "last_update": 0.0}
+
+        def report(payload: dict[str, Any]) -> None:
+            progress = _normalized_progress(mode=mode, payload=payload)
+            now = time.monotonic()
+            bucket = _progress_bucket(progress)
+            finished = bool(progress.get("finished"))
+            force = bool(progress.get("force")) or finished
+            if not force and bucket == state["summary_bucket"] and now - float(state["last_update"]) < 1.0:
+                return
+
+            state["summary_bucket"] = bucket
+            state["last_update"] = now
+            self.repository.update_run_progress(run_id, progress)
+
+            event_bucket = _event_bucket(progress)
+            if force or event_bucket >= int(state["event_bucket"]) + 10:
+                state["event_bucket"] = event_bucket
+                self.repository.append_event(
+                    run_id,
+                    step_id=step_id,
+                    message=_progress_event_message(progress),
+                )
+
+        return report
+
     def run_preselect_job(
         self,
         parameters: "PreselectParameters",
@@ -134,13 +168,58 @@ class JobRuntime:
         self.repository.transition_run(run.id, status="running")
         self.repository.transition_step(step.id, status="running")
         self.repository.append_event(run.id, step_id=step.id, message="Preselect job started")
+        report_progress = self._progress_reporter(run.id, step.id, mode="preselect")
+        report_progress(
+            {
+                "label": "量化选股进度",
+                "phase": "准备运行",
+                "current": 0,
+                "total": 4,
+                "unit": "阶段",
+                "message": "正在准备量化选股",
+                "force": True,
+            }
+        )
 
         try:
             self._raise_if_cancelled(run.id, mode="preselect")
+            report_progress(
+                {
+                    "label": "量化选股进度",
+                    "phase": "执行策略",
+                    "current": 1,
+                    "total": 4,
+                    "unit": "阶段",
+                    "message": "正在加载行情并执行策略",
+                    "force": True,
+                }
+            )
             result = service.run(parameters)
             self._raise_if_cancelled(run.id, mode="preselect")
+            report_progress(
+                {
+                    "label": "量化选股进度",
+                    "phase": "写入候选",
+                    "current": 2,
+                    "total": 4,
+                    "unit": "阶段",
+                    "message": f"策略返回 {len(result.candidates)} 个候选",
+                    "force": True,
+                }
+            )
             batch = self.repository.create_candidate_batch(run_id=run.id, result=result)
             self._raise_if_cancelled(run.id, mode="preselect")
+            report_progress(
+                {
+                    "label": "量化选股进度",
+                    "phase": "写入分析库",
+                    "current": 3,
+                    "total": 4,
+                    "unit": "阶段",
+                    "message": "正在同步候选到分析库" if analytics_writer is not None else "无需同步分析库",
+                    "force": True,
+                }
+            )
             if analytics_writer is not None:
                 analytics_writer.record_candidate_import(
                     run_id=run.id,
@@ -148,6 +227,18 @@ class JobRuntime:
                     candidates=batch.candidates,
                 )
             self._raise_if_cancelled(run.id, mode="preselect")
+            report_progress(
+                {
+                    "label": "量化选股进度",
+                    "phase": "完成",
+                    "current": 4,
+                    "total": 4,
+                    "unit": "阶段",
+                    "message": f"已生成 {len(result.candidates)} 个候选",
+                    "finished": True,
+                    "force": True,
+                }
+            )
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -199,10 +290,27 @@ class JobRuntime:
         self.repository.transition_run(run.id, status="running")
         self.repository.transition_step(step.id, status="running")
         self.repository.append_event(run.id, step_id=step.id, message="Market data download started")
+        report_progress = self._progress_reporter(run.id, step.id, mode="market_data")
+        report_progress(
+            {
+                "label": "下载进度",
+                "phase": "准备下载",
+                "current": 0,
+                "total": 0,
+                "unit": "股票",
+                "message": "正在准备行情下载",
+                "force": True,
+            }
+        )
 
         try:
             self._raise_if_cancelled(run.id, mode="market_data")
-            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            created = service.run(
+                run_id=run.id,
+                request=request,
+                should_cancel=self._cancellation_check(run.id),
+                progress_callback=report_progress,
+            )
             self._raise_if_cancelled(run.id, mode="market_data")
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
@@ -251,11 +359,40 @@ class JobRuntime:
         self.repository.transition_run(run.id, status="running")
         self.repository.transition_step(step.id, status="running")
         self.repository.append_event(run.id, step_id=step.id, message="Review job started")
+        report_progress = self._progress_reporter(run.id, step.id, mode="review")
+        report_progress(
+            {
+                "label": "复评进度",
+                "phase": "准备复评",
+                "current": 0,
+                "total": 4,
+                "unit": "阶段",
+                "message": "正在准备复评数据",
+                "force": True,
+            }
+        )
 
         try:
             self._raise_if_cancelled(run.id, mode="review")
-            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            created = service.run(
+                run_id=run.id,
+                request=request,
+                should_cancel=self._cancellation_check(run.id),
+                progress_callback=report_progress,
+            )
             self._raise_if_cancelled(run.id, mode="review")
+            report_progress(
+                {
+                    "label": "复评进度",
+                    "phase": "完成",
+                    "current": len(created.reviews),
+                    "total": len(created.reviews),
+                    "unit": "条",
+                    "message": f"已记录 {len(created.reviews)} 条复评",
+                    "finished": True,
+                    "force": True,
+                }
+            )
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -305,11 +442,40 @@ class JobRuntime:
         self.repository.transition_run(run.id, status="running")
         self.repository.transition_step(step.id, status="running")
         self.repository.append_event(run.id, step_id=step.id, message="Archive job started")
+        report_progress = self._progress_reporter(run.id, step.id, mode="archive")
+        report_progress(
+            {
+                "label": "归档进度",
+                "phase": "准备归档",
+                "current": 0,
+                "total": 3,
+                "unit": "阶段",
+                "message": "正在准备归档数据",
+                "force": True,
+            }
+        )
 
         try:
             self._raise_if_cancelled(run.id, mode="archive")
-            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            created = service.run(
+                run_id=run.id,
+                request=request,
+                should_cancel=self._cancellation_check(run.id),
+                progress_callback=report_progress,
+            )
             self._raise_if_cancelled(run.id, mode="archive")
+            report_progress(
+                {
+                    "label": "归档进度",
+                    "phase": "完成",
+                    "current": len(created.rows),
+                    "total": len(created.rows),
+                    "unit": "行",
+                    "message": f"已归档 {len(created.rows)} 行",
+                    "finished": True,
+                    "force": True,
+                }
+            )
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -358,11 +524,40 @@ class JobRuntime:
         self.repository.transition_run(run.id, status="running")
         self.repository.transition_step(step.id, status="running")
         self.repository.append_event(run.id, step_id=step.id, message="Chart export job started")
+        report_progress = self._progress_reporter(run.id, step.id, mode="chart_export")
+        report_progress(
+            {
+                "label": "图表导出进度",
+                "phase": "准备导出",
+                "current": 0,
+                "total": 0,
+                "unit": "股票",
+                "message": "正在准备图表导出",
+                "force": True,
+            }
+        )
 
         try:
             self._raise_if_cancelled(run.id, mode="chart_export")
-            created = service.run(run_id=run.id, request=request, should_cancel=self._cancellation_check(run.id))
+            created = service.run(
+                run_id=run.id,
+                request=request,
+                should_cancel=self._cancellation_check(run.id),
+                progress_callback=report_progress,
+            )
             self._raise_if_cancelled(run.id, mode="chart_export")
+            report_progress(
+                {
+                    "label": "图表导出进度",
+                    "phase": "完成",
+                    "current": len(created.artifacts),
+                    "total": len(created.artifacts),
+                    "unit": "个产物",
+                    "message": f"已生成 {len(created.artifacts)} 个图表产物",
+                    "finished": True,
+                    "force": True,
+                }
+            )
             self.repository.transition_step(step.id, status="succeeded")
             self.repository.append_event(
                 run.id,
@@ -382,3 +577,84 @@ class JobRuntime:
         except Exception as exc:
             self._mark_workflow_failed(run.id, step.id, mode="chart_export", exc=exc)
             raise
+
+
+def _normalized_progress(*, mode: str, payload: dict[str, Any]) -> dict[str, Any]:
+    total = _optional_int(payload.get("total"))
+    current = _optional_int(payload.get("current"))
+    percent = _optional_float(payload.get("percent"))
+    if percent is None and total and total > 0 and current is not None:
+        percent = max(0.0, min(100.0, current / total * 100))
+    if payload.get("finished"):
+        percent = 100.0
+    progress = {
+        "mode": mode,
+        "label": str(payload.get("label") or mode),
+        "phase": str(payload.get("phase") or payload.get("label") or mode),
+        "message": str(payload.get("message") or ""),
+        "current": current,
+        "total": total,
+        "percent": percent,
+        "unit": str(payload.get("unit") or ""),
+        "finished": bool(payload.get("finished")),
+        "updated_at": utc_now().isoformat(),
+    }
+    if payload.get("code"):
+        progress["code"] = str(payload["code"])
+    if payload.get("strategy"):
+        progress["strategy"] = str(payload["strategy"])
+    if payload.get("force"):
+        progress["force"] = True
+    return progress
+
+
+def _progress_bucket(progress: dict[str, Any]) -> int:
+    percent = _optional_float(progress.get("percent"))
+    if percent is not None:
+        return int(percent)
+    current = _optional_int(progress.get("current"))
+    return int(current or 0)
+
+
+def _event_bucket(progress: dict[str, Any]) -> int:
+    percent = _optional_float(progress.get("percent"))
+    if percent is not None:
+        return int(percent // 10) * 10
+    current = _optional_int(progress.get("current"))
+    return int(current or 0)
+
+
+def _progress_event_message(progress: dict[str, Any]) -> str:
+    label = str(progress.get("label") or progress.get("mode") or "progress")
+    phase = str(progress.get("phase") or "")
+    current = _optional_int(progress.get("current"))
+    total = _optional_int(progress.get("total"))
+    percent = _optional_float(progress.get("percent"))
+    unit = str(progress.get("unit") or "")
+    message = str(progress.get("message") or "")
+    if percent is not None:
+        prefix = f"{label}: {percent:.0f}%"
+    elif current is not None and total is not None and total > 0:
+        prefix = f"{label}: {current}/{total}{unit}"
+    else:
+        prefix = label
+    details = " / ".join(part for part in (phase, message) if part)
+    return f"{prefix} - {details}" if details else prefix
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

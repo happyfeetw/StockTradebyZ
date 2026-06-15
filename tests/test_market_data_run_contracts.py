@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -222,7 +223,11 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             pipeline_module = types.ModuleType("pipeline")
             pipeline_module.fetch_kline = fetch_module
 
-            service = MarketDataDownloadService(repository, artifact_root=tmp / "artifacts")
+            service = MarketDataDownloadService(
+                repository,
+                artifact_root=tmp / "artifacts",
+                execution_mode="in_process",
+            )
             request = MarketDataRunRequest(
                 config_path=str(source_config),
                 start="2026-05-30",
@@ -294,7 +299,11 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             pipeline_module = types.ModuleType("pipeline")
             pipeline_module.fetch_kline = fetch_module
 
-            service = MarketDataDownloadService(repository, artifact_root=tmp / "artifacts")
+            service = MarketDataDownloadService(
+                repository,
+                artifact_root=tmp / "artifacts",
+                execution_mode="in_process",
+            )
             request = MarketDataRunRequest(config_path=str(source_config))
 
             with mock.patch.dict(os.environ, {"TUSHARE_TOKEN": "fake-token"}, clear=False):
@@ -306,6 +315,90 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
                         service.run(run_id=run.id, request=request, should_cancel=should_cancel)
 
             engine.dispose()
+
+    def test_service_terminates_subprocess_when_cancel_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+            run = repository.create_run(kind="market_data", run_id="run-market-data-hard-cancel")
+            source_config = tmp / "fetch_kline.yaml"
+            output_dir = tmp / "raw"
+            source_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "start": "20260101",
+                        "end": "today",
+                        "stocklist": str(tmp / "stocklist.csv"),
+                        "exclude_boards": [],
+                        "out": str(output_dir),
+                        "workers": 1,
+                    },
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            fake_package_root = tmp / "fake_package"
+            fake_pipeline = fake_package_root / "pipeline"
+            fake_pipeline.mkdir(parents=True)
+            (fake_pipeline / "__init__.py").write_text("", encoding="utf-8")
+            (fake_pipeline / "fetch_kline.py").write_text(
+                """
+from pathlib import Path
+import time
+
+def main(config_path=None, log_path=None, should_cancel=None, progress_callback=None):
+    Path(log_path).write_text("subprocess started\\n", encoding="utf-8")
+    if progress_callback is not None:
+        progress_callback({
+            "label": "下载进度",
+            "phase": "测试子进程",
+            "current": 1,
+            "total": 100,
+            "unit": "股票",
+            "message": "subprocess is intentionally ignoring cancellation",
+            "force": True,
+        })
+    while True:
+        time.sleep(0.1)
+""",
+                encoding="utf-8",
+            )
+            service = MarketDataDownloadService(
+                repository,
+                artifact_root=tmp / "artifacts",
+                cancel_grace_seconds=0.2,
+            )
+            request = MarketDataRunRequest(config_path=str(source_config))
+            progress_events: list[dict] = []
+            sys.path.insert(0, str(fake_package_root))
+            sys.modules.pop("pipeline", None)
+            sys.modules.pop("pipeline.fetch_kline", None)
+            started = time.monotonic()
+
+            def should_cancel() -> bool:
+                return time.monotonic() - started >= 0.45
+
+            try:
+                with mock.patch.dict(os.environ, {"TUSHARE_TOKEN": "fake-token"}, clear=False):
+                    with self.assertRaises(WorkflowCancellationRequested):
+                        service.run(
+                            run_id=run.id,
+                            request=request,
+                            should_cancel=should_cancel,
+                            progress_callback=progress_events.append,
+                        )
+            finally:
+                sys.modules.pop("pipeline", None)
+                sys.modules.pop("pipeline.fetch_kline", None)
+                sys.path.remove(str(fake_package_root))
+                engine.dispose()
+
+            self.assertLess(time.monotonic() - started, 3.0)
+            self.assertTrue(progress_events)
+            self.assertEqual(progress_events[0]["phase"], "测试子进程")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from stocktrade.domain.review import (
     candidate_review_key,
@@ -37,10 +37,19 @@ class ReviewRunService:
         request: ReviewRunCreateRequest,
         source: dict[str, Any] | None = None,
         should_cancel: CancellationCheck | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> CreatedReviewRun:
         batch = self.repository.get_candidate_batch(request.candidate_batch_id)
         raise_if_cancelled(should_cancel)
         candidates = [_candidate_payload(candidate) for candidate in batch.candidates]
+        _report_progress(
+            progress_callback,
+            phase="读取候选",
+            current=1,
+            total=4,
+            message=f"读取到 {len(candidates)} 个候选",
+            force=True,
+        )
         candidates_by_key = {candidate_review_key(candidate): candidate for candidate in candidates}
         normalized_results = self._normalize_results(
             request.results,
@@ -48,6 +57,14 @@ class ReviewRunService:
             classic_pattern_config=request.classic_pattern_config,
         )
         raise_if_cancelled(should_cancel)
+        _report_progress(
+            progress_callback,
+            phase="标准化复评结果",
+            current=2,
+            total=4,
+            message=f"标准化 {len(normalized_results)} 条复评结果",
+            force=True,
+        )
         suggestion = generate_suggestion(
             pick_date=batch.pick_date,
             all_results=normalized_results,
@@ -55,6 +72,14 @@ class ReviewRunService:
             candidates=candidates,
         )
         raise_if_cancelled(should_cancel)
+        _report_progress(
+            progress_callback,
+            phase="生成建议",
+            current=3,
+            total=4,
+            message=f"生成 {len(suggestion['recommendations'])} 条推荐",
+            force=True,
+        )
         summary = _summary_payload(
             batch=batch,
             provider=request.provider,
@@ -80,6 +105,15 @@ class ReviewRunService:
                 review_run=created.review_run,
                 reviews=created.reviews,
             )
+        _report_progress(
+            progress_callback,
+            phase="完成",
+            current=4,
+            total=4,
+            message=f"已记录 {len(created.reviews)} 条复评",
+            finished=True,
+            force=True,
+        )
         return created
 
     def _normalize_results(
@@ -154,3 +188,29 @@ def _summary_payload(
     if source_payload:
         summary["source"] = source_payload
     return summary
+
+
+def _report_progress(
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    phase: str,
+    current: int,
+    total: int,
+    message: str,
+    finished: bool = False,
+    force: bool = False,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "label": "复评进度",
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "unit": "阶段",
+            "message": message,
+            "finished": finished,
+            "force": force,
+        }
+    )

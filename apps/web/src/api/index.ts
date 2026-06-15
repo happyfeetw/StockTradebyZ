@@ -178,6 +178,21 @@ export interface RunSummary {
   created_at: string
 }
 
+export interface RunProgress {
+  mode: string
+  label: string
+  phase: string
+  message: string
+  current: number | null
+  total: number | null
+  percent: number | null
+  unit: string
+  finished: boolean
+  updated_at: string
+  code?: string
+  strategy?: string
+}
+
 export interface JobStep {
   id: number
   run_id: string

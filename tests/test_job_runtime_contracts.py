@@ -102,6 +102,38 @@ class JobRuntimeContractTests(unittest.TestCase):
             self.assertEqual(detail.steps[0].error_json["type"], "DiagnosticFailure")
             engine.dispose()
 
+    def test_run_progress_is_preserved_when_terminal_summary_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+
+            run = repository.create_run(kind="diagnostic", status="running", summary={"mode": "diagnostic"})
+            repository.update_run_progress(
+                run.id,
+                {
+                    "mode": "diagnostic",
+                    "label": "运行进度",
+                    "phase": "测试",
+                    "message": "progress preserved",
+                    "current": 1,
+                    "total": 2,
+                    "percent": 50.0,
+                    "unit": "阶段",
+                    "finished": False,
+                    "updated_at": "2026-06-15T00:00:00+00:00",
+                },
+            )
+
+            finished = repository.transition_run(
+                run.id,
+                status="failed",
+                summary={"type": "DiagnosticFailure", "message": "failed"},
+            )
+
+            self.assertEqual(finished.summary_json["progress"]["percent"], 50.0)
+            engine.dispose()
+
     def test_runtime_cancellation_transitions_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "app.sqlite"

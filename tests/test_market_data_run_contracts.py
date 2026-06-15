@@ -25,6 +25,7 @@ from stocktrade_api.services.market_data_runs import (  # noqa: E402
     MarketDataDownloadService,
     MarketDataDownloadValidationError,
 )
+from stocktrade_api.services.cancellation import WorkflowCancellationRequested  # noqa: E402
 from stocktrade_api.storage.run_repository import RunRepository  # noqa: E402
 from stocktrade_api.storage.sqlite import create_session_factory, create_sqlite_engine  # noqa: E402
 
@@ -52,10 +53,30 @@ class MarketDataRunApiTests(unittest.IsolatedAsyncioTestCase):
             app = create_app(sqlite_path=db_path, duckdb_path=None, artifact_root=tmp / "artifacts")
 
             class FakeMarketDataService:
-                def run(self, *, run_id: str, request: MarketDataRunRequest, should_cancel=None) -> CreatedMarketDataDownload:
+                def run(
+                    self,
+                    *,
+                    run_id: str,
+                    request: MarketDataRunRequest,
+                    should_cancel=None,
+                    progress_callback=None,
+                ) -> CreatedMarketDataDownload:
                     self.run_id = run_id
                     self.request = request
                     self.cancel_requested = bool(should_cancel and should_cancel())
+                    if progress_callback is not None:
+                        progress_callback(
+                            {
+                                "label": "下载进度",
+                                "phase": "测试下载",
+                                "current": 3,
+                                "total": 3,
+                                "unit": "股票",
+                                "message": "fake download completed",
+                                "finished": True,
+                                "force": True,
+                            }
+                        )
                     return CreatedMarketDataDownload(
                         summary={
                             "mode": "market_data",
@@ -86,6 +107,8 @@ class MarketDataRunApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(detail.status_code, 200)
                 detail_payload = detail.json()
                 self.assertEqual(detail_payload["steps"][0]["name"], "market_data")
+                self.assertEqual(detail_payload["summary"]["progress"]["percent"], 100.0)
+                self.assertEqual(detail_payload["summary"]["progress"]["label"], "下载进度")
                 self.assertIn("Market data download completed", detail_payload["events"][-1]["message"])
 
             self.assertEqual(service.request.start, "2026-05-30")
@@ -101,7 +124,14 @@ class MarketDataRunApiTests(unittest.IsolatedAsyncioTestCase):
             app = create_app(sqlite_path=db_path, duckdb_path=None, artifact_root=tmp / "artifacts")
 
             class MissingTokenMarketDataService:
-                def run(self, *, run_id: str, request: MarketDataRunRequest, should_cancel=None) -> CreatedMarketDataDownload:
+                def run(
+                    self,
+                    *,
+                    run_id: str,
+                    request: MarketDataRunRequest,
+                    should_cancel=None,
+                    progress_callback=None,
+                ) -> CreatedMarketDataDownload:
                     raise MarketDataDownloadValidationError("请先设置环境变量 TUSHARE_TOKEN")
 
             app.dependency_overrides[get_market_data_service] = lambda: MissingTokenMarketDataService()
@@ -165,7 +195,20 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             )
             captured: dict[str, object] = {}
 
-            def fake_fetch_main(*, config_path: Path, log_path: Path) -> None:
+            def fake_fetch_main(*, config_path: Path, log_path: Path, should_cancel=None, progress_callback=None) -> None:
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "label": "下载进度",
+                            "phase": "测试下载",
+                            "current": 1,
+                            "total": 1,
+                            "unit": "股票",
+                            "message": "fake fetch completed",
+                            "finished": True,
+                            "force": True,
+                        }
+                    )
                 payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
                 captured.update(payload)
                 out_path = Path(str(payload["out"]))
@@ -210,6 +253,58 @@ class MarketDataDownloadServiceTests(unittest.TestCase):
             self.assertTrue(
                 any("Market data fetch finished with 1 CSV files" in message for message in event_messages)
             )
+            engine.dispose()
+
+    def test_service_propagates_cancellation_after_fetch_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            db_path = tmp / "app.sqlite"
+            migrate_sqlite(db_path)
+            repository, engine = repository_for(db_path)
+            run = repository.create_run(kind="market_data", run_id="run-market-data-cancel")
+            source_config = tmp / "fetch_kline.yaml"
+            source_config.write_text(
+                yaml.safe_dump(
+                    {
+                        "start": "20260101",
+                        "end": "today",
+                        "stocklist": str(tmp / "stocklist.csv"),
+                        "exclude_boards": [],
+                        "out": str(tmp / "raw"),
+                        "workers": 1,
+                    },
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            checks = 0
+
+            def should_cancel() -> bool:
+                nonlocal checks
+                checks += 1
+                return checks >= 3
+
+            def fake_fetch_main(*, config_path: Path, log_path: Path, should_cancel=None, progress_callback=None) -> None:
+                Path(log_path).write_text("download log\n", encoding="utf-8")
+
+            fetch_module = types.ModuleType("pipeline.fetch_kline")
+            fetch_module.main = fake_fetch_main
+            fetch_module._latest_date_from_csv_dir = lambda _path: "2026-01-02"
+            pipeline_module = types.ModuleType("pipeline")
+            pipeline_module.fetch_kline = fetch_module
+
+            service = MarketDataDownloadService(repository, artifact_root=tmp / "artifacts")
+            request = MarketDataRunRequest(config_path=str(source_config))
+
+            with mock.patch.dict(os.environ, {"TUSHARE_TOKEN": "fake-token"}, clear=False):
+                with mock.patch.dict(
+                    sys.modules,
+                    {"pipeline": pipeline_module, "pipeline.fetch_kline": fetch_module},
+                ):
+                    with self.assertRaises(WorkflowCancellationRequested):
+                        service.run(run_id=run.id, request=request, should_cancel=should_cancel)
+
             engine.dispose()
 
 

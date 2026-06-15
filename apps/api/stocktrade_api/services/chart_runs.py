@@ -4,11 +4,11 @@ import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from ..schemas.charts import ChartExportRunCreateRequest
-from .cancellation import CancellationCheck, raise_if_cancelled
+from .cancellation import CancellationCheck, WorkflowCancellationRequested, raise_if_cancelled
 from ..storage.candidate_repository import CandidateRepository
 from ..storage.run_repository import RunRepository
 from ..storage.sqlite import ROOT
@@ -43,6 +43,7 @@ class ChartExportRunService:
         run_id: str,
         request: ChartExportRunCreateRequest,
         should_cancel: CancellationCheck | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> CreatedChartExport:
         detail = self.candidate_repository.get_candidate_batch(request.candidate_batch_id)
         raise_if_cancelled(should_cancel)
@@ -50,14 +51,30 @@ class ChartExportRunService:
         raw_dir = _resolve_repo_path(request.raw_dir, ROOT / "data" / "raw")
         candidates_by_code = _candidates_by_code(detail.candidates, limit=request.limit)
         chart_config = _load_chart_config()
+        _report_progress(
+            progress_callback,
+            current=0,
+            total=len(candidates_by_code),
+            phase="准备导出",
+            message=f"准备导出 {len(candidates_by_code)} 支股票图表",
+            force=True,
+        )
 
         artifacts: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
-        for code, candidates in candidates_by_code.items():
+        for index, (code, candidates) in enumerate(candidates_by_code.items(), 1):
             raise_if_cancelled(should_cancel)
             raw_path = raw_dir / f"{code}.csv"
             if not raw_path.is_file():
                 skipped.append({"code": code, "reason": "raw csv missing", "path": _display_path(raw_path)})
+                _report_progress(
+                    progress_callback,
+                    current=index,
+                    total=len(candidates_by_code),
+                    phase="导出图表",
+                    code=code,
+                    message=f"跳过 {code}，缺少原始 CSV",
+                )
                 continue
 
             try:
@@ -122,15 +139,33 @@ class ChartExportRunService:
                             review_key=review_key,
                         )
                     )
+            except WorkflowCancellationRequested:
+                raise
             except Exception as exc:
                 skipped.append({"code": code, "reason": str(exc), "path": _display_path(raw_path)})
-                continue
+            _report_progress(
+                progress_callback,
+                current=index,
+                total=len(candidates_by_code),
+                phase="导出图表",
+                code=code,
+                message=f"已处理 {index}/{len(candidates_by_code)} 支股票",
+            )
 
         if detail.candidates and not artifacts:
             raise ChartExportValidationError("no charts were exported for the selected candidate batch")
 
         raise_if_cancelled(should_cancel)
         created_artifacts = self.run_repository.create_artifacts(artifacts)
+        _report_progress(
+            progress_callback,
+            current=len(candidates_by_code),
+            total=len(candidates_by_code),
+            phase="完成",
+            message=f"已生成 {len(created_artifacts)} 个图表产物",
+            finished=True,
+            force=True,
+        )
         summary = {
             "mode": "chart_export",
             "candidate_batch_id": batch.id,
@@ -155,6 +190,34 @@ class ChartExportRunService:
             "skipped": skipped,
         }
         return CreatedChartExport(artifacts=created_artifacts, summary=summary)
+
+
+def _report_progress(
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    *,
+    current: int,
+    total: int,
+    phase: str,
+    message: str,
+    code: str | None = None,
+    finished: bool = False,
+    force: bool = False,
+) -> None:
+    if progress_callback is None:
+        return
+    payload: dict[str, Any] = {
+        "label": "图表导出进度",
+        "phase": phase,
+        "current": current,
+        "total": total,
+        "unit": "股票",
+        "message": message,
+        "finished": finished,
+        "force": force,
+    }
+    if code:
+        payload["code"] = code
+    progress_callback(payload)
 
 
 def _chart_artifact_payload(

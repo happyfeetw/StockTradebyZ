@@ -7,9 +7,9 @@ import random
 import sys
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 import os
 
 import pandas as pd
@@ -101,11 +101,35 @@ class RateLimitError(RuntimeError):
     """表示命中限流/封禁，需要长时间冷却后重试。"""
     pass
 
-def _cool_sleep(base_seconds: int) -> None:
+
+class FetchKlineCancelled(RuntimeError):
+    """表示下载任务收到产品运行中心的取消请求。"""
+
+
+CancellationCheck = Callable[[], bool]
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _raise_if_cancelled(should_cancel: CancellationCheck | None) -> None:
+    if should_cancel and should_cancel():
+        raise FetchKlineCancelled("market data download cancelled by user request")
+
+
+def _cancelable_sleep(seconds: float, should_cancel: CancellationCheck | None) -> None:
+    deadline = time.monotonic() + max(0.0, float(seconds))
+    while True:
+        _raise_if_cancelled(should_cancel)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+
+
+def _cool_sleep(base_seconds: int, should_cancel: CancellationCheck | None = None) -> None:
     jitter = random.uniform(0.9, 1.2)
     sleep_s = max(1, int(base_seconds * jitter))
     logger.warning("疑似被限流/封禁，进入冷却期 %d 秒...", sleep_s)
-    time.sleep(sleep_s)
+    _cancelable_sleep(sleep_s, should_cancel)
 
 # --------------------------- 历史K线（Tushare 日线，固定qfq） --------------------------- #
 pro: Optional[ts.pro_api] = None  # 模块级会话
@@ -230,27 +254,33 @@ def fetch_one(
     start: str,
     end: str,
     out_dir: Path,
+    should_cancel: CancellationCheck | None = None,
 ) -> Optional[str]:
     csv_path = out_dir / f"{code}.csv"
 
     for attempt in range(1, 4):
         try:
+            _raise_if_cancelled(should_cancel)
             new_df = _get_kline_tushare(code, start, end)
+            _raise_if_cancelled(should_cancel)
             if new_df.empty:
                 logger.debug("%s 无数据，生成空表。", code)
                 new_df = pd.DataFrame(columns=["date", "open", "close", "high", "low", "volume"])
             new_df = validate(new_df)
             latest_date = _latest_date_from_df(new_df)
+            _raise_if_cancelled(should_cancel)
             new_df.to_csv(csv_path, index=False)  # 直接覆盖保存
             return latest_date
         except Exception as e:
+            if isinstance(e, FetchKlineCancelled):
+                raise
             if _looks_like_ip_ban(e):
                 logger.error(f"{code} 第 {attempt} 次抓取疑似被封禁，沉睡 {COOLDOWN_SECS} 秒")
-                _cool_sleep(COOLDOWN_SECS)
+                _cool_sleep(COOLDOWN_SECS, should_cancel)
             else:
                 silent_seconds = 30 * attempt
                 logger.info(f"{code} 第 {attempt} 次抓取失败，{silent_seconds} 秒后重试：{e}")
-                time.sleep(silent_seconds)
+                _cancelable_sleep(silent_seconds, should_cancel)
     else:
         logger.error("%s 三次抓取均失败，已跳过！", code)
     return None
@@ -270,7 +300,13 @@ def _load_config(config_path: Path = _CONFIG_PATH) -> dict:
 
 
 # --------------------------- 主入口 --------------------------- #
-def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
+def main(
+    config_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+    should_cancel: CancellationCheck | None = None,
+    progress_callback: ProgressCallback | None = None,
+):
+    _raise_if_cancelled(should_cancel)
     # ---------- 读取 YAML 配置 ---------- #
     cfg = _load_config(Path(config_path) if config_path else _CONFIG_PATH)
 
@@ -316,26 +352,77 @@ def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
     )
 
     # ---------- 多线程抓取（全量覆盖） ---------- #
-    workers = int(cfg.get("workers", 8))
+    workers = max(1, int(cfg.get("workers", 8)))
     tushare_latest_dates: list[str] = []
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [
+    _report_download_progress(
+        progress_callback,
+        current=0,
+        total=len(codes),
+        phase="开始下载",
+        message=f"准备下载 {len(codes)} 支股票",
+        force=True,
+    )
+    executor = ThreadPoolExecutor(max_workers=workers)
+    pending: dict[Future[Optional[str]], str] = {}
+    code_iter = iter(codes)
+    completed = 0
+
+    def submit_next() -> bool:
+        _raise_if_cancelled(should_cancel)
+        try:
+            code = next(code_iter)
+        except StopIteration:
+            return False
+        pending[
             executor.submit(
                 fetch_one,
                 code,
                 start,
                 end,
                 out_dir,
+                should_cancel,
             )
-            for code in codes
-        ]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="下载进度"):
-            try:
-                latest_date = future.result()
-                if latest_date:
-                    tushare_latest_dates.append(latest_date)
-            except Exception as exc:
-                logger.error("抓取任务异常：%s", exc)
+        ] = code
+        return True
+
+    try:
+        for _ in range(min(workers, len(codes))):
+            submit_next()
+
+        with tqdm(total=len(codes), desc="下载进度") as progress_bar:
+            while pending:
+                _raise_if_cancelled(should_cancel)
+                done, _not_done = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                if not done:
+                    continue
+                for future in done:
+                    code = pending.pop(future)
+                    try:
+                        latest_date = future.result()
+                        if latest_date:
+                            tushare_latest_dates.append(latest_date)
+                    except FetchKlineCancelled:
+                        raise
+                    except Exception as exc:
+                        logger.error("抓取任务异常：%s", exc)
+                    completed += 1
+                    progress_bar.update(1)
+                    _report_download_progress(
+                        progress_callback,
+                        current=completed,
+                        total=len(codes),
+                        phase="下载中",
+                        code=code,
+                        message=f"已完成 {completed}/{len(codes)} 支股票",
+                    )
+                    submit_next()
+    except FetchKlineCancelled:
+        for future in pending:
+            future.cancel()
+        logger.warning("收到取消请求，停止提交新的 K 线下载任务；等待已在途请求返回")
+        raise
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
 
     tushare_latest = max(tushare_latest_dates) if tushare_latest_dates else "无"
     local_latest = _latest_date_from_csv_dir(out_dir) or "无"
@@ -346,6 +433,43 @@ def main(config_path: Optional[Path] = None, log_path: Optional[Path] = None):
         local_latest,
     )
     logger.info("全部任务完成，数据已保存至 %s", out_dir.resolve())
+    _report_download_progress(
+        progress_callback,
+        current=len(codes),
+        total=len(codes),
+        phase="完成",
+        message=f"已完成 {len(codes)} 支股票下载",
+        finished=True,
+        force=True,
+    )
+
+
+def _report_download_progress(
+    progress_callback: ProgressCallback | None,
+    *,
+    current: int,
+    total: int,
+    phase: str,
+    message: str,
+    code: str | None = None,
+    finished: bool = False,
+    force: bool = False,
+) -> None:
+    if progress_callback is None:
+        return
+    payload: dict[str, Any] = {
+        "label": "下载进度",
+        "phase": phase,
+        "current": current,
+        "total": total,
+        "unit": "股票",
+        "message": message,
+        "finished": finished,
+        "force": force,
+    }
+    if code:
+        payload["code"] = code
+    progress_callback(payload)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="拉取 A 股日线 K 线数据")

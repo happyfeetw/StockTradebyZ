@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 import yaml
@@ -13,7 +13,7 @@ from ..schemas.market_data import MarketDataRunRequest
 from ..storage.run_repository import RunRepository
 from ..storage.sqlite import ROOT
 from ..storage.sqlite_models import Artifact
-from .cancellation import CancellationCheck, raise_if_cancelled
+from .cancellation import CancellationCheck, WorkflowCancellationRequested, raise_if_cancelled
 
 
 class MarketDataDownloadValidationError(ValueError):
@@ -41,6 +41,7 @@ class MarketDataDownloadService:
         run_id: str,
         request: MarketDataRunRequest,
         should_cancel: CancellationCheck | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> CreatedMarketDataDownload:
         raise_if_cancelled(should_cancel)
         if not (os.environ.get("TUSHARE_TOKEN") or "").strip():
@@ -81,14 +82,23 @@ class MarketDataDownloadService:
             from pipeline import fetch_kline
 
             raise_if_cancelled(should_cancel)
-            fetch_kline.main(config_path=effective_config_path, log_path=log_path)
+            fetch_kline.main(
+                config_path=effective_config_path,
+                log_path=log_path,
+                should_cancel=should_cancel,
+                progress_callback=progress_callback,
+            )
             raise_if_cancelled(should_cancel)
             local_latest = fetch_kline._latest_date_from_csv_dir(output_dir) or "无"
         except SystemExit as exc:
             raise MarketDataDownloadError(f"market data download exited with status {exc.code}") from exc
+        except WorkflowCancellationRequested:
+            raise
         except (FileNotFoundError, ValueError) as exc:
             raise MarketDataDownloadValidationError(str(exc)) from exc
         except Exception as exc:
+            if exc.__class__.__name__ == "FetchKlineCancelled":
+                raise WorkflowCancellationRequested(str(exc)) from exc
             raise MarketDataDownloadError(str(exc)) from exc
 
         csv_file_count = _count_csv_files(output_dir)

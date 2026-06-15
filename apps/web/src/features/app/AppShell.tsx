@@ -87,6 +87,7 @@ import {
   type Review,
   type ReviewFilters,
   type RunStatus,
+  type RunProgress,
   type RunSummary,
   type StrategyDefinition,
   type StrategyPreferenceId,
@@ -2220,6 +2221,7 @@ function RunDetailPanel({
   const { t } = useUiPreferences()
   const canCancel = run.status === 'queued' || run.status === 'running'
   const diagnostic = failureDiagnosticFromRun(run)
+  const progress = progressFromRun(run)
 
   return (
     <div className="detail-content">
@@ -2244,6 +2246,7 @@ function RunDetailPanel({
         <Metric label="Finished" value={formatDateTime(run.finished_at)} />
       </div>
 
+      {progress ? <RunProgressPanel progress={progress} status={run.status} /> : null}
       {diagnostic ? <FailureDiagnosticPanel diagnostic={diagnostic} /> : null}
 
       <section className="runtime-console-panel" aria-label={t('Runtime console')}>
@@ -2303,6 +2306,42 @@ function RunDetailPanel({
         ))}
       </section>
     </div>
+  )
+}
+
+function RunProgressPanel({ progress, status }: { progress: RunProgress; status: RunStatus }) {
+  const { t } = useUiPreferences()
+  const percent = typeof progress.percent === 'number' ? Math.max(0, Math.min(100, progress.percent)) : null
+  const hasBar = percent !== null
+  const current = typeof progress.current === 'number' ? progress.current : null
+  const total = typeof progress.total === 'number' ? progress.total : null
+  const unit = progress.unit ? t(progress.unit) : ''
+  const countLabel = current !== null && total !== null && total > 0
+    ? `${current}/${total}${unit}`
+    : current !== null
+      ? `${current}${unit}`
+      : t('In progress')
+  const caption = [progress.phase, progress.message].filter(Boolean).join(' / ')
+
+  return (
+    <section className="run-progress-panel" aria-label={t('Run progress')}>
+      <div className="run-progress-heading">
+        <div>
+          <h3>{t(progress.label || 'Run progress')}</h3>
+          <p>{caption || t('Waiting for progress updates')}</p>
+        </div>
+        <span>{hasBar ? `${percent.toFixed(0)}%` : countLabel}</span>
+      </div>
+      <div className={hasBar ? 'progress-track' : 'progress-track indeterminate'} aria-hidden="true">
+        <span style={hasBar ? { width: `${percent}%` } : undefined} />
+      </div>
+      <div className="run-progress-meta">
+        <span>{countLabel}</span>
+        {progress.code ? <code>{progress.code}</code> : null}
+        {status === 'cancelling' ? <strong>{t('Cancellation requested; waiting for a safe stop point')}</strong> : null}
+        {progress.updated_at ? <time>{formatDateTime(progress.updated_at)}</time> : null}
+      </div>
+    </section>
   )
 }
 
@@ -3578,6 +3617,36 @@ function failureDiagnosticFromRun(
     return normalizeFailureDiagnostic(diagnostic as Record<string, unknown>)
   }
   return null
+}
+
+function progressFromRun(run: RunSummary): RunProgress | null {
+  const summary = run.summary
+  if (!summary || typeof summary !== 'object') return null
+  const raw = summary.progress
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const value = raw as Record<string, unknown>
+  return {
+    mode: stringField(value.mode, run.kind),
+    label: stringField(value.label, 'Run progress'),
+    phase: stringField(value.phase, ''),
+    message: stringField(value.message, ''),
+    current: numberField(value.current),
+    total: numberField(value.total),
+    percent: numberField(value.percent),
+    unit: stringField(value.unit, ''),
+    finished: value.finished === true,
+    updated_at: stringField(value.updated_at, ''),
+    code: typeof value.code === 'string' ? value.code : undefined,
+    strategy: typeof value.strategy === 'string' ? value.strategy : undefined,
+  }
+}
+
+function stringField(value: unknown, fallback: string) {
+  return typeof value === 'string' ? value : fallback
+}
+
+function numberField(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function normalizeFailureDiagnostic(value: Record<string, unknown>): FailureDiagnostic {

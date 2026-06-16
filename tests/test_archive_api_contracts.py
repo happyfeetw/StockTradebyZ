@@ -508,6 +508,8 @@ class ArchiveRepositoryContractTests(unittest.TestCase):
             self.assertEqual(rows[0].snapshot.candidate_batch_id, "batch-1")
             self.assertEqual([row.review_key for row in repository.list_rows(status="recommended")], ["000001_b2"])
             self.assertEqual([row.review_key for row in repository.list_rows(status="unreviewed")], ["000001_brick"])
+            self.assertEqual([row.review_key for row in repository.list_rows(pick_date="2026-05-27", min_score=4.0)], ["000001_b2"])
+            self.assertEqual([row.review_key for row in repository.list_rows(pick_date="2026-05-27", max_score=3.5)], ["000002_brick"])
             engine.dispose()
 
     def test_repository_preserves_review_key_strategy_identity(self) -> None:
@@ -541,6 +543,7 @@ class ArchiveRepositoryContractTests(unittest.TestCase):
             "review_key": "000001_b2",
             "status": "recommended",
             "rank": 1,
+            "total_score": 4.8,
             "close": 10.1,
             "turnover_n": 1.2,
             "brick_growth": None,
@@ -571,6 +574,7 @@ class ArchiveRepositoryContractTests(unittest.TestCase):
         self.assertEqual(detail.row.review_key, "000001_b2")
         self.assertEqual(detail.row.snapshot.recommended_count, 1)
         self.assertEqual(detail.row.chart_artifact_id, "artifact-chart-1")
+        self.assertEqual(detail.row.total_score, 4.8)
         self.assertEqual(ArchiveDateResponse.model_validate({"snapshots": [payload["snapshot"]], "rows": [payload], "total": 1}).total, 1)
 
     def test_archive_routes_do_not_pull_heavy_legacy_modules(self) -> None:
@@ -617,11 +621,20 @@ class ArchiveApiContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row["chart_artifact_id"], "artifact-chart-1")
                 self.assertEqual(row["snapshot"]["review_run_id"], "review-batch-1")
                 self.assertEqual(row["review_payload"], {"comment": "clean breakout"})
+                self.assertEqual(row["total_score"], 4.8)
+
+                score_filtered = await client.get(
+                    "/api/archive/2026-05-27",
+                    params={"min_score": 3.0, "max_score": 3.5},
+                )
+                self.assertEqual(score_filtered.status_code, 200)
+                self.assertEqual([item["review_key"] for item in score_filtered.json()["rows"]], ["000002_brick"])
 
                 detail = await client.get(f"/api/archive/rows/{row['id']}")
                 self.assertEqual(detail.status_code, 200)
                 self.assertEqual(detail.json()["row"]["chart_artifact_id"], "artifact-chart-1")
                 self.assertEqual(detail.json()["row"]["chart"], "data/kline/2026-05-27/000001_day.png")
+                self.assertEqual(detail.json()["row"]["total_score"], 4.8)
 
                 mismatch = await client.get("/api/archive/2026-05-28", params={"code": "000004", "strategy": "b2"})
                 self.assertEqual(mismatch.status_code, 200)

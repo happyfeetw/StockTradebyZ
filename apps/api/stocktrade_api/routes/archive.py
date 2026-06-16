@@ -41,6 +41,8 @@ def archive_snapshot_response(snapshot: ArchiveSnapshot) -> ArchiveSnapshotRespo
 
 def archive_row_response(row: ArchiveRow) -> ArchiveRowResponse:
     snapshot = archive_snapshot_response(row.snapshot)
+    recommendation_score = row.recommendation.total_score if row.recommendation else None
+    review_score = row.review.total_score if row.review else None
     return ArchiveRowResponse(
         id=row.id,
         snapshot_id=row.snapshot_id,
@@ -57,6 +59,7 @@ def archive_row_response(row: ArchiveRow) -> ArchiveRowResponse:
         review_key=row.review_key,
         status=row.status,
         rank=row.rank,
+        total_score=recommendation_score if recommendation_score is not None else review_score,
         close=row.close,
         turnover_n=row.turnover_n,
         brick_growth=row.brick_growth,
@@ -102,6 +105,8 @@ def list_archive_rows_for_date(
     review_key: str | None = Query(default=None, min_length=1, max_length=120),
     status: Literal["all", "recommended", "reviewed", "unreviewed"] = Query(default="all"),
     rank: int | None = Query(default=None, ge=1),
+    min_score: float | None = Query(default=None, ge=0),
+    max_score: float | None = Query(default=None, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     repository: ArchiveRepository = Depends(get_archive_repository),
 ) -> ArchiveDateResponse:
@@ -117,6 +122,8 @@ def list_archive_rows_for_date(
         review_key=review_key,
         status=status,
         rank=rank,
+        min_score=min_score,
+        max_score=max_score,
         limit=limit,
     )
     return ArchiveDateResponse(

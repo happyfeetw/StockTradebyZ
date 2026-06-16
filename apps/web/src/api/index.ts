@@ -481,6 +481,7 @@ export interface ArchiveRow {
   review_key: string
   status: Exclude<ArchiveStatus, 'all'>
   rank: number | null
+  total_score: number | null
   close: number | null
   turnover_n: number | null
   brick_growth: number | null
@@ -540,6 +541,8 @@ export interface ArchiveRowFilters extends ArchiveSnapshotFilters {
   review_key?: string
   status?: ArchiveStatus
   rank?: string
+  min_score?: string
+  max_score?: string
 }
 
 export interface LegacyImportIssue {

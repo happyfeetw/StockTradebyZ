@@ -43,6 +43,7 @@ class ArchiveRowResponse(BaseModel):
     review_key: str
     status: str
     rank: int | None = None
+    total_score: float | None = None
     close: float | None = None
     turnover_n: float | None = None
     brick_growth: float | None = None

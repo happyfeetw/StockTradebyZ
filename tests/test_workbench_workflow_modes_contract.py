@@ -69,3 +69,7 @@ def test_runs_view_embeds_runtime_observability_in_workbench_panel() -> None:
     assert "<WorkflowRuntimeObservationPanel" in text
     assert "RuntimeConsolePanel events={visibleEvents}" in text
     assert "Runtime observation" in text
+    assert "Run to inspect" in text
+    assert "Choose a run to inspect its status, progress, diagnostics, and console logs." in text
+    assert "reviewProgressFromSummary" in text
+    assert "total_reviewed" in text

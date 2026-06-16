@@ -920,6 +920,12 @@ html[data-theme="dark"] .workbench-runtime-panel {
   font-weight: 650;
 }
 
+.filter-field small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .filter-field input,
 .filter-field select {
   min-width: 0;

@@ -223,14 +223,14 @@ identity 始终是 `(code, strategy)`。
 ### 6.3 图表导出
 
 在运行中心选择当前 candidate batch，再选择运行模式“只导出图表”或包含图表导出的
-流程后点击“开始运行”；也可以在候选批次页面对所选批次导出图表。产品图表产物写入
+流程后点击“开始运行”。产品图表产物写入
 `var/artifacts/{run_id}/` 并通过 artifact API 服务，不再依赖 legacy `data/kline/`
 作为默认产品输出。
 
 ### 6.4 Gemini CLI 复评
 
 在运行中心选择当前 candidate batch，再选择运行模式“只跑复评”或包含复评的流程后
-点击“开始运行”；也可以在候选批次页面对所选批次发起 `provider=gemini-cli` 的复评。
+点击“开始运行”，对所选批次发起 `provider=gemini-cli` 的复评。
 要求：
 
 - Gemini CLI 已安装并能在当前 shell 中运行。
@@ -247,13 +247,25 @@ artifact evidence 建索引；原始路径不会直接暴露给前端。
 Archive 会把 candidate batch 和 review run 固化为日级归档快照，并把推荐状态、
 rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
-候选、复评、每日选股结果页面的空状态会给出回到运行中心或导入旧数据的入口。
+候选和复评不再作为主导航页面；它们是运行中心流程和每日结果详情中的证据，而不是
+日常决策入口。每日结果页面为空时，会给出回到运行中心或进入设置页迁移旧数据的入口；
 若页面为空，优先回运行中心检查流程计划和当前候选批次。
 
 ## 7. 每日选股结果页面
 
-顶部导航中的“每日结果”是每日选股结果列表。页面底层读取归档快照和归档行，
-但面向使用者展示的是“某个选股日期最终有哪些候选、哪些被推荐、评分是多少、证据在哪里”。
+顶部导航中的“每日结果”是每日选股结果列表。页面底层读取归档快照、归档行和
+DuckDB 策略汇总，但面向使用者展示的是“某个选股日期最终有哪些候选、哪些被推荐、
+评分是多少、证据在哪里”。
+
+顶部导航保留“运行中心 / 每日结果 / 设置”三个日常入口。旧顶层 `/candidates`、
+`/reviews`、`/analytics` 路由会重定向到 `/archive`，并尽量保留 `pick_date`、
+`run_id`、`strategy`、`code`、`review_key` 等查询参数。后台 candidates、reviews
+和 analytics API 仍保留，用于证据读取、迁移校验和后续排障。
+
+原“分析”页的日常功能已经并入每日结果。页面顶部的“策略概览”复用
+DuckDB strategy summary，按当前选股日期、运行 ID 和策略展示 Total、Reviewed、
+Recommended、Recommended rate，并提供策略明细表。这样可以在同一页完成“看最终名单”
+和“比较策略表现”，避免在每日结果和分析之间反复跳转。
 
 页面提供这些筛选维度：
 
@@ -270,7 +282,9 @@ review payload、recommendation payload、chart artifact、legacy chart path 和
 归档血缘，便于复盘某只股票为什么进入或没有进入推荐名单。
 
 `/overview` 旧总览地址会重定向到运行中心；旧顶层 `/migrations` 路由仍保留，
-但不再出现在主导航中。
+但不再出现在主导航中。若需要查看候选、复评或分析的底层证据，可通过开发/排障路径
+`/evidence/candidates`、`/evidence/reviews`、`/evidence/analytics` 访问；这些路径
+不是日常产品导航的一部分。
 
 ## 8. 迁移工具
 
@@ -341,7 +355,7 @@ gemini --version
 legacy 入口默认关闭，只用于迁移、对照或回滚。必须显式设置对应
 `STOCKTRADE_ALLOW_LEGACY_*` 环境变量。
 
-## 11. 验证命令
+## 12. 验证命令
 
 窄验证：
 

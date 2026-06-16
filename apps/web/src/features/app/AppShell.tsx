@@ -102,10 +102,7 @@ import {
 
 const navItems = [
   { to: '/runs', label: 'Run Center', icon: Activity, state: 'active' },
-  { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
-  { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
   { to: '/archive', label: 'Daily Results', icon: Archive, state: 'active' },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, state: 'active' },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, state: 'active' },
 ]
 
@@ -202,16 +199,36 @@ function ProductShell() {
           <Route path="/" element={<Navigate to="/runs" replace />} />
           <Route path="/overview" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsView />} />
-          <Route path="/candidates" element={<CandidatesView />} />
-          <Route path="/reviews" element={<ReviewsView />} />
+          <Route path="/candidates" element={<DailyResultsRedirect source="candidates" />} />
+          <Route path="/reviews" element={<DailyResultsRedirect source="reviews" />} />
           <Route path="/archive" element={<ArchiveView />} />
-          <Route path="/analytics" element={<AnalyticsView />} />
+          <Route path="/analytics" element={<DailyResultsRedirect source="analytics" />} />
+          <Route path="/evidence/candidates" element={<CandidatesView />} />
+          <Route path="/evidence/reviews" element={<ReviewsView />} />
+          <Route path="/evidence/analytics" element={<AnalyticsView />} />
           <Route path="/migrations" element={<MigrationsView />} />
           <Route path="/settings" element={<SettingsView />} />
         </Routes>
       </main>
     </div>
   )
+}
+
+function DailyResultsRedirect({ source }: { source: 'candidates' | 'reviews' | 'analytics' }) {
+  const [searchParams] = useSearchParams()
+  const params = new URLSearchParams()
+  const keys = source === 'reviews'
+    ? ['pick_date', 'run_id', 'strategy', 'code', 'review_key']
+    : source === 'analytics'
+      ? ['pick_date', 'run_id', 'strategy']
+      : ['pick_date', 'run_id', 'strategy', 'code']
+
+  for (const key of keys) {
+    const value = searchParams.get(key)?.trim()
+    if (value) params.set(key, value)
+  }
+
+  return <Navigate to={`/archive${params.toString() ? `?${params.toString()}` : ''}`} replace />
 }
 
 function LiquidGlassLayer() {
@@ -837,10 +854,10 @@ function CandidatesView() {
             </span>
             <Link
               className="artifact-open-link"
-              to={`/reviews?candidate_batch_id=${encodeURIComponent(reviewBatchMutation.data.review_run.candidate_batch_id ?? activeBatchId)}`}
+              to={`/archive?pick_date=${encodeURIComponent(activeBatch?.pick_date ?? '')}`}
             >
-              <FileSearch size={15} aria-hidden="true" />
-              <span>{t('Open reviews')}</span>
+              <Archive size={15} aria-hidden="true" />
+              <span>{t('Open daily results')}</span>
             </Link>
           </div>
         ) : null}
@@ -893,13 +910,9 @@ function CandidatesView() {
                 </span>
               </button>
               <span className="batch-actions">
-                <Link className="artifact-open-link" to={`/reviews?candidate_batch_id=${encodeURIComponent(batch.id)}`}>
-                  <FileSearch size={15} aria-hidden="true" />
-                  <span>{t('Reviews')}</span>
-                </Link>
                 <Link className="artifact-open-link" to={`/archive?pick_date=${encodeURIComponent(batch.pick_date)}`}>
                   <Archive size={15} aria-hidden="true" />
-                  <span>{t('Archive')}</span>
+                  <span>{t('Daily Results')}</span>
                 </Link>
               </span>
             </article>
@@ -1185,9 +1198,9 @@ function ReviewsView() {
                   <Activity size={17} aria-hidden="true" />
                   <span>{t('Run review')}</span>
                 </Link>
-                <Link className="action-button secondary" to="/candidates">
-                  <Search size={17} aria-hidden="true" />
-                  <span>{t('Choose candidate batch')}</span>
+                <Link className="action-button secondary" to="/archive">
+                  <Archive size={17} aria-hidden="true" />
+                  <span>{t('Open daily results')}</span>
                 </Link>
               </div>
             </div>
@@ -1280,6 +1293,17 @@ function ArchiveView() {
     queryFn: () => listArchiveRows(activePickDate, normalizedFilters),
     enabled: Boolean(activePickDate),
   })
+  const strategySummaryFilters = {
+    pick_date: activePickDate,
+    run_id: normalizedFilters.run_id,
+    strategy: normalizedFilters.strategy,
+    limit: '100',
+  }
+  const strategySummaryQuery = useQuery({
+    queryKey: ['strategy-summary', 'daily-results', strategySummaryFilters],
+    queryFn: () => getStrategySummary(strategySummaryFilters),
+    enabled: Boolean(activePickDate),
+  })
   const rows = rowsQuery.data?.rows ?? []
   const selectedStillVisible = selectedRowId !== null && rows.some((row) => row.id === selectedRowId)
   const activeRowId = selectedStillVisible ? selectedRowId : rows[0]?.id
@@ -1343,6 +1367,7 @@ function ArchiveView() {
             queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
             queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
             queryClient.invalidateQueries({ queryKey: ['archive-row'] })
+            queryClient.invalidateQueries({ queryKey: ['strategy-summary'] })
           }}
         >
           <RefreshCw size={17} aria-hidden="true" />
@@ -1412,12 +1437,74 @@ function ArchiveView() {
         </button>
       </form>
 
-      {snapshotsQuery.isError || rowsQuery.isError ? (
+      {snapshotsQuery.isError || rowsQuery.isError || strategySummaryQuery.isError ? (
         <div className="alert" role="alert">
           <ShieldAlert size={18} aria-hidden="true" />
-          <span>{errorText(snapshotsQuery.error ?? rowsQuery.error)}</span>
+          <span>{errorText(snapshotsQuery.error ?? rowsQuery.error ?? strategySummaryQuery.error)}</span>
         </div>
       ) : null}
+
+      <section className="analytics-panel daily-result-analytics-panel" aria-label={t('Strategy overview')}>
+        <div className="panel-heading">
+          <div>
+            <h2>{t('Strategy overview')}</h2>
+            <p>
+              {strategySummaryQuery.isLoading
+                ? t('Loading summary rows')
+                : activePickDate
+                  ? `${strategySummaryQuery.data?.rows.length ?? 0} ${t('strategy rows for')} ${activePickDate}`
+                  : t('Select an archive date')}
+            </p>
+          </div>
+        </div>
+
+        <section className="summary-strip daily-result-analytics-summary" aria-label={t('Analytics totals')}>
+          <Metric label="Total" value={(strategySummaryQuery.data?.totals.total ?? 0).toString()} />
+          <Metric label="Reviewed" value={(strategySummaryQuery.data?.totals.reviewed ?? 0).toString()} />
+          <Metric label="Recommended" value={(strategySummaryQuery.data?.totals.recommended ?? 0).toString()} />
+          <Metric label="Recommended rate" value={formatPercent(strategySummaryQuery.data?.totals.recommended_rate ?? 0)} />
+        </section>
+
+        {strategySummaryQuery.isLoading ? <RunSkeleton /> : null}
+        {!strategySummaryQuery.isLoading && activePickDate && (strategySummaryQuery.data?.rows.length ?? 0) === 0 ? (
+          <div className="empty-state compact-empty">
+            <BarChart3 size={24} aria-hidden="true" />
+            <h3>{t('No strategy metrics match the filters')}</h3>
+          </div>
+        ) : null}
+        {(strategySummaryQuery.data?.rows.length ?? 0) > 0 ? (
+          <div className="analytics-table-wrap daily-result-analytics-table">
+            <table className="data-table strategy-summary-table">
+              <thead>
+                <tr>
+                  <th>{t('Pick date')}</th>
+                  <th>{t('Strategy')}</th>
+                  <th>{t('Total')}</th>
+                  <th>{t('Reviewed')}</th>
+                  <th>{t('Recommended')}</th>
+                  <th>{t('Unreviewed')}</th>
+                  <th>{t('Rate')}</th>
+                  <th>{t('Run')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {strategySummaryQuery.data?.rows.map((row) => (
+                  <tr key={`${row.pick_date}-${row.run_id}-${row.strategy}`}>
+                    <td>{row.pick_date}</td>
+                    <td><span className="strategy-chip">{row.strategy}</span></td>
+                    <td>{row.total}</td>
+                    <td>{row.reviewed}</td>
+                    <td>{row.recommended}</td>
+                    <td>{row.unreviewed}</td>
+                    <td>{formatPercent(row.recommended_rate)}</td>
+                    <td><code>{row.run_id}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
 
       <div className="archive-grid">
         <section className="archive-snapshot-panel" aria-label={t('Archive dates')}>
@@ -1438,9 +1525,9 @@ function ArchiveView() {
                   <Activity size={17} aria-hidden="true" />
                   <span>{t('Open Run Center')}</span>
                 </Link>
-                <Link className="action-button secondary" to="/reviews">
-                  <FileSearch size={17} aria-hidden="true" />
-                  <span>{t('Open reviews')}</span>
+                <Link className="action-button secondary" to="/settings">
+                  <SettingsIcon size={17} aria-hidden="true" />
+                  <span>{t('Legacy data migration')}</span>
                 </Link>
               </div>
             </div>
@@ -2875,16 +2962,6 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
             to={evidencePath('/runs', { run_id: candidate.run_id })}
           />
           <EvidenceLinkCard
-            icon="reviews"
-            title="Review rows"
-            detail={`${candidate.code} ${candidate.strategy}`}
-            to={evidencePath('/reviews', {
-              candidate_batch_id: candidate.batch_id,
-              code: candidate.code,
-              strategy: candidate.strategy,
-            })}
-          />
-          <EvidenceLinkCard
             icon="archive"
             title="Daily selection results"
             detail={candidate.pick_date}
@@ -2949,21 +3026,9 @@ function ReviewDetailPanel({ review }: { review: Review }) {
         <h3>{t('Evidence route')}</h3>
         <div className="evidence-link-grid">
           <EvidenceLinkCard
-            icon="candidates"
-            title="Candidate row"
-            detail={review.candidate_batch_id ?? 'No batch link'}
-            to={review.candidate_batch_id
-              ? evidencePath('/candidates', {
-                batch_id: review.candidate_batch_id,
-                code: review.code,
-                strategy: review.strategy,
-              })
-              : undefined}
-          />
-          <EvidenceLinkCard
             icon="archive"
-            title="Archive row"
-            detail={review.review_key}
+            title="Daily selection results"
+            detail={`${review.code} ${review.strategy}`}
             to={evidencePath('/archive', {
               pick_date: review.pick_date,
               code: review.code,
@@ -3044,29 +3109,15 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
         <h3>{t('Evidence route')}</h3>
         <div className="evidence-link-grid">
           <EvidenceLinkCard
-            icon="candidates"
-            title="Candidate row"
-            detail={row.candidate_batch_id ?? 'No batch link'}
-            to={row.candidate_batch_id
-              ? evidencePath('/candidates', {
-                batch_id: row.candidate_batch_id,
-                code: row.code,
-                strategy: row.strategy,
-              })
-              : undefined}
-          />
-          <EvidenceLinkCard
-            icon="reviews"
-            title="Review row"
-            detail={row.review_key}
-            to={row.review_run_id
-              ? evidencePath('/reviews', {
-                review_run_id: row.review_run_id,
-                review_key: row.review_key,
-                code: row.code,
-                strategy: row.strategy,
-              })
-              : undefined}
+            icon="archive"
+            title="Daily selection results"
+            detail={`${row.code} ${row.strategy}`}
+            to={evidencePath('/archive', {
+              pick_date: row.pick_date,
+              code: row.code,
+              strategy: row.strategy,
+              review_key: row.review_key,
+            })}
           />
           <EvidenceLinkCard
             icon="runs"

@@ -6,10 +6,10 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .sqlite_models import ArchiveRow, ArchiveSnapshot, Artifact, CandidateBatch, Review, ReviewRun
+from .sqlite_models import ArchiveRow, ArchiveSnapshot, Artifact, CandidateBatch, Recommendation, Review, ReviewRun
 
 ARCHIVE_QUERY_STATUSES = {"all", "recommended", "reviewed", "unreviewed"}
 
@@ -78,6 +78,8 @@ class ArchiveRepository:
         review_key: str | None = None,
         status: str = "all",
         rank: int | None = None,
+        min_score: float | None = None,
+        max_score: float | None = None,
         limit: int = 100,
     ) -> list[ArchiveRow]:
         if status not in ARCHIVE_QUERY_STATUSES:
@@ -87,7 +89,11 @@ class ArchiveRepository:
             statement = (
                 select(ArchiveRow)
                 .join(ArchiveSnapshot)
-                .options(selectinload(ArchiveRow.snapshot))
+                .options(
+                    selectinload(ArchiveRow.snapshot),
+                    selectinload(ArchiveRow.review),
+                    selectinload(ArchiveRow.recommendation),
+                )
                 .order_by(
                     ArchiveRow.pick_date.desc(),
                     ArchiveSnapshot.created_at.desc(),
@@ -99,6 +105,17 @@ class ArchiveRepository:
                 )
                 .limit(limit)
             )
+            if min_score is not None or max_score is not None:
+                score_expr = func.coalesce(Recommendation.total_score, Review.total_score)
+                statement = (
+                    statement
+                    .outerjoin(Review, ArchiveRow.review_id == Review.id)
+                    .outerjoin(Recommendation, ArchiveRow.recommendation_id == Recommendation.id)
+                )
+                if min_score is not None:
+                    statement = statement.where(score_expr >= min_score)
+                if max_score is not None:
+                    statement = statement.where(score_expr <= max_score)
             if pick_date:
                 statement = statement.where(ArchiveRow.pick_date == pick_date)
             if run_id:
@@ -122,7 +139,11 @@ class ArchiveRepository:
             statement = (
                 select(ArchiveRow)
                 .where(ArchiveRow.id == row_id)
-                .options(selectinload(ArchiveRow.snapshot))
+                .options(
+                    selectinload(ArchiveRow.snapshot),
+                    selectinload(ArchiveRow.review),
+                    selectinload(ArchiveRow.recommendation),
+                )
             )
             row = session.execute(statement).scalar_one_or_none()
             if row is None:
@@ -220,7 +241,11 @@ class ArchiveRepository:
             session.execute(
                 select(ArchiveRow)
                 .where(ArchiveRow.snapshot_id == snapshot_id)
-                .options(selectinload(ArchiveRow.snapshot))
+                .options(
+                    selectinload(ArchiveRow.snapshot),
+                    selectinload(ArchiveRow.review),
+                    selectinload(ArchiveRow.recommendation),
+                )
                 .order_by(
                     case((ArchiveRow.rank.is_(None), 1), else_=0),
                     ArchiveRow.rank,

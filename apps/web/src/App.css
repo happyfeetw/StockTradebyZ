@@ -382,14 +382,6 @@ h3 {
   align-items: start;
 }
 
-.overview-grid {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  align-items: start;
-}
-
 .settings-grid {
   margin-top: 18px;
   display: grid;
@@ -411,7 +403,6 @@ h3 {
 .migration-action-panel,
 .migration-section-panel,
 .migration-issues-panel,
-.overview-panel,
 .analytics-panel,
 .settings-panel,
 .detail-panel,
@@ -456,7 +447,6 @@ h3 {
   padding: 16px;
 }
 
-.overview-panel,
 .analytics-panel,
 .settings-panel {
   padding: 16px;
@@ -906,6 +896,16 @@ html[data-theme="dark"] .workbench-runtime-panel {
 
 .candidate-filter-bar {
   grid-template-columns: repeat(5, minmax(140px, 1fr)) auto;
+}
+
+.archive-filter-bar {
+  grid-template-columns: repeat(4, minmax(132px, 1fr)) auto;
+}
+
+.archive-recommended-toggle {
+  min-height: 40px;
+  align-items: center;
+  padding: 9px 10px;
 }
 
 .filter-field {
@@ -1402,62 +1402,18 @@ html[data-theme="dark"] .workbench-runtime-panel {
   min-height: 150px;
 }
 
-.overview-state-list,
-.settings-inventory {
+.settings-inventory,
+.settings-state-list {
   margin-top: 14px;
   display: grid;
   gap: 10px;
 }
 
-.strategy-card-grid {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.strategy-card {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-  min-height: 152px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--glass-surface-strong);
-  padding: 12px;
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.strategy-card.selected {
-  border-color: var(--primary-line);
-  background: var(--primary-soft);
-}
-
-.strategy-card-head {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.strategy-card p,
-.strategy-card small,
-.strategy-summary-row small,
-.overview-run-row small,
 .settings-list-row small,
 .strategy-toggle small {
   color: var(--text-muted);
 }
 
-.strategy-card p {
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.strategy-card small,
-.strategy-summary-row small,
-.overview-run-row small,
 .settings-list-row small,
 .strategy-toggle small {
   display: block;
@@ -1466,16 +1422,12 @@ html[data-theme="dark"] .workbench-runtime-panel {
   overflow-wrap: anywhere;
 }
 
-.overview-run-list,
-.strategy-summary-list,
 .settings-list {
   margin-top: 14px;
   display: grid;
   gap: 8px;
 }
 
-.overview-run-row,
-.strategy-summary-row,
 .settings-list-row {
   min-width: 0;
   min-height: 58px;
@@ -1491,19 +1443,16 @@ html[data-theme="dark"] .workbench-runtime-panel {
   box-shadow: inset 0 1px 0 var(--glass-highlight);
 }
 
-.overview-run-row {
-  grid-template-columns: auto minmax(0, 1fr) minmax(120px, 0.55fr);
-}
-
-.strategy-summary-row {
-  grid-template-columns: minmax(0, 1fr) auto repeat(2, minmax(82px, auto));
-}
-
 .settings-list-row {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
-.overview-run-row code,
+.settings-navigation-row:hover,
+.settings-navigation-row:focus-visible {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+}
+
 .settings-list-row code {
   overflow-wrap: anywhere;
 }
@@ -1731,7 +1680,7 @@ html[data-theme="dark"] .workbench-runtime-panel {
 
 .archive-result-header,
 .archive-row {
-  grid-template-columns: minmax(140px, 0.95fr) minmax(112px, 0.7fr) minmax(76px, 0.48fr) minmax(88px, 0.55fr);
+  grid-template-columns: minmax(140px, 0.95fr) minmax(112px, 0.7fr) minmax(78px, 0.48fr) minmax(76px, 0.46fr) minmax(88px, 0.55fr);
 }
 
 .archive-row {
@@ -3027,7 +2976,6 @@ html[data-theme="dark"] .runtime-console-line {
   .migration-action-panel,
   .migration-section-panel,
   .migration-issues-panel,
-  .overview-panel,
   .analytics-panel,
   .settings-panel,
   .detail-panel,
@@ -3065,10 +3013,6 @@ html[data-theme="dark"] .runtime-console-line {
   }
 
   .migration-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .overview-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3138,14 +3082,9 @@ html[data-theme="dark"] .runtime-console-line {
     grid-template-columns: 1fr;
   }
 
-  .overview-grid,
   .settings-grid {
     grid-template-columns: 1fr;
     overflow: hidden;
-  }
-
-  .strategy-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .filter-bar {
@@ -3316,8 +3255,6 @@ html[data-theme="dark"] .runtime-console-line {
     grid-template-columns: 1fr;
   }
 
-  .overview-run-row,
-  .strategy-summary-row,
   .settings-list-row {
     grid-template-columns: 1fr;
     align-items: start;
@@ -3343,10 +3280,6 @@ html[data-theme="dark"] .runtime-console-line {
   }
 
   .archive-row {
-    grid-template-columns: 1fr;
-  }
-
-  .strategy-card-grid {
     grid-template-columns: 1fr;
   }
 

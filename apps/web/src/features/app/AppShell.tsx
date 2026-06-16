@@ -98,17 +98,14 @@ import {
   type StrategyDefinition,
   type StrategyPreferenceId,
   type StrategySummaryFilters,
-  type StrategySummaryRow,
 } from '../../api'
 
 const navItems = [
-  { to: '/overview', label: 'Overview', icon: Gauge, state: 'active' },
   { to: '/runs', label: 'Run Center', icon: Activity, state: 'active' },
   { to: '/candidates', label: 'Candidates', icon: Search, state: 'active' },
   { to: '/reviews', label: 'Reviews', icon: FileSearch, state: 'active' },
-  { to: '/archive', label: 'Archive', icon: Archive, state: 'active' },
+  { to: '/archive', label: 'Daily Results', icon: Archive, state: 'active' },
   { to: '/analytics', label: 'Analytics', icon: BarChart3, state: 'active' },
-  { to: '/migrations', label: 'Migrations', icon: Database, state: 'active' },
   { to: '/settings', label: 'Settings', icon: SettingsIcon, state: 'active' },
 ]
 
@@ -202,8 +199,8 @@ function ProductShell() {
 
       <main className="main-surface">
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} />
-          <Route path="/overview" element={<OverviewView />} />
+          <Route path="/" element={<Navigate to="/runs" replace />} />
+          <Route path="/overview" element={<Navigate to="/runs" replace />} />
           <Route path="/runs" element={<RunsView />} />
           <Route path="/candidates" element={<CandidatesView />} />
           <Route path="/reviews" element={<ReviewsView />} />
@@ -258,167 +255,6 @@ function LiquidGlassLayer() {
   }, [])
 
   return <div ref={layerRef} className="liquid-glass-layer" aria-hidden="true" data-active="false" />
-}
-
-function OverviewView() {
-  const { t } = useUiPreferences()
-  const queryClient = useQueryClient()
-  const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
-  const settingsQuery = useQuery({ queryKey: ['settings'], queryFn: getSettings })
-  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: getStrategies })
-  const analyticsQuery = useQuery({
-    queryKey: ['strategy-summary', { limit: '5' }],
-    queryFn: () => getStrategySummary({ limit: '5' }),
-  })
-  const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 5_000 })
-
-  const recentRuns = runsQuery.data?.runs.slice(0, 5) ?? []
-  const defaultStrategies = settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? []
-  const configuredIntegrations = settingsQuery.data?.external_integrations.filter((integration) => integration.configured).length ?? 0
-  const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
-
-  return (
-    <div className="run-center">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">{t('Research workstation')}</p>
-          <h1>{t('Overview')}</h1>
-        </div>
-        <button
-          type="button"
-          className="icon-button secondary"
-          aria-label={t('Refresh overview')}
-          onClick={() => {
-            queryClient.invalidateQueries({ queryKey: ['health'] })
-            queryClient.invalidateQueries({ queryKey: ['settings'] })
-            queryClient.invalidateQueries({ queryKey: ['strategies'] })
-            queryClient.invalidateQueries({ queryKey: ['strategy-summary'] })
-            queryClient.invalidateQueries({ queryKey: ['runs'] })
-          }}
-        >
-          <RefreshCw size={17} aria-hidden="true" />
-        </button>
-      </header>
-
-      <section className="summary-strip" aria-label={t('Workstation summary')}>
-        <Metric label="API" value={healthState === 'online' ? 'Online' : healthState === 'offline' ? 'Offline' : 'Checking'} />
-        <Metric label="Settings" value={settingsQuery.data?.product_preferences.source === 'sqlite' ? 'Saved' : 'Defaults'} />
-        <Metric label="Strategies" value={(strategiesQuery.data?.strategies.length ?? 0).toString()} />
-        <Metric label="Analytics rows" value={(analyticsQuery.data?.totals.total ?? 0).toString()} />
-      </section>
-
-      {healthQuery.isError || settingsQuery.isError || strategiesQuery.isError ? (
-        <div className="alert" role="alert">
-          <ShieldAlert size={18} aria-hidden="true" />
-          <span>{errorText(healthQuery.error ?? settingsQuery.error ?? strategiesQuery.error)}</span>
-        </div>
-      ) : null}
-
-      <div className="overview-grid">
-        <section className="overview-panel" aria-label={t('System state')}>
-          <div className="panel-heading">
-            <div>
-              <h2>{t('System state')}</h2>
-              <p>{settingsQuery.isLoading ? t('Loading product settings') : `${configuredIntegrations} ${t('integrations configured')}`}</p>
-            </div>
-            <Link className="artifact-open-link" to="/settings">
-              <SettingsIcon size={15} aria-hidden="true" />
-              <span>{t('Settings')}</span>
-            </Link>
-          </div>
-          {settingsQuery.isLoading ? <RunSkeleton /> : null}
-          {settingsQuery.data ? (
-            <div className="overview-state-list">
-              <DataPair label="SQLite" value={settingsQuery.data.local_state.sqlite_path} />
-              <DataPair label="DuckDB" value={settingsQuery.data.local_state.duckdb_path ?? 'Disabled'} />
-              <DataPair label="Preferences" value={settingsQuery.data.product_preferences.source === 'sqlite' ? 'Stored in SQLite' : 'Using defaults'} />
-              <DataPair label="Simulated trading" value={settingsQuery.data.simulated_trading_in_scope ? 'In scope' : 'Out of scope'} />
-            </div>
-          ) : null}
-        </section>
-
-        <section className="overview-panel" aria-label={t('Strategy readiness')}>
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Strategy readiness')}</h2>
-              <p>{strategiesQuery.isLoading ? t('Loading strategies') : `${t('Default')}: ${defaultStrategies.join(', ') || t('none')}`}</p>
-            </div>
-            <Link className="artifact-open-link" to="/analytics">
-              <BarChart3 size={15} aria-hidden="true" />
-              <span>{t('Analytics')}</span>
-            </Link>
-          </div>
-          {strategiesQuery.isLoading ? <RunSkeleton /> : null}
-          <div className="strategy-card-grid">
-            {strategiesQuery.data?.strategies.map((strategy) => (
-              <StrategyCard key={strategy.id} strategy={strategy} selected={defaultStrategies.includes(strategy.id)} />
-            ))}
-          </div>
-        </section>
-
-        <section className="overview-panel" aria-label={t('Recent runs')}>
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Recent runs')}</h2>
-              <p>{runsQuery.isLoading ? t('Loading run history') : `${recentRuns.length} ${t('latest runs')}`}</p>
-            </div>
-            <Link className="artifact-open-link" to="/runs">
-              <Activity size={15} aria-hidden="true" />
-              <span>{t('Run center')}</span>
-            </Link>
-          </div>
-          {runsQuery.isLoading ? <RunSkeleton /> : null}
-          {runsQuery.isError ? (
-            <div className="alert compact-alert" role="alert">
-              <ShieldAlert size={18} aria-hidden="true" />
-              <span>{errorText(runsQuery.error)}</span>
-            </div>
-          ) : null}
-          {!runsQuery.isLoading && !runsQuery.isError && recentRuns.length === 0 ? (
-            <div className="empty-state compact-empty">
-              <Activity size={24} aria-hidden="true" />
-              <h3>{t('No runs yet')}</h3>
-            </div>
-          ) : null}
-          <div className="overview-run-list">
-            {recentRuns.map((run) => (
-              <Link key={run.id} className="overview-run-row" to={`/runs?run_id=${encodeURIComponent(run.id)}`}>
-                <StatusBadge status={run.status} />
-                <span>
-                  <strong>{run.kind}</strong>
-                  <small>{run.pick_date ?? t('No pick date')} / {formatDateTime(run.created_at)}</small>
-                </span>
-                <code>{run.id}</code>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="overview-panel" aria-label={t('Strategy analytics')}>
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Strategy summary')}</h2>
-              <p>{analyticsQuery.isLoading ? t('Loading DuckDB summary') : `${analyticsQuery.data?.rows.length ?? 0} ${t('rows')}`}</p>
-            </div>
-          </div>
-          {analyticsQuery.isLoading ? <RunSkeleton /> : null}
-          {analyticsQuery.isError ? (
-            <div className="alert compact-alert" role="alert">
-              <ShieldAlert size={18} aria-hidden="true" />
-              <span>{errorText(analyticsQuery.error)}</span>
-            </div>
-          ) : null}
-          {!analyticsQuery.isLoading && !analyticsQuery.isError && (analyticsQuery.data?.rows.length ?? 0) === 0 ? (
-            <div className="empty-state compact-empty">
-              <BarChart3 size={24} aria-hidden="true" />
-              <h3>{t('No strategy metrics yet')}</h3>
-            </div>
-          ) : null}
-          <StrategySummaryList rows={analyticsQuery.data?.rows ?? []} />
-        </section>
-      </div>
-    </div>
-  )
 }
 
 function AnalyticsView() {
@@ -1435,6 +1271,8 @@ function ArchiveView() {
     review_key: filters.review_key.trim(),
     status: filters.status,
     rank: filters.rank.trim(),
+    min_score: filters.min_score.trim(),
+    max_score: filters.max_score.trim(),
   }
 
   const rowsQuery = useQuery({
@@ -1470,6 +1308,10 @@ function ArchiveView() {
     setSelectedRowId(null)
   }
 
+  function toggleRecommendedOnly(checked: boolean) {
+    updateArchiveStatus(checked ? 'recommended' : 'all')
+  }
+
   function selectSnapshot(snapshot: ArchiveSnapshot) {
     setSelectedRowId(null)
     const nextFilters = {
@@ -1491,7 +1333,7 @@ function ArchiveView() {
       <header className="topbar">
         <div>
           <p className="eyebrow">{t('History evidence')}</p>
-          <h1>{t('Archive')}</h1>
+          <h1>{t('Daily selection results')}</h1>
         </div>
         <button
           type="button"
@@ -1514,7 +1356,7 @@ function ArchiveView() {
         <Metric label="Reviewed" value={formatNumber(activeSnapshot?.reviewed_count ?? null)} />
       </section>
 
-      <form className="filter-bar archive-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Archive filters')}>
+      <form className="filter-bar archive-filter-bar" onSubmit={(event) => event.preventDefault()} aria-label={t('Daily result filters')}>
         <FilterInput
           label="Pick date"
           placeholder="2026-05-27"
@@ -1536,7 +1378,33 @@ function ArchiveView() {
           value={filters.review_key}
           onChange={(value) => updateFilter('review_key', value)}
         />
-        <ArchiveStatusSelect label="Status" value={filters.status} onChange={updateArchiveStatus} />
+        <label className="binary-toggle archive-recommended-toggle">
+          <input
+            type="checkbox"
+            checked={filters.status === 'recommended'}
+            onChange={(event) => toggleRecommendedOnly(event.target.checked)}
+          />
+          <span>{t('Recommended only')}</span>
+        </label>
+        <ArchiveStatusSelect label="Result status" value={filters.status} onChange={updateArchiveStatus} />
+        <FilterInput
+          label="Min score"
+          placeholder="4.0"
+          type="number"
+          min="0"
+          step="0.1"
+          value={filters.min_score}
+          onChange={(value) => updateFilter('min_score', value)}
+        />
+        <FilterInput
+          label="Max score"
+          placeholder="5.0"
+          type="number"
+          min="0"
+          step="0.1"
+          value={filters.max_score}
+          onChange={(value) => updateFilter('max_score', value)}
+        />
         <FilterInput label="Rank" placeholder="1" value={filters.rank} onChange={(value) => updateFilter('rank', value)} />
         <button type="button" className="action-button secondary filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <XCircle size={17} aria-hidden="true" />
@@ -1604,13 +1472,13 @@ function ArchiveView() {
           </div>
         </section>
 
-        <section className="archive-list-panel" aria-label={t('Archive rows')}>
+        <section className="archive-list-panel" aria-label={t('Daily selection results')}>
           <div className="panel-heading">
             <div>
-              <h2>{t('Archive rows')}</h2>
+              <h2>{t('Daily selection results')}</h2>
               <p>
                 {rowsQuery.isLoading
-                  ? t('Loading archive rows')
+                  ? t('Loading daily selection results')
                   : activePickDate
                     ? `${rowsQuery.data?.total ?? 0} ${t('records for')} ${activePickDate}`
                     : t('Select an archive date')}
@@ -1628,7 +1496,7 @@ function ArchiveView() {
           {!rowsQuery.isLoading && activePickDate && rows.length === 0 ? (
             <div className="empty-state">
               <Search size={24} aria-hidden="true" />
-              <h3>{hasFilters ? t('No archive rows match the filters') : t('No rows for this archive date')}</h3>
+              <h3>{hasFilters ? t('No daily results match the filters') : t('No rows for this archive date')}</h3>
               <div className="empty-actions">
                 <Link className="action-button" to="/runs">
                   <Activity size={17} aria-hidden="true" />
@@ -1644,7 +1512,7 @@ function ArchiveView() {
             </div>
           ) : null}
 
-          {rows.length > 0 ? <DenseListHeader className="archive-result-header" columns={['Code / strategy', 'Status', 'Rank', 'Close']} /> : null}
+          {rows.length > 0 ? <DenseListHeader className="archive-result-header" columns={['Code / strategy', 'Recommend', 'Score', 'Rank', 'Close']} /> : null}
           <div className="archive-list">
             {rows.map((row) => (
               <button
@@ -1660,6 +1528,7 @@ function ArchiveView() {
                   <span className="strategy-chip">{row.strategy}</span>
                 </span>
                 <span className={`archive-status-chip ${archiveStatusClass(row.status)}`}>{t(archiveStatusLabel(row.status))}</span>
+                <CandidateCell label="Score" value={formatNumber(row.total_score)} strong />
                 <CandidateCell label="Rank" value={formatArchiveRank(row)} />
                 <CandidateCell label="Close" value={formatNumber(row.close)} strong />
                 <RowLineageStrip
@@ -3017,7 +2886,7 @@ function CandidateDetailPanel({ candidate }: { candidate: Candidate }) {
           />
           <EvidenceLinkCard
             icon="archive"
-            title="Archive rows"
+            title="Daily selection results"
             detail={candidate.pick_date}
             to={evidencePath('/archive', {
               pick_date: candidate.pick_date,
@@ -3163,6 +3032,7 @@ function ArchiveDetailPanel({ row }: { row: ArchiveRow }) {
 
       <div className="detail-meta archive-metrics">
         <Metric label="Pick date" value={row.pick_date} />
+        <Metric label="Score" value={formatNumber(row.total_score)} />
         <Metric label="Rank" value={formatArchiveRank(row)} />
         <Metric label="Close" value={formatNumber(row.close)} />
         <Metric label="Turnover" value={formatNumber(row.turnover_n)} />
@@ -3493,40 +3363,6 @@ function VerifyResultPanel({ report }: { report: LegacyImportVerifyReport }) {
   )
 }
 
-function StrategyCard({ strategy, selected }: { strategy: StrategyDefinition; selected: boolean }) {
-  const { t } = useUiPreferences()
-  return (
-    <article className={selected ? 'strategy-card selected' : 'strategy-card'}>
-      <span className="strategy-card-head">
-        <strong>{strategy.label}</strong>
-        <span className="strategy-chip">{selected ? t('Default') : strategy.enabled_by_default ? t('Config default') : t('Available')}</span>
-      </span>
-      <p>{strategy.description}</p>
-      <small>{strategy.config_provenance.path} / {strategy.config_provenance.section}</small>
-    </article>
-  )
-}
-
-function StrategySummaryList({ rows }: { rows: StrategySummaryRow[] }) {
-  const { t } = useUiPreferences()
-  if (rows.length === 0) return null
-  return (
-    <div className="strategy-summary-list">
-      {rows.map((row) => (
-        <div key={`${row.pick_date}-${row.run_id}-${row.strategy}`} className="strategy-summary-row">
-          <span>
-            <strong>{row.pick_date}</strong>
-            <small>{row.run_id}</small>
-          </span>
-          <span className="strategy-chip">{row.strategy}</span>
-          <span>{row.total} {t('total')}</span>
-          <span>{formatPercent(row.recommended_rate)} {t('rec')}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function NumberPreference({
   label,
   value,
@@ -3559,7 +3395,7 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
   const { t } = useUiPreferences()
   return (
     <div className="settings-inventory">
-      <div className="overview-state-list">
+      <div className="settings-state-list">
         <DataPair label="SQLite" value={settings.local_state.sqlite_path} />
         <DataPair label="DuckDB" value={settings.local_state.duckdb_path ?? 'Disabled'} />
         <DataPair label="Artifacts" value={settings.local_state.artifact_root} />
@@ -3603,6 +3439,20 @@ function SettingsInventory({ settings }: { settings: ProductSettingsResponse }) 
           ))}
         </div>
       </div>
+
+      <div className="settings-subsection">
+        <h3>{t('Advanced tools')}</h3>
+        <div className="settings-list">
+          <Link className="settings-list-row settings-navigation-row" to="/migrations">
+            <Upload size={16} aria-hidden="true" />
+            <span>
+              <strong>{t('Legacy data migration')}</strong>
+              <small>{t('Dry-run, import, and verify legacy candidates, reviews, and history.')}</small>
+            </span>
+            <ExternalLink size={15} aria-hidden="true" />
+          </Link>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3612,19 +3462,23 @@ function FilterInput({
   value,
   placeholder,
   type = 'text',
+  min,
+  step,
   onChange,
 }: {
   label: string
   value: string
   placeholder: string
-  type?: 'text' | 'date'
+  type?: 'text' | 'date' | 'number'
+  min?: string
+  step?: string
   onChange: (value: string) => void
 }) {
   const { t } = useUiPreferences()
   return (
     <label className="filter-field">
       <span>{t(label)}</span>
-      <input type={type} value={value} placeholder={t(placeholder)} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} min={min} step={step} value={value} placeholder={t(placeholder)} onChange={(event) => onChange(event.target.value)} />
     </label>
   )
 }
@@ -4110,6 +3964,8 @@ function emptyArchiveFilters(): Required<ArchiveRowFilters> {
     review_key: '',
     status: 'all',
     rank: '',
+    min_score: '',
+    max_score: '',
   }
 }
 
@@ -4122,6 +3978,8 @@ function archiveFiltersFromParams(params: URLSearchParams): Required<ArchiveRowF
     review_key: paramValue(params, 'review_key'),
     status: archiveStatusValue(params.get('status')),
     rank: paramValue(params, 'rank'),
+    min_score: paramValue(params, 'min_score'),
+    max_score: paramValue(params, 'max_score'),
   }
 }
 
@@ -4133,6 +3991,8 @@ function archiveFiltersToParams(filters: Required<ArchiveRowFilters>) {
     code: filters.code,
     review_key: filters.review_key,
     rank: filters.rank,
+    min_score: filters.min_score,
+    max_score: filters.max_score,
   })
   if (filters.status !== 'all') {
     params.set('status', filters.status)

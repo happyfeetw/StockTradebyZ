@@ -247,12 +247,35 @@ artifact evidence 建索引；原始路径不会直接暴露给前端。
 Archive 会把 candidate batch 和 review run 固化为日级归档快照，并把推荐状态、
 rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
-候选、复评、归档页面的空状态会给出回到运行中心或导入旧数据的入口。若页面为空，
-优先回运行中心检查流程计划和当前候选批次。
+候选、复评、每日选股结果页面的空状态会给出回到运行中心或导入旧数据的入口。
+若页面为空，优先回运行中心检查流程计划和当前候选批次。
 
-## 7. 迁移页面
+## 7. 每日选股结果页面
 
-迁移页面用于把 legacy `data/` 内容导入产品存储。
+顶部导航中的“每日结果”是每日选股结果列表。页面底层读取归档快照和归档行，
+但面向使用者展示的是“某个选股日期最终有哪些候选、哪些被推荐、评分是多少、证据在哪里”。
+
+页面提供这些筛选维度：
+
+- 选股日期和 archive run id：定位某一天、某一次归档。
+- 策略：例如 `b1`、`b2`、`brick`。
+- 股票代码和 review key：定位单只股票或同一股票在不同策略下的结果。
+- 推荐状态：全部、推荐、已复评、未复评。
+- “只看推荐”开关：快速过滤到最终推荐列表。
+- 最低分 / 最高分：按 Gemini 复评或推荐记录中的 `total_score` 过滤。
+- 排名：按归档时写入的推荐 rank 定位。
+
+结果列表按“代码/策略、推荐状态、评分、排名、收盘价”展示。右侧详情展示
+review payload、recommendation payload、chart artifact、legacy chart path 和
+归档血缘，便于复盘某只股票为什么进入或没有进入推荐名单。
+
+`/overview` 旧总览地址会重定向到运行中心；旧顶层 `/migrations` 路由仍保留，
+但不再出现在主导航中。
+
+## 8. 迁移工具
+
+迁移工具用于把 legacy `data/` 内容导入产品存储。入口在设置页面的“高级工具”
+区块中，点击“Legacy 数据迁移”进入；它不是日常选股流程的一部分。
 
 推荐顺序：
 
@@ -262,7 +285,7 @@ rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
 交易账户和 simulated trading 数据不属于当前产品化迁移范围。
 
-## 8. 备份 / 恢复
+## 9. 备份 / 恢复
 
 产品备份包含：
 
@@ -274,7 +297,7 @@ rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 恢复会替换本地产品状态。执行恢复前应停止其它写入同一 `var/` 根目录
 的 API 进程；R7 支持单本地 FastAPI 进程，不支持多进程同时写同一 SQLite/DuckDB。
 
-## 9. 设置页面
+## 10. 设置页面
 
 设置页面展示：
 
@@ -283,8 +306,9 @@ rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 - 安全化后的 config inventory。
 - 外部集成是否配置，但不会显示 secret value。
 - 产品偏好，例如默认策略、分页大小、产品主题、时区。
+- 高级工具入口，例如 Legacy 数据迁移。
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### Node 版本不对
 

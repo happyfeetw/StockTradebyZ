@@ -30,7 +30,6 @@ import {
   Terminal,
   Upload,
   XCircle,
-  type LucideIcon,
 } from 'lucide-react'
 import '../../App.css'
 import { UiPreferenceProvider, useUiPreferences, type AppLanguage, type AppThemePreference } from './uiPreferences'
@@ -2093,7 +2092,6 @@ function RunsView() {
   })
 
   const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
-  const workbenchWorkflowPending = workbenchWorkflowState?.status === 'running' || workbenchWorkflowState?.status === 'stopping'
 
   function updateMarketDataField(key: keyof MarketDataRunRequest, value: string) {
     setMarketDataForm((current) => ({ ...current, [key]: value }))
@@ -2358,40 +2356,10 @@ function RunsView() {
         onCancelRun={(runId) => cancelMutation.mutate(runId)}
         onStartWorkflow={() => void runWorkbenchWorkflow()}
         onStopWorkflow={requestWorkbenchWorkflowStop}
-        onDownloadData={() => marketDataMutation.mutate()}
-        onRunPreselect={() => preselectMutation.mutate()}
-        onExportCharts={() => {
-          if (activeWorkflowBatch) workflowChartExportMutation.mutate(activeWorkflowBatch)
-        }}
-        onRunReview={() => {
-          if (activeWorkflowBatch) workflowReviewMutation.mutate(activeWorkflowBatch)
-        }}
-        onArchive={() => {
-          if (activeWorkflowBatch) {
-            workflowArchiveMutation.mutate({ batch: activeWorkflowBatch, reviewRunId: activeWorkflowBatch.latest_review_run_id })
-          }
-        }}
-        pending={{
-          marketData: marketDataMutation.isPending || workbenchWorkflowPending,
-          preselect: preselectMutation.isPending || workbenchWorkflowPending,
-          chartExport: workflowChartExportMutation.isPending || workbenchWorkflowPending,
-          review: workflowReviewMutation.isPending || workbenchWorkflowPending,
-          archive: workflowArchiveMutation.isPending || workbenchWorkflowPending,
-        }}
         cancelPending={cancelMutation.isPending}
       />
     </div>
   )
-}
-
-type WorkflowStepState = 'done' | 'ready' | 'running' | 'blocked' | 'waiting'
-
-type WorkflowPendingState = {
-  marketData: boolean
-  preselect: boolean
-  chartExport: boolean
-  review: boolean
-  archive: boolean
 }
 
 type WorkbenchWorkflowStatus = 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled'
@@ -2407,18 +2375,6 @@ type WorkbenchWorkflowRunState = {
 }
 
 type WorkflowBatchRef = Pick<CandidateBatchSummary, 'id'>
-
-type WorkflowStep = {
-  id: WorkbenchWorkflowStepId
-  title: string
-  detail: string
-  icon: LucideIcon
-  state: WorkflowStepState
-  actionLabel?: string
-  onAction?: () => void
-  disabled?: boolean
-  to?: string
-}
 
 function WorkflowPlanPanel({
   runs,
@@ -2446,12 +2402,6 @@ function WorkflowPlanPanel({
   onCancelRun,
   onStartWorkflow,
   onStopWorkflow,
-  onDownloadData,
-  onRunPreselect,
-  onExportCharts,
-  onRunReview,
-  onArchive,
-  pending,
   cancelPending,
 }: {
   runs: RunSummary[]
@@ -2479,12 +2429,6 @@ function WorkflowPlanPanel({
   onCancelRun: (runId: string) => void
   onStartWorkflow: () => void
   onStopWorkflow: () => void
-  onDownloadData: () => void
-  onRunPreselect: () => void
-  onExportCharts: () => void
-  onRunReview: () => void
-  onArchive: () => void
-  pending: WorkflowPendingState
   cancelPending: boolean
 }) {
   const { t } = useUiPreferences()
@@ -2494,17 +2438,9 @@ function WorkflowPlanPanel({
   const workflowActive = workflowState?.status === 'running' || workflowState?.status === 'stopping'
   const tushare = findIntegration(integrations, 'tushare')
   const gemini = findIntegration(integrations, 'gemini_cli')
-  const latestMarketData = findLatestRun(runs, 'market_data', 'succeeded')
-  const runningMarketData = findActiveRun(runs, 'market_data')
-  const runningPreselect = findActiveRun(runs, 'preselect')
-  const runningChartExport = activeBatch ? findActiveRun(runs, 'chart_export', activeBatch.id) : null
-  const runningReview = activeBatch ? findActiveRun(runs, 'review', activeBatch.id) : null
-  const runningArchive = activeBatch ? findActiveRun(runs, 'archive', activeBatch.id) : null
   const chartExportRun = activeBatch ? findLatestRun(runs, 'chart_export', 'succeeded', activeBatch.id) : null
   const hasCandidateBatch = Boolean(activeBatch)
   const hasChartExport = Boolean(chartExportRun)
-  const hasReview = Boolean(activeBatch?.latest_review_run_id)
-  const hasArchive = Boolean(activeBatch && activeBatch.archive_snapshot_count > 0)
   const selectedStrategyLabel = selectedStrategyIds.length
     ? selectedStrategyIds.map((id) => strategies.find((strategy) => strategy.id === id)?.label ?? id).join(', ')
     : t('No strategy selected')
@@ -2548,91 +2484,6 @@ function WorkflowPlanPanel({
     : startBlockedReason
       ? 'Blocked'
       : 'Ready'
-
-  const steps: WorkflowStep[] = [
-    {
-      id: 'market-data',
-      title: t('Daily data download'),
-      detail: runningMarketData
-        ? `${t('Running')} ${runningMarketData.id}`
-        : latestMarketData
-          ? `${t('Latest local date')}: ${summaryText(latestMarketData.summary, 'local_latest_date')}`
-          : marketBlocked
-            ? t('Tushare token is not configured')
-            : t('Default range starts from 2019-01-01 and ends today.'),
-      icon: Database,
-      state: runningMarketData ? 'running' : latestMarketData ? 'done' : marketBlocked ? 'blocked' : 'ready',
-      actionLabel: t('Download daily data'),
-      onAction: onDownloadData,
-      disabled: pending.marketData || marketBlocked,
-    },
-    {
-      id: 'preselect',
-      title: t('Quant preselect'),
-      detail: runningPreselect
-        ? `${t('Running')} ${runningPreselect.id}`
-        : hasCandidateBatch
-          ? `${activeBatch?.pick_date} / ${activeBatch?.candidate_count ?? 0} ${t('candidates')}`
-          : selectedStrategyIds.length === 0
-            ? t('Choose at least one strategy before running preselect.')
-            : `${t('Strategies for this run')}: ${selectedStrategyLabel}`,
-      icon: Search,
-      state: runningPreselect ? 'running' : hasCandidateBatch ? 'done' : selectedStrategyIds.length === 0 ? 'blocked' : 'ready',
-      actionLabel: t('Run preselect'),
-      onAction: onRunPreselect,
-      disabled: pending.preselect || selectedStrategyIds.length === 0,
-    },
-    {
-      id: 'chart-export',
-      title: t('Chart export'),
-      detail: runningChartExport
-        ? `${t('Running')} ${runningChartExport.id}`
-        : hasChartExport
-          ? `${t('Chart run')} ${chartExportRun?.id}`
-          : hasCandidateBatch
-            ? t('Ready after a candidate batch exists.')
-            : t('Create a candidate batch first.'),
-      icon: ImageIcon,
-      state: runningChartExport ? 'running' : hasChartExport ? 'done' : hasCandidateBatch ? 'ready' : 'waiting',
-      actionLabel: t('Export charts'),
-      onAction: onExportCharts,
-      disabled: pending.chartExport || !hasCandidateBatch,
-    },
-    {
-      id: 'review',
-      title: t('Gemini review'),
-      detail: runningReview
-        ? `${t('Running')} ${runningReview.id}`
-        : hasReview
-          ? `${t('Review run')}: ${activeBatch?.latest_review_run_id}`
-          : reviewBlocked
-            ? t('Gemini CLI is not configured')
-            : hasChartExport
-              ? t('Charts are ready; review can start.')
-              : t('Export charts before review.'),
-      icon: FileSearch,
-      state: runningReview ? 'running' : hasReview ? 'done' : reviewBlocked || (hasCandidateBatch && !hasChartExport) ? 'blocked' : hasCandidateBatch ? 'ready' : 'waiting',
-      actionLabel: t('Gemini review'),
-      onAction: onRunReview,
-      disabled: pending.review || !hasCandidateBatch || !hasChartExport || reviewBlocked,
-    },
-    {
-      id: 'archive',
-      title: t('Archive selected'),
-      detail: runningArchive
-        ? `${t('Running')} ${runningArchive.id}`
-        : hasArchive
-          ? `${activeBatch?.archive_snapshot_count ?? 0} ${t('archives')}`
-          : hasReview
-            ? t('Review run is ready for archive.')
-            : t('Run review before archive.'),
-      icon: Archive,
-      state: runningArchive ? 'running' : hasArchive ? 'done' : hasReview ? 'ready' : 'waiting',
-      actionLabel: t('Archive selected'),
-      onAction: onArchive,
-      disabled: pending.archive || !hasReview,
-    },
-  ]
 
   return (
     <section className="workflow-plan-panel" aria-label={t('Workflow plan')}>
@@ -2798,45 +2649,6 @@ function WorkflowPlanPanel({
             <DataPair label="Completed steps" value={workflowDoneLabel} />
           </div>
         </div>
-      </div>
-
-      <div className="workflow-step-list">
-        {steps.map((step) => {
-          const Icon = step.icon
-          const runtimeState = workflowState?.currentStepId === step.id
-            ? 'running'
-            : workflowState?.completedStepIds.includes(step.id)
-              ? 'done'
-              : step.state
-          return (
-            <article className={`workflow-step-card ${runtimeState} ${selectedPlanSet.has(step.id) ? 'planned' : ''}`} key={step.id}>
-              <div className="workflow-step-icon" aria-hidden="true">
-                <Icon size={18} />
-              </div>
-              <div className="workflow-step-copy">
-                <span className={`workflow-state-chip ${runtimeState}`}>{t(workflowStateLabel(runtimeState))}</span>
-                <h3>{step.title}</h3>
-                <p>{step.detail}</p>
-              </div>
-              {step.to ? (
-                <Link className="action-button secondary workflow-step-action" to={step.to}>
-                  <ExternalLink size={15} aria-hidden="true" />
-                  <span>{step.actionLabel}</span>
-                </Link>
-              ) : step.onAction ? (
-                <button
-                  type="button"
-                  className="action-button secondary workflow-step-action"
-                  onClick={step.onAction}
-                  disabled={step.disabled}
-                >
-                  {runtimeState === 'running' || step.disabled && runtimeState === 'ready' ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
-                  <span>{step.actionLabel}</span>
-                </button>
-              ) : null}
-            </article>
-          )
-        })}
       </div>
 
       <WorkflowRuntimeObservationPanel
@@ -4160,20 +3972,8 @@ function runMatchesBatch(run: RunSummary, batchId?: string) {
   return run.summary?.candidate_batch_id === batchId
 }
 
-function findActiveRun(runs: RunSummary[], kind: RunSummary['kind'], batchId?: string) {
-  return runs.find((run) => run.kind === kind && isLiveStatus(run.status) && runMatchesBatch(run, batchId)) ?? null
-}
-
 function findLatestRun(runs: RunSummary[], kind: RunSummary['kind'], status: RunStatus, batchId?: string) {
   return runs.find((run) => run.kind === kind && run.status === status && runMatchesBatch(run, batchId)) ?? null
-}
-
-function workflowStateLabel(state: WorkflowStepState) {
-  if (state === 'done') return 'Done'
-  if (state === 'running') return 'Running'
-  if (state === 'blocked') return 'Blocked'
-  if (state === 'ready') return 'Ready'
-  return 'Waiting'
 }
 
 function workbenchWorkflowStatusLabel(status: WorkbenchWorkflowStatus) {
@@ -4421,13 +4221,6 @@ function compactMarketDataRequest(form: Record<keyof MarketDataRunRequest, strin
   const workers = Number.parseInt(form.workers.trim(), 10)
   if (Number.isFinite(workers) && workers > 0) request.workers = workers
   return request
-}
-
-function summaryText(summary: Record<string, unknown> | null | undefined, key: string) {
-  const value = summary?.[key]
-  if (value === null || value === undefined || value === '') return 'Not set'
-  if (Array.isArray(value)) return value.length ? value.join(', ') : 'none'
-  return String(value)
 }
 
 function languageConfirmText(t: (text: string) => string, pickDate: string, candidateCount: number) {

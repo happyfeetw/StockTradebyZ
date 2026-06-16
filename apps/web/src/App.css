@@ -798,12 +798,6 @@ html[data-theme="dark"] .workbench-runtime-panel {
   min-height: 160px;
 }
 
-.workflow-step-card.planned {
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 0 0 1px var(--primary-line);
-}
-
 .integration-chip {
   min-height: 34px;
   display: inline-flex;
@@ -857,86 +851,6 @@ html[data-theme="dark"] .workbench-runtime-panel {
   gap: 8px;
 }
 
-.workflow-step-list {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.workflow-step-card {
-  min-width: 0;
-  min-height: 166px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-content: start;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--glass-surface-strong);
-  padding: 12px;
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.workflow-step-card.done {
-  border-color: var(--success-line);
-  background: var(--success-soft);
-}
-
-.workflow-step-card.ready {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-}
-
-.workflow-step-card.blocked {
-  border-color: var(--danger-line);
-  background: var(--danger-soft);
-}
-
-.workflow-step-card.running {
-  border-color: var(--primary-line);
-  background: var(--primary-soft);
-}
-
-.workflow-step-icon {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--text-strong);
-  border: 1px solid var(--line);
-  background: rgb(255 255 255 / 0.24);
-}
-
-html[data-theme="dark"] .workflow-step-icon {
-  background: rgb(255 255 255 / 0.055);
-}
-
-.workflow-step-copy {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.workflow-step-copy h3,
-.workflow-step-copy p {
-  margin: 0;
-}
-
-.workflow-step-copy h3 {
-  color: var(--text-strong);
-  font-size: 14px;
-  font-weight: 760;
-}
-
-.workflow-step-copy p {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
 .workflow-state-chip {
   width: fit-content;
   min-height: 24px;
@@ -968,13 +882,6 @@ html[data-theme="dark"] .workflow-step-icon {
   color: var(--danger);
   border-color: var(--danger-line);
   background: var(--danger-soft);
-}
-
-.workflow-step-action {
-  grid-column: 1 / -1;
-  width: fit-content;
-  min-width: 118px;
-  justify-content: center;
 }
 
 .candidate-batch-panel {
@@ -3251,9 +3158,6 @@ html[data-theme="dark"] .runtime-console-line {
     grid-template-columns: 1fr;
   }
 
-  .workflow-step-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
@@ -3330,7 +3234,6 @@ html[data-theme="dark"] .runtime-console-line {
   .strategy-toggle-grid,
   .settings-toggle-row,
   .workflow-batch-summary,
-  .workflow-step-list,
   .run-strategy-grid,
   .run-config-grid,
   .workbench-parameter-grid,

@@ -63,6 +63,8 @@ def test_runs_view_embeds_runtime_observability_in_workbench_panel() -> None:
 
     assert 'className="workspace-grid"' not in text
     assert 'className="run-setup-form"' not in text
+    assert 'className="workflow-step-list"' not in text
+    assert "workflow-step-card" not in text
     assert "createDiagnosticRun" not in text
     assert "<WorkflowRuntimeObservationPanel" in text
     assert "RuntimeConsolePanel events={visibleEvents}" in text

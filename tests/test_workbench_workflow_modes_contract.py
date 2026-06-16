@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_SOURCE = ROOT / "apps" / "web" / "src" / "features" / "app" / "workbenchWorkflow.ts"
+APP_SHELL_SOURCE = ROOT / "apps" / "web" / "src" / "features" / "app" / "AppShell.tsx"
 
 
 def _mode_contract() -> list[tuple[str, str, list[str]]]:
@@ -55,3 +56,14 @@ def test_workbench_step_labels_and_legacy_commands_are_visible() -> None:
     ]
     for fragment in expected_fragments:
         assert fragment in text
+
+
+def test_runs_view_embeds_runtime_observability_in_workbench_panel() -> None:
+    text = APP_SHELL_SOURCE.read_text(encoding="utf-8")
+
+    assert 'className="workspace-grid"' not in text
+    assert 'className="run-setup-form"' not in text
+    assert "createDiagnosticRun" not in text
+    assert "<WorkflowRuntimeObservationPanel" in text
+    assert "RuntimeConsolePanel events={visibleEvents}" in text
+    assert "Runtime observation" in text

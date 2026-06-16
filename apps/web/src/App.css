@@ -712,6 +712,92 @@ html[data-theme="dark"] .workbench-plan-row {
   margin-top: 2px;
 }
 
+.workbench-runtime-panel {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.26), transparent 58%),
+    var(--glass-surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  padding: 14px;
+}
+
+html[data-theme="dark"] .workbench-runtime-panel {
+  background:
+    linear-gradient(135deg, rgb(113 136 232 / 0.10), transparent 60%),
+    rgb(11 15 24 / 0.54);
+}
+
+.workbench-runtime-toolbar,
+.workbench-observed-run-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 0.64fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.workbench-runtime-toolbar h3,
+.workbench-observed-run-title h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.workbench-runtime-toolbar p,
+.workbench-runtime-loading,
+.workbench-runtime-empty p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workbench-run-select {
+  min-width: 0;
+}
+
+.workbench-observed-run-summary {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.workbench-observed-run-title {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.workbench-observed-run-title code {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.workbench-runtime-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.workbench-runtime-panel .run-config-snapshot-panel,
+.workbench-runtime-panel .run-progress-panel,
+.workbench-runtime-panel .failure-diagnostic-panel,
+.workbench-runtime-panel .runtime-console-panel {
+  margin-top: 0;
+}
+
+.workbench-runtime-empty {
+  min-height: 160px;
+}
+
 .workflow-step-card.planned {
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
@@ -3017,6 +3103,7 @@ html[data-theme="dark"] .runtime-console-line {
   .sidebar,
   .filter-bar,
   .run-setup-form,
+  .workbench-runtime-panel,
   .run-list-panel,
   .candidate-batch-panel,
   .candidate-list-panel,
@@ -3247,12 +3334,17 @@ html[data-theme="dark"] .runtime-console-line {
   .run-strategy-grid,
   .run-config-grid,
   .workbench-parameter-grid,
-  .workbench-run-state {
+  .workbench-run-state,
+  .workbench-runtime-toolbar,
+  .workbench-observed-run-summary,
+  .workbench-runtime-meta {
     grid-template-columns: 1fr;
   }
 
   .workbench-section-heading,
-  .workbench-actions {
+  .workbench-actions,
+  .workbench-runtime-toolbar,
+  .workbench-observed-run-summary {
     display: grid;
     justify-items: start;
   }

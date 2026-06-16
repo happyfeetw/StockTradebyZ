@@ -13,7 +13,6 @@ import {
   ExternalLink,
   FileSearch,
   Gauge,
-  GitBranch,
   Image as ImageIcon,
   Languages,
   Loader2,
@@ -48,7 +47,6 @@ import {
   cancelRun,
   createArchiveRun,
   createChartExportRun,
-  createDiagnosticRun,
   createMarketDataRun,
   createPreselectRun,
   createReviewProviderRun,
@@ -61,7 +59,6 @@ import {
   getHealth,
   getReview,
   getRun,
-  getRunArtifacts,
   getRunEvents,
   importLegacyCandidateBatch,
   importLegacyHistorySnapshot,
@@ -78,7 +75,6 @@ import {
   type ArchiveRowFilters,
   type ArchiveSnapshot,
   type ArchiveStatus,
-  type Artifact,
   type Candidate,
   type CandidateBatchSummary,
   type CandidateFilters,
@@ -98,6 +94,7 @@ import {
   type ReviewFilters,
   type RunStatus,
   type RunProgress,
+  type RunDetail,
   type RunSummary,
   type StrategyDefinition,
   type StrategyPreferenceId,
@@ -1977,11 +1974,6 @@ function RunsView() {
     enabled: Boolean(activeRunId),
     refetchInterval: activeRunIsLive ? 2_000 : false,
   })
-  const artifactsQuery = useQuery({
-    queryKey: ['run-artifacts', activeRunId],
-    queryFn: () => getRunArtifacts(activeRunId),
-    enabled: Boolean(activeRunId),
-  })
 
   const defaultStrategyIds = useMemo(
     () => settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? [],
@@ -1994,15 +1986,6 @@ function RunsView() {
     ...preselectForm,
     strategy_ids: effectivePreselectStrategyIds,
   }
-
-  const createMutation = useMutation({
-    mutationFn: () => createDiagnosticRun(false),
-    onSuccess: (run) => {
-      selectRun(run.id)
-      queryClient.invalidateQueries({ queryKey: ['runs'] })
-      queryClient.setQueryData(['run', run.id], run)
-    },
-  })
 
   const marketDataMutation = useMutation({
     mutationFn: () => createMarketDataRun(compactMarketDataRequest(marketDataForm)),
@@ -2038,6 +2021,7 @@ function RunsView() {
       queryClient.invalidateQueries({ queryKey: ['candidates'] })
       queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
     },
   })
 
@@ -2051,6 +2035,7 @@ function RunsView() {
       queryClient.invalidateQueries({ queryKey: ['runs'] })
       queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
       queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
     },
   })
@@ -2071,6 +2056,7 @@ function RunsView() {
       queryClient.invalidateQueries({ queryKey: ['candidate-batches'] })
       queryClient.invalidateQueries({ queryKey: ['reviews'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
       queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
     },
   })
@@ -2093,6 +2079,7 @@ function RunsView() {
       queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] })
       queryClient.invalidateQueries({ queryKey: ['archive-rows'] })
       queryClient.invalidateQueries({ queryKey: ['run', response.run.id] })
+      queryClient.invalidateQueries({ queryKey: ['run-events', response.run.id] })
     },
   })
 
@@ -2106,8 +2093,6 @@ function RunsView() {
   })
 
   const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
-  const marketDataResult = marketDataMutation.isSuccess ? marketDataMutation.data : null
-  const preselectResult = preselectMutation.isSuccess ? preselectMutation.data : null
   const workbenchWorkflowPending = workbenchWorkflowState?.status === 'running' || workbenchWorkflowState?.status === 'stopping'
 
   function updateMarketDataField(key: keyof MarketDataRunRequest, value: string) {
@@ -2340,10 +2325,10 @@ function RunsView() {
         </div>
       ) : null}
 
-      {workflowChartExportMutation.isError || workflowReviewMutation.isError || workflowArchiveMutation.isError || workbenchWorkflowError ? (
+      {marketDataMutation.isError || preselectMutation.isError || workflowChartExportMutation.isError || workflowReviewMutation.isError || workflowArchiveMutation.isError || workbenchWorkflowError ? (
         <div className="alert" role="alert">
           <ShieldAlert size={18} aria-hidden="true" />
-          <span>{workbenchWorkflowError || errorText(workflowChartExportMutation.error ?? workflowReviewMutation.error ?? workflowArchiveMutation.error)}</span>
+          <span>{workbenchWorkflowError || errorText(marketDataMutation.error ?? preselectMutation.error ?? workflowChartExportMutation.error ?? workflowReviewMutation.error ?? workflowArchiveMutation.error)}</span>
         </div>
       ) : null}
 
@@ -2355,6 +2340,11 @@ function RunsView() {
         workflowState={workbenchWorkflowState}
         marketDataForm={marketDataForm}
         preselectForm={preselectForm}
+        activeRunId={activeRunId}
+        observedRun={detailQuery.data ?? activeRunSummary ?? null}
+        observedRunEvents={eventsQuery.data?.events ?? detailQuery.data?.events ?? []}
+        observedRunLoading={detailQuery.isLoading && Boolean(activeRunId)}
+        runsLoading={runsQuery.isLoading}
         liveRun={liveRun}
         integrations={settingsQuery.data?.external_integrations ?? []}
         strategies={strategiesQuery.data?.strategies ?? []}
@@ -2364,6 +2354,8 @@ function RunsView() {
         onMarketDataFieldChange={updateMarketDataField}
         onPreselectFieldChange={updatePreselectField}
         onPreselectStrategyToggle={togglePreselectStrategy}
+        onRunChange={selectRun}
+        onCancelRun={(runId) => cancelMutation.mutate(runId)}
         onStartWorkflow={() => void runWorkbenchWorkflow()}
         onStopWorkflow={requestWorkbenchWorkflowStop}
         onDownloadData={() => marketDataMutation.mutate()}
@@ -2386,244 +2378,8 @@ function RunsView() {
           review: workflowReviewMutation.isPending || workbenchWorkflowPending,
           archive: workflowArchiveMutation.isPending || workbenchWorkflowPending,
         }}
+        cancelPending={cancelMutation.isPending}
       />
-
-      <div className="workspace-grid">
-        <section className="run-list-panel" aria-label={t('Runs')}>
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Runs')}</h2>
-              <p>{runsQuery.isLoading ? t('Loading runtime state') : `${runs.length} ${t('records')}`}</p>
-            </div>
-            <div className="button-row">
-              <button
-                type="button"
-                className="icon-button secondary"
-                aria-label={t('Refresh runs')}
-                onClick={() => queryClient.invalidateQueries({ queryKey: ['runs'] })}
-              >
-                <RefreshCw size={17} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="action-button"
-                onClick={() => createMutation.mutate()}
-                disabled={createMutation.isPending}
-              >
-                {createMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-                <span>{t('Diagnostic')}</span>
-              </button>
-            </div>
-          </div>
-
-          <form
-            className="run-setup-form"
-            aria-label={t('Market data download setup')}
-            onSubmit={(event) => {
-              event.preventDefault()
-              marketDataMutation.mutate()
-            }}
-          >
-            <div className="run-setup-heading">
-              <Database size={18} aria-hidden="true" />
-              <h3>{t('Daily data download')}</h3>
-            </div>
-            <FilterInput
-              label="Fetch config path"
-              placeholder="config/fetch_kline.yaml"
-              value={marketDataForm.config_path}
-              onChange={(value) => updateMarketDataField('config_path', value)}
-            />
-            <FilterInput
-              label="Start date"
-              type="date"
-              placeholder="YYYY-MM-DD"
-              value={marketDataForm.start}
-              onChange={(value) => updateMarketDataField('start', value)}
-            />
-            <FilterInput
-              label="End date"
-              type="date"
-              placeholder="YYYY-MM-DD"
-              value={marketDataForm.end}
-              onChange={(value) => updateMarketDataField('end', value)}
-            />
-            <FilterInput
-              label="Output dir"
-              placeholder="data/raw"
-              value={marketDataForm.out_dir}
-              onChange={(value) => updateMarketDataField('out_dir', value)}
-            />
-            <FilterInput
-              label="Workers"
-              placeholder="4"
-              value={marketDataForm.workers}
-              onChange={(value) => updateMarketDataField('workers', value)}
-            />
-            <FilterInput
-              label="Log path"
-              placeholder="auto"
-              value={marketDataForm.log_path}
-              onChange={(value) => updateMarketDataField('log_path', value)}
-            />
-            <button type="submit" className="action-button run-setup-submit" disabled={marketDataMutation.isPending}>
-              {marketDataMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Database size={17} aria-hidden="true" />}
-              <span>{t('Download daily data')}</span>
-            </button>
-          </form>
-
-          {marketDataMutation.isError ? (
-            <div className="alert compact-alert" role="alert">
-              <ShieldAlert size={18} aria-hidden="true" />
-              <span>{errorText(marketDataMutation.error)}. {t('If a run was created, diagnostics are recorded in Runs.')}</span>
-            </div>
-          ) : null}
-
-          {marketDataResult ? (
-            <div className="run-setup-result" aria-label={t('Market data result')}>
-              <StatusBadge status={marketDataResult.run.status} />
-              <DataPair label="Output dir" value={summaryText(marketDataResult.summary, 'out_dir')} />
-              <DataPair label="CSV files" value={summaryText(marketDataResult.summary, 'csv_file_count')} />
-              <DataPair label="Latest local date" value={summaryText(marketDataResult.summary, 'local_latest_date')} />
-            </div>
-          ) : null}
-
-          <form
-            className="run-setup-form"
-            aria-label={t('Preselect run setup')}
-            onSubmit={(event) => {
-              event.preventDefault()
-              preselectMutation.mutate()
-            }}
-          >
-            <div className="run-setup-heading">
-              <Search size={18} aria-hidden="true" />
-              <h3>{t('Quant preselect')}</h3>
-            </div>
-            <FilterInput
-              label="Config path"
-              placeholder="config/rules_preselect.yaml"
-              value={preselectForm.config_path}
-              onChange={(value) => updatePreselectField('config_path', value)}
-            />
-            <FilterInput
-              label="Data dir"
-              placeholder="data/daily"
-              value={preselectForm.data_dir}
-              onChange={(value) => updatePreselectField('data_dir', value)}
-            />
-            <FilterInput
-              label="Pick date"
-              type="date"
-              placeholder="YYYY-MM-DD"
-              value={preselectForm.pick_date}
-              onChange={(value) => updatePreselectField('pick_date', value)}
-            />
-            <FilterInput
-              label="End date"
-              type="date"
-              placeholder="optional"
-              value={preselectForm.end_date}
-              onChange={(value) => updatePreselectField('end_date', value)}
-            />
-            <fieldset className="run-strategy-selector">
-              <legend>{t('Strategies for this run')}</legend>
-              <div className="run-strategy-grid">
-                {(strategiesQuery.data?.strategies ?? []).map((strategy) => {
-                  const selected = effectivePreselectStrategyIds.includes(strategy.id)
-                  return (
-                    <label key={strategy.id} className={selected ? 'strategy-option selected' : 'strategy-option'}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => togglePreselectStrategy(strategy.id)}
-                      />
-                      <span>
-                        <strong>{strategy.label}</strong>
-                        <small>{strategy.description}</small>
-                      </span>
-                    </label>
-                  )
-                })}
-                {strategiesQuery.isLoading ? <p className="muted">{t('Loading strategies')}</p> : null}
-              </div>
-            </fieldset>
-            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending || effectivePreselectStrategyIds.length === 0}>
-              {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-              <span>{t('Run preselect')}</span>
-            </button>
-          </form>
-
-          {preselectMutation.isError ? (
-            <div className="alert compact-alert" role="alert">
-              <ShieldAlert size={18} aria-hidden="true" />
-              <span>{errorText(preselectMutation.error)}</span>
-            </div>
-          ) : null}
-
-          {preselectResult ? (
-            <div className="run-setup-result" aria-label={t('Preselect result')}>
-              <StatusBadge status={preselectResult.run.status} />
-              <DataPair label="Batch" value={preselectResult.batch.id} />
-              <DataPair label="Pick date" value={preselectResult.batch.pick_date} />
-              <DataPair label="Candidates" value={preselectResult.batch.total.toString()} />
-            </div>
-          ) : null}
-
-          {runsQuery.isLoading ? <RunSkeleton /> : null}
-          {!runsQuery.isLoading && runs.length === 0 ? (
-            <div className="empty-state">
-              <Activity size={24} aria-hidden="true" />
-              <h3>{t('No product runs yet')}</h3>
-              <button type="button" className="action-button" onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
-                <Play size={17} aria-hidden="true" />
-                <span>{t('Diagnostic')}</span>
-              </button>
-            </div>
-          ) : null}
-
-          <div className="run-list">
-            {runs.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                className={run.id === activeRunId ? 'run-row selected' : 'run-row'}
-                onClick={() => selectRun(run.id)}
-              >
-                <span className={`status-dot ${run.status}`} aria-hidden="true" />
-                <span className="run-row-main">
-                  <span className="run-kind">{run.kind}</span>
-                  <span className="run-id">{run.id}</span>
-                  <span className="run-row-context">
-                    {run.pick_date ?? t('No pick date')} / {formatDateTime(run.created_at)}
-                    {run.summary ? ` / ${runInlineSummary(run)}` : ''}
-                  </span>
-                </span>
-                <StatusBadge status={run.status} />
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="detail-panel" aria-label={t('Run detail')}>
-          {detailQuery.isLoading && activeRunId ? <RunDetailSkeleton /> : null}
-          {!activeRunId && !runsQuery.isLoading ? (
-            <div className="empty-state detail-empty">
-              <Clock3 size={24} aria-hidden="true" />
-              <h3>{t('Select a run')}</h3>
-            </div>
-          ) : null}
-          {detailQuery.data ? (
-            <RunDetailPanel
-              run={detailQuery.data}
-              events={eventsQuery.data?.events ?? detailQuery.data.events}
-              artifacts={artifactsQuery.data?.artifacts ?? detailQuery.data.artifacts}
-              onCancel={() => cancelMutation.mutate(detailQuery.data.id)}
-              cancelling={cancelMutation.isPending}
-            />
-          ) : null}
-        </section>
-      </div>
     </div>
   )
 }
@@ -2672,6 +2428,11 @@ function WorkflowPlanPanel({
   workflowState,
   marketDataForm,
   preselectForm,
+  activeRunId,
+  observedRun,
+  observedRunEvents,
+  observedRunLoading,
+  runsLoading,
   liveRun,
   integrations,
   strategies,
@@ -2681,6 +2442,8 @@ function WorkflowPlanPanel({
   onMarketDataFieldChange,
   onPreselectFieldChange,
   onPreselectStrategyToggle,
+  onRunChange,
+  onCancelRun,
   onStartWorkflow,
   onStopWorkflow,
   onDownloadData,
@@ -2689,6 +2452,7 @@ function WorkflowPlanPanel({
   onRunReview,
   onArchive,
   pending,
+  cancelPending,
 }: {
   runs: RunSummary[]
   batches: CandidateBatchSummary[]
@@ -2697,6 +2461,11 @@ function WorkflowPlanPanel({
   workflowState: WorkbenchWorkflowRunState | null
   marketDataForm: Record<keyof MarketDataRunRequest, string>
   preselectForm: PreselectFormState
+  activeRunId: string
+  observedRun: RunDetail | RunSummary | null
+  observedRunEvents: JobEvent[]
+  observedRunLoading: boolean
+  runsLoading: boolean
   liveRun: RunSummary | null
   integrations: ExternalIntegrationStatus[]
   strategies: StrategyDefinition[]
@@ -2706,6 +2475,8 @@ function WorkflowPlanPanel({
   onMarketDataFieldChange: (key: keyof MarketDataRunRequest, value: string) => void
   onPreselectFieldChange: (key: PreselectTextField, value: string) => void
   onPreselectStrategyToggle: (strategyId: StrategyPreferenceId) => void
+  onRunChange: (runId: string) => void
+  onCancelRun: (runId: string) => void
   onStartWorkflow: () => void
   onStopWorkflow: () => void
   onDownloadData: () => void
@@ -2714,6 +2485,7 @@ function WorkflowPlanPanel({
   onRunReview: () => void
   onArchive: () => void
   pending: WorkflowPendingState
+  cancelPending: boolean
 }) {
   const { t } = useUiPreferences()
   const mode = workbenchWorkflowModeById(modeId)
@@ -3066,6 +2838,19 @@ function WorkflowPlanPanel({
           )
         })}
       </div>
+
+      <WorkflowRuntimeObservationPanel
+        runs={runs}
+        activeRunId={activeRunId}
+        run={observedRun}
+        events={observedRunEvents}
+        loading={observedRunLoading}
+        runsLoading={runsLoading}
+        liveRun={liveRun}
+        onRunChange={onRunChange}
+        onCancelRun={onCancelRun}
+        cancelling={cancelPending}
+      />
     </section>
   )
 }
@@ -3082,108 +2867,132 @@ function IntegrationChip({ status, fallbackLabel }: { status: ExternalIntegratio
   )
 }
 
-function RunDetailPanel({
+function WorkflowRuntimeObservationPanel({
+  runs,
+  activeRunId,
   run,
   events,
-  artifacts,
-  onCancel,
+  loading,
+  runsLoading,
+  liveRun,
+  onRunChange,
+  onCancelRun,
   cancelling,
 }: {
-  run: RunSummary & { steps?: { id: number; name: string; status: RunStatus; error: Record<string, unknown> | null }[] }
+  runs: RunSummary[]
+  activeRunId: string
+  run: RunDetail | RunSummary | null
   events: JobEvent[]
-  artifacts: Artifact[]
-  onCancel: () => void
+  loading: boolean
+  runsLoading: boolean
+  liveRun: RunSummary | null
+  onRunChange: (runId: string) => void
+  onCancelRun: (runId: string) => void
   cancelling: boolean
 }) {
   const { t } = useUiPreferences()
-  const canCancel = run.status === 'queued' || run.status === 'running'
-  const diagnostic = failureDiagnosticFromRun(run)
-  const progress = progressFromRun(run)
+  const selectableRuns = runs.slice(0, 20)
+  const selectedRunMissing = activeRunId && !selectableRuns.some((item) => item.id === activeRunId)
+  const canCancel = Boolean(run && (run.status === 'queued' || run.status === 'running'))
+  const diagnostic = run ? failureDiagnosticFromRun(run) : null
+  const progress = run ? progressFromRun(run) : null
+  const visibleEvents = events.slice(-40)
 
   return (
-    <div className="detail-content">
-      <div className="detail-header">
+    <div className="workbench-runtime-panel" aria-label={t('Runtime observation')}>
+      <div className="workbench-runtime-toolbar">
         <div>
-          <p className="eyebrow">{t('Selected run')}</p>
-          <h2>{run.kind}</h2>
-          <p className="muted run-id-wrap">{run.id}</p>
+          <h3>{t('Runtime observation')}</h3>
+          <p>{t('Progress, diagnostics, and console logs stay attached to the workflow card.')}</p>
         </div>
-        <div className="button-row">
-          <StatusBadge status={run.status} />
-          <button type="button" className="action-button danger" onClick={onCancel} disabled={!canCancel || cancelling}>
-            {cancelling ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Ban size={17} aria-hidden="true" />}
-            <span>{t('Cancel')}</span>
-          </button>
-        </div>
+
+        <label className="filter-field workbench-run-select">
+          <span>{t('Observed run')}</span>
+          <select
+            value={activeRunId}
+            onChange={(event) => {
+              if (event.target.value) onRunChange(event.target.value)
+            }}
+            disabled={runs.length === 0}
+          >
+            {runs.length === 0 ? <option value="">{t('No product runs yet')}</option> : null}
+            {selectedRunMissing ? <option value={activeRunId}>{activeRunId}</option> : null}
+            {selectableRuns.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.kind} / {t(statusLabels[item.status])} / {formatDateTime(item.created_at)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="detail-meta">
-        <Metric label="Created" value={formatDateTime(run.created_at)} />
-        <Metric label="Started" value={formatDateTime(run.started_at)} />
-        <Metric label="Finished" value={formatDateTime(run.finished_at)} />
+      {runsLoading || loading ? <p className="muted workbench-runtime-loading">{t('Loading runtime state')}</p> : null}
+
+      {!run && !runsLoading && !loading ? (
+        <div className="empty-state workbench-runtime-empty">
+          <Terminal size={24} aria-hidden="true" />
+          <h3>{t('No product runs yet')}</h3>
+          <p>{t('Start a workflow step to see progress and console logs here.')}</p>
+        </div>
+      ) : null}
+
+      {run ? (
+        <>
+          <div className="workbench-observed-run-summary">
+            <div className="workbench-observed-run-title">
+              <span className={`status-dot ${run.status}`} aria-hidden="true" />
+              <div>
+                <p className="eyebrow">{t('Selected run')}</p>
+                <h4>{run.kind}</h4>
+                <code>{run.id}</code>
+              </div>
+            </div>
+            <div className="button-row">
+              <StatusBadge status={run.status} />
+              {liveRun && liveRun.id !== run.id ? <span className="pending-chip">{t('Live run')}: {liveRun.kind}</span> : null}
+              <button type="button" className="action-button danger" onClick={() => onCancelRun(run.id)} disabled={!canCancel || cancelling}>
+                {cancelling ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Ban size={17} aria-hidden="true" />}
+                <span>{t('Cancel')}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="detail-meta workbench-runtime-meta">
+            <Metric label="Created" value={formatDateTime(run.created_at)} />
+            <Metric label="Started" value={formatDateTime(run.started_at)} />
+            <Metric label="Finished" value={formatDateTime(run.finished_at)} />
+          </div>
+
+          <RunConfigSnapshotPanel run={run} />
+          {progress ? <RunProgressPanel progress={progress} status={run.status} /> : null}
+          {diagnostic ? <FailureDiagnosticPanel diagnostic={diagnostic} /> : null}
+
+          <RuntimeConsolePanel events={visibleEvents} live={canCancel} />
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+function RuntimeConsolePanel({ events, live }: { events: JobEvent[]; live: boolean }) {
+  const { t } = useUiPreferences()
+  return (
+    <section className="runtime-console-panel" aria-label={t('Runtime console')}>
+      <div className="runtime-console-heading">
+        <Terminal size={17} aria-hidden="true" />
+        <h3>{t('Runtime console')}</h3>
       </div>
-
-      <RunConfigSnapshotPanel run={run} />
-      {progress ? <RunProgressPanel progress={progress} status={run.status} /> : null}
-      {diagnostic ? <FailureDiagnosticPanel diagnostic={diagnostic} /> : null}
-
-      <section className="runtime-console-panel" aria-label={t('Runtime console')}>
-        <div className="runtime-console-heading">
-          <Terminal size={17} aria-hidden="true" />
-          <h3>{t('Runtime console')}</h3>
-        </div>
-        <div className="runtime-console-lines" role="log" aria-live={canCancel ? 'polite' : 'off'}>
-          {events.length === 0 ? <p className="muted">{t('Waiting for runtime events')}</p> : null}
-          {events.map((event) => (
-            <div className={`runtime-console-line ${event.level}`} key={event.id}>
-              <time>{formatDateTime(event.created_at)}</time>
-              <span>{event.level.toUpperCase()}</span>
-              <code>{event.message}</code>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="subsection">
-        <h3>{t('Steps')}</h3>
-        <div className="step-list">
-          {(run.steps ?? []).length === 0 ? <p className="muted">{t('No steps recorded.')}</p> : null}
-          {(run.steps ?? []).map((step) => (
-            <div className="step-row" key={step.id}>
-              <GitBranch size={16} aria-hidden="true" />
-              <span>{step.name}</span>
-              <StatusBadge status={step.status} />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="subsection">
-        <h3>{t('Artifacts')}</h3>
-        {artifacts.length === 0 ? <p className="muted">{t('No artifacts linked.')}</p> : null}
-        {artifacts.map((artifact) => (
-          <div className="artifact-row" key={artifact.id}>
-            <Database size={16} aria-hidden="true" />
-            <span>{artifact.kind}</span>
-            <code>{artifact.path}</code>
-            {isProductOwnedArtifactPath(artifact.path) ? (
-              <a
-                className="artifact-open-link"
-                href={artifactFileUrl(artifact.id)}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`${t('Open')} ${artifact.kind} ${t('artifact')}`}
-              >
-                <ExternalLink size={15} aria-hidden="true" />
-                <span>{t('Open')}</span>
-              </a>
-            ) : (
-              <span className="artifact-source-chip">{t('Legacy path')}</span>
-            )}
+      <div className="runtime-console-lines" role="log" aria-live={live ? 'polite' : 'off'}>
+        {events.length === 0 ? <p className="muted">{t('Waiting for runtime events')}</p> : null}
+        {events.map((event) => (
+          <div className={`runtime-console-line ${event.level}`} key={event.id}>
+            <time>{formatDateTime(event.created_at)}</time>
+            <span>{event.level.toUpperCase()}</span>
+            <code>{event.message}</code>
           </div>
         ))}
-      </section>
-    </div>
+      </div>
+    </section>
   )
 }
 
@@ -4621,28 +4430,8 @@ function summaryText(summary: Record<string, unknown> | null | undefined, key: s
   return String(value)
 }
 
-function runInlineSummary(run: RunSummary) {
-  const summary = run.summary
-  if (!summary) return ''
-  const keys = ['candidate_batch_id', 'review_run_id', 'csv_file_count', 'total', 'candidate_count', 'reviewed_count', 'recommended_count', 'provider'] as const
-  const parts = keys
-    .map((key) => {
-      const value = summary[key]
-      if (value === null || value === undefined || value === '') return null
-      return `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`
-    })
-    .filter((value): value is string => value !== null)
-  return parts.slice(0, 2).join(' / ')
-}
-
 function languageConfirmText(t: (text: string) => string, pickDate: string, candidateCount: number) {
   return `${t('Run Gemini review for')} ${pickDate} (${candidateCount} ${t('candidates')})?\n${t('This will call Gemini CLI and may consume quota. Continue?')}`
-}
-
-function isProductOwnedArtifactPath(path: string | null) {
-  if (!path?.trim()) return false
-  const normalized = path.replaceAll('\\', '/')
-  return normalized !== 'data' && !normalized.startsWith('data/')
 }
 
 function jsonPreview(value: Record<string, unknown> | null) {

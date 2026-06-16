@@ -2707,7 +2707,7 @@ function WorkflowRuntimeObservationPanel({
   const selectedRunMissing = activeRunId && !selectableRuns.some((item) => item.id === activeRunId)
   const canCancel = Boolean(run && (run.status === 'queued' || run.status === 'running'))
   const diagnostic = run ? failureDiagnosticFromRun(run) : null
-  const progress = run ? progressFromRun(run) : null
+  const progress = run ? progressFromRun(run, t) : null
   const visibleEvents = events.slice(-40)
 
   return (
@@ -2719,7 +2719,7 @@ function WorkflowRuntimeObservationPanel({
         </div>
 
         <label className="filter-field workbench-run-select">
-          <span>{t('Observed run')}</span>
+          <span>{t('Run to inspect')}</span>
           <select
             value={activeRunId}
             onChange={(event) => {
@@ -2735,6 +2735,7 @@ function WorkflowRuntimeObservationPanel({
               </option>
             ))}
           </select>
+          <small>{t('Choose a run to inspect its status, progress, diagnostics, and console logs.')}</small>
         </label>
       </div>
 
@@ -4250,11 +4251,14 @@ function failureDiagnosticFromRun(
   return null
 }
 
-function progressFromRun(run: RunSummary): RunProgress | null {
+function progressFromRun(run: RunSummary, t: (text: string) => string): RunProgress | null {
   const summary = run.summary
   if (!summary || typeof summary !== 'object') return null
   const raw = summary.progress
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    if (run.kind === 'review') return reviewProgressFromSummary(run, summary, t)
+    return null
+  }
   const value = raw as Record<string, unknown>
   return {
     mode: stringField(value.mode, run.kind),
@@ -4272,12 +4276,53 @@ function progressFromRun(run: RunSummary): RunProgress | null {
   }
 }
 
+function reviewProgressFromSummary(
+  run: RunSummary,
+  summary: Record<string, unknown>,
+  t: (text: string) => string,
+): RunProgress | null {
+  const reviewed = numberField(summary.total_reviewed) ?? numberField(summary.reviewed_count)
+  const total = numberField(summary.total_candidates)
+    ?? numberField(summary.candidate_count)
+    ?? nestedNumberField(summary.source, 'selected_candidates')
+  if (reviewed === null && total === null) return null
+
+  const safeReviewed = reviewed ?? 0
+  const safeTotal = total ?? safeReviewed
+  const finished = run.status === 'succeeded'
+  const provider = stringField(summary.provider, '')
+  const recommended = numberField(summary.recommended) ?? numberField(summary.recommended_count)
+  const messageParts = [
+    safeTotal > 0 ? `${safeReviewed}/${safeTotal} ${t('candidates')}` : `${safeReviewed} ${t('reviews')}`,
+    provider ? `${t('Provider')}: ${provider}` : '',
+    recommended !== null ? `${t('Recommended')}: ${recommended}` : '',
+  ].filter(Boolean)
+  return {
+    mode: 'review',
+    label: 'Review progress',
+    phase: finished ? t('Done') : t('Reviewing'),
+    message: messageParts.join(' / '),
+    current: safeReviewed,
+    total: safeTotal,
+    percent: safeTotal > 0 ? Math.max(0, Math.min(100, safeReviewed / safeTotal * 100)) : finished ? 100 : null,
+    unit: '候选',
+    finished,
+    updated_at: run.finished_at ?? run.started_at ?? run.created_at,
+    code: provider || undefined,
+  }
+}
+
 function stringField(value: unknown, fallback: string) {
   return typeof value === 'string' ? value : fallback
 }
 
 function numberField(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function nestedNumberField(value: unknown, key: string) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return numberField((value as Record<string, unknown>)[key])
 }
 
 function normalizeFailureDiagnostic(value: Record<string, unknown>): FailureDiagnostic {

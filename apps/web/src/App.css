@@ -1,10 +1,12 @@
 .app-shell {
   min-height: 100dvh;
+  height: 100dvh;
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
   color: var(--text-strong);
   position: relative;
   isolation: isolate;
+  overflow: hidden;
   background:
     linear-gradient(135deg, rgb(255 255 255 / 0.72), rgb(218 228 245 / 0.40) 44%, transparent 72%),
     var(--app-bg);
@@ -52,6 +54,10 @@ html[data-theme="dark"] .app-shell {
 .sidebar {
   position: relative;
   z-index: 1;
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--glass-surface);
   border-right: 1px solid var(--line);
   padding: 24px 18px;
@@ -185,6 +191,9 @@ html[data-theme="dark"] .filter-field select:focus {
   position: relative;
   z-index: 1;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background:
     linear-gradient(180deg, rgb(82 110 211 / 0.10), transparent 280px),
     transparent;
@@ -3036,15 +3045,26 @@ html[data-theme="dark"] .runtime-console-line {
 @media (max-width: 1024px) {
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
   }
 
   .sidebar {
     position: sticky;
     top: 0;
     z-index: 10;
+    height: auto;
+    overflow: visible;
+    overscroll-behavior: auto;
     padding: 12px;
     border-right: none;
     border-bottom: 1px solid var(--line);
+  }
+
+  .main-surface {
+    overflow: visible;
+    overscroll-behavior: auto;
   }
 
   .brand-lockup {

@@ -1465,6 +1465,14 @@ html[data-theme="dark"] .workbench-runtime-panel {
   margin-top: 18px;
 }
 
+.daily-result-analytics-panel {
+  padding: 16px;
+}
+
+.daily-result-analytics-summary {
+  margin-top: 14px;
+}
+
 .analytics-table-wrap {
   margin-top: 14px;
   overflow-x: auto;

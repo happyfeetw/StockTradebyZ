@@ -2104,7 +2104,7 @@ function RunsView() {
       return
     }
     if (!steps.includes('preselect') && steps.some((step) => step === 'chart-export' || step === 'review' || step === 'archive') && !activeWorkflowBatch) {
-      setWorkbenchWorkflowError(t('Create a candidate batch first.'))
+      setWorkbenchWorkflowError(t('Create a preselect result first.'))
       return
     }
     if (steps.includes('review') && !steps.includes('chart-export') && activeWorkflowBatch && !findLatestRun(runs, 'chart_export', 'succeeded', activeWorkflowBatch.id)) {
@@ -2161,20 +2161,20 @@ function RunsView() {
           selectRun(currentRunId)
           ensureWorkflowStepSucceeded(response.run, stepLabel)
         } else if (stepId === 'chart-export') {
-          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          if (!currentBatch) throw new Error(t('Create a preselect result first.'))
           const response = await workflowChartExportMutation.mutateAsync(currentBatch)
           currentRunId = response.run.id
           selectRun(currentRunId)
           ensureWorkflowStepSucceeded(response.run, stepLabel)
         } else if (stepId === 'review') {
-          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          if (!currentBatch) throw new Error(t('Create a preselect result first.'))
           const response = await workflowReviewMutation.mutateAsync(currentBatch)
           currentRunId = response.run.id
           currentReviewRunId = response.review_run.id
           selectRun(currentRunId)
           ensureWorkflowStepSucceeded(response.run, stepLabel)
         } else if (stepId === 'archive') {
-          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          if (!currentBatch) throw new Error(t('Create a preselect result first.'))
           const response = await workflowArchiveMutation.mutateAsync({
             batch: currentBatch,
             reviewRunId: currentReviewRunId,
@@ -2397,9 +2397,18 @@ function WorkflowPlanPanel({
   const chartExportRun = activeBatch ? findLatestRun(runs, 'chart_export', 'succeeded', activeBatch.id) : null
   const hasCandidateBatch = Boolean(activeBatch)
   const hasChartExport = Boolean(chartExportRun)
+  const modeCreatesPreselectResult = selectedPlanSet.has('preselect')
   const selectedStrategyLabel = selectedStrategyIds.length
     ? selectedStrategyIds.map((id) => strategies.find((strategy) => strategy.id === id)?.label ?? id).join(', ')
     : t('No strategy selected')
+  const activePreselectResultStrategyLabel = activeBatch
+    ? Object.keys(activeBatch.strategy_counts ?? {}).join(', ') || t('none')
+    : selectedStrategyLabel
+  const activePreselectResultLabel = activeBatch
+    ? `${activeBatch.pick_date} / ${activeBatch.candidate_count} ${t('candidates')} / ${activePreselectResultStrategyLabel}`
+    : t('Not linked')
+  const workflowPreselectResultStrategyLabel = modeCreatesPreselectResult ? selectedStrategyLabel : activePreselectResultStrategyLabel
+  const workflowPickDateLabel = modeCreatesPreselectResult ? preselectForm.pick_date || t('Not set') : activeBatch?.pick_date ?? t('Not set')
   const marketBlocked = Boolean(tushare && !tushare.configured)
   const reviewBlocked = Boolean(gemini && !gemini.configured)
   const modeRequiresExistingBatch = !selectedPlanSet.has('preselect')
@@ -2414,7 +2423,7 @@ function WorkflowPlanPanel({
         : selectedPlanSet.has('preselect') && selectedStrategyIds.length === 0
           ? t('Choose at least one strategy before running preselect.')
           : modeRequiresExistingBatch && !hasCandidateBatch
-            ? t('Create a candidate batch first.')
+            ? t('Create a preselect result first.')
             : selectedPlanSet.has('review') && reviewBlocked
               ? t('Gemini CLI is not configured')
               : modeRequiresExistingCharts && !hasChartExport
@@ -2513,21 +2522,34 @@ function WorkflowPlanPanel({
             />
           </div>
 
-          <label className="filter-field workbench-batch-select">
-            <span>{t('Active candidate batch')}</span>
-            <select
-              value={activeBatch?.id ?? ''}
-              onChange={(event) => onBatchChange(event.target.value)}
-              disabled={batches.length === 0 || workflowActive}
-            >
-              {batches.length === 0 ? <option value="">{t('No candidate batches yet')}</option> : null}
-              {batches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.pick_date} / {batch.candidate_count} {t('candidates')} / {batch.id}
-                </option>
-              ))}
-            </select>
-          </label>
+          {modeRequiresExistingBatch ? (
+            <label className="filter-field workbench-batch-select">
+              <span>{t('Use existing preselect result')}</span>
+              <select
+                value={activeBatch?.id ?? ''}
+                onChange={(event) => onBatchChange(event.target.value)}
+                disabled={batches.length === 0 || workflowActive}
+              >
+                {batches.length === 0 ? <option value="">{t('No preselect results yet')}</option> : null}
+                {batches.map((batch) => {
+                  const strategyText = Object.keys(batch.strategy_counts ?? {}).join(', ') || t('none')
+                  const statusText = batch.archive_snapshot_count > 0
+                    ? t('Archived result')
+                    : batch.latest_review_run_id
+                      ? t('Reviewed')
+                      : t('Not reviewed')
+                  return (
+                    <option key={batch.id} value={batch.id}>
+                      {batch.pick_date} / {batch.candidate_count} {t('candidates')} / {strategyText} / {statusText}
+                    </option>
+                  )
+                })}
+              </select>
+              <small>{t('Only shown when this mode reuses a previous preselect result.')}</small>
+            </label>
+          ) : modeCreatesPreselectResult ? (
+            <p className="workbench-context-note">{t('This run will create a new preselect result and use it automatically.')}</p>
+          ) : null}
 
           <fieldset className="run-strategy-selector workbench-strategy-selector">
             <legend>{t('Strategies for this run')}</legend>
@@ -2594,9 +2616,12 @@ function WorkflowPlanPanel({
           </div>
 
           <div className="workflow-batch-summary">
-            <DataPair label="Batch" value={activeBatch?.id ?? t('Not linked')} />
-            <DataPair label="Pick date" value={activeBatch?.pick_date ?? t('Not set')} />
-            <DataPair label="Strategies" value={activeBatch ? Object.keys(activeBatch.strategy_counts ?? {}).join(', ') || t('none') : selectedStrategyLabel} />
+            <DataPair
+              label="Preselect result"
+              value={modeCreatesPreselectResult ? t('Generated by this run') : activePreselectResultLabel}
+            />
+            <DataPair label="Pick date" value={workflowPickDateLabel} />
+            <DataPair label="Strategies" value={workflowPreselectResultStrategyLabel} />
           </div>
 
           <div className="workbench-run-state">

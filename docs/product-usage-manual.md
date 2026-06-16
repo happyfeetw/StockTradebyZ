@@ -145,9 +145,10 @@ Workbench 工作流卡片下方是“运行观测”区。旧版中分散在下�
 - Workers: 默认可留空，沿用配置文件中的并发数。
 - Log path: 默认可留空，日志会写入本次运行的 product artifact 目录。
 
-点击“下载每日数据”会创建 `market_data` run，调用 Tushare 下载日线 CSV，
-并把本次有效配置和日志登记为 product artifacts。该步骤仍需要本机已设置
-`TUSHARE_TOKEN`；前端和 API 只展示配置状态，不会展示 token 值。
+选择运行模式“只抓取数据”或包含抓取的完整流程后，点击“开始运行”会创建
+`market_data` run，调用 Tushare 下载日线 CSV，并把本次有效配置和日志登记为
+product artifacts。该步骤仍需要本机已设置 `TUSHARE_TOKEN`；前端和 API 只展示
+配置状态，不会展示 token 值。
 
 当前下载实现复用 `pipeline.fetch_kline` 的抓取逻辑，但产品运行中心会把它放在独立
 子进程中执行。点击取消后，API 会先发出协作式取消信号；如果下载进程没有在短时间内
@@ -163,7 +164,7 @@ Workbench 工作流卡片下方是“运行观测”区。旧版中分散在下�
 里程碑、抓取完成或失败信息。完整抓取日志仍以 artifact 的形式保存，避免把大量下载
 明细直接塞进页面。
 
-如果运行失败，Run Detail 会显示“失败诊断”面板。该面板来自后端写入的
+如果运行失败，运行观测区会显示“失败诊断”面板。该面板来自后端写入的
 run summary 和 step error，包含诊断代码、原因解释、是否可重试、建议动作和
 相关文档。常见诊断包括：
 
@@ -212,19 +213,22 @@ var/acceptance/tushare-e2e/<timestamp>/summary.md
   临时勾选 `b1`、`b2`、`brick`。这个选择会写入 run summary 和初选 meta，
   不会直接改写 `config/rules_preselect.yaml`。
 
-运行后会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。
-候选 identity 始终是 `(code, strategy)`。
+选择运行模式“只跑初选”、默认“跳过抓取”或其它包含初选的流程后，点击“开始运行”
+会创建 candidate batch，并写入 SQLite；analytics writer 可同步写入 DuckDB。候选
+identity 始终是 `(code, strategy)`。
 
 ### 6.3 图表导出
 
-在运行中心的流程计划中选择当前 candidate batch 后点击“导出图表”，也可以在候选批次
-页面对所选批次导出图表。产品图表产物写入 `var/artifacts/{run_id}/` 并通过
-artifact API 服务，不再依赖 legacy `data/kline/` 作为默认产品输出。
+在运行中心选择当前 candidate batch，再选择运行模式“只导出图表”或包含图表导出的
+流程后点击“开始运行”；也可以在候选批次页面对所选批次导出图表。产品图表产物写入
+`var/artifacts/{run_id}/` 并通过 artifact API 服务，不再依赖 legacy `data/kline/`
+作为默认产品输出。
 
 ### 6.4 Gemini CLI 复评
 
-在运行中心的流程计划中选择当前 candidate batch 后点击“Gemini 复评”，也可以在候选批次
-页面对所选批次发起 `provider=gemini-cli` 的复评。要求：
+在运行中心选择当前 candidate batch，再选择运行模式“只跑复评”或包含复评的流程后
+点击“开始运行”；也可以在候选批次页面对所选批次发起 `provider=gemini-cli` 的复评。
+要求：
 
 - Gemini CLI 已安装并能在当前 shell 中运行。
 - 本机 Gemini CLI 已完成登录。
@@ -236,9 +240,9 @@ artifact evidence 建索引；原始路径不会直接暴露给前端。
 
 ### 6.5 归档
 
-在运行中心选择当前 candidate batch 后点击“归档所选”。Archive 会把 candidate batch
-和 review run 固化为日级归档快照，并把推荐状态、rank、chart artifact link 和
-review payload 写入 SQLite/DuckDB。
+在运行中心选择当前 candidate batch，再选择包含归档的运行模式后点击“开始运行”。
+Archive 会把 candidate batch 和 review run 固化为日级归档快照，并把推荐状态、
+rank、chart artifact link 和 review payload 写入 SQLite/DuckDB。
 
 候选、复评、归档页面的空状态会给出回到运行中心或导入旧数据的入口。若页面为空，
 优先回运行中心检查流程计划和当前候选批次。

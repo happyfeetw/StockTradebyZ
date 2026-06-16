@@ -228,6 +228,27 @@ html[data-theme="dark"] .main-surface {
   min-width: 0;
 }
 
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 24;
+  margin: -28px 0 0;
+  padding: 28px 0 18px;
+  background:
+    linear-gradient(180deg, var(--app-bg) 0%, rgb(255 255 255 / 0.78) 72%, transparent 100%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  backdrop-filter: blur(18px) saturate(145%);
+  border-bottom: 1px solid rgb(82 110 211 / 0.12);
+  box-shadow: 0 14px 28px rgb(34 45 76 / 0.08);
+}
+
+html[data-theme="dark"] .topbar {
+  background:
+    linear-gradient(180deg, var(--app-bg) 0%, rgb(13 18 31 / 0.82) 74%, transparent 100%);
+  border-bottom-color: rgb(144 160 214 / 0.16);
+  box-shadow: 0 16px 30px rgb(0 0 0 / 0.26);
+}
+
 .panel-heading p {
   overflow-wrap: anywhere;
 }
@@ -3066,6 +3087,17 @@ html[data-theme="dark"] .runtime-console-line {
   .main-surface {
     overflow: visible;
     overscroll-behavior: auto;
+  }
+
+  .topbar {
+    position: static;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-bottom: 0;
+    box-shadow: none;
   }
 
   .brand-lockup {

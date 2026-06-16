@@ -559,6 +559,165 @@ html[data-theme="dark"] .action-button {
   flex-wrap: wrap;
 }
 
+.workbench-workflow-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(340px, 0.92fr) minmax(0, 1.08fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.workbench-config-panel,
+.workbench-plan-panel {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.26), transparent 58%),
+    var(--glass-surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  padding: 14px;
+}
+
+html[data-theme="dark"] .workbench-config-panel,
+html[data-theme="dark"] .workbench-plan-panel {
+  background:
+    linear-gradient(135deg, rgb(113 136 232 / 0.10), transparent 60%),
+    rgb(11 15 24 / 0.50);
+}
+
+.workbench-section-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-section-heading > div {
+  min-width: 0;
+}
+
+.workbench-section-heading p,
+.workbench-mode-description,
+.workbench-blocker {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workbench-mode-description {
+  margin: -4px 0 0;
+}
+
+.workbench-parameter-grid,
+.workbench-run-state {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workbench-batch-select {
+  min-width: 0;
+}
+
+.workbench-strategy-selector .run-strategy-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.workbench-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workbench-actions .action-button {
+  min-width: 132px;
+  justify-content: center;
+}
+
+.workbench-blocker {
+  color: var(--danger);
+}
+
+.workbench-plan-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-plan-row {
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 34px minmax(132px, 0.42fr) minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgb(255 255 255 / 0.26);
+  padding: 9px;
+}
+
+html[data-theme="dark"] .workbench-plan-row {
+  background: rgb(255 255 255 / 0.045);
+}
+
+.workbench-plan-row > span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--glass-surface-strong);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.workbench-plan-row strong,
+.workbench-plan-row code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workbench-plan-row strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.workbench-plan-row code {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workbench-plan-row.done {
+  border-color: var(--success-line);
+  background: var(--success-soft);
+}
+
+.workbench-plan-row.running {
+  border-color: var(--primary-line);
+  background: var(--primary-soft);
+}
+
+.workbench-plan-panel .workflow-batch-summary {
+  margin-top: 2px;
+}
+
+.workflow-step-card.planned {
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 0 0 1px var(--primary-line);
+}
+
 .integration-chip {
   min-height: 34px;
   display: inline-flex;
@@ -3001,6 +3160,10 @@ html[data-theme="dark"] .runtime-console-line {
     grid-template-columns: 1fr;
   }
 
+  .workbench-workflow-grid {
+    grid-template-columns: 1fr;
+  }
+
   .workflow-step-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3070,7 +3233,7 @@ html[data-theme="dark"] .runtime-console-line {
   .evidence-link-grid,
   .run-setup-form,
   .run-setup-result,
-    .migration-form,
+  .migration-form,
   .migration-action-form,
   .migration-count-grid,
   .migration-result-grid,
@@ -3082,8 +3245,24 @@ html[data-theme="dark"] .runtime-console-line {
   .workflow-batch-summary,
   .workflow-step-list,
   .run-strategy-grid,
-  .run-config-grid {
+  .run-config-grid,
+  .workbench-parameter-grid,
+  .workbench-run-state {
     grid-template-columns: 1fr;
+  }
+
+  .workbench-section-heading,
+  .workbench-actions {
+    display: grid;
+    justify-items: start;
+  }
+
+  .workbench-plan-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .workbench-plan-row code {
+    grid-column: 1 / -1;
   }
 
   .scope-button-grid {

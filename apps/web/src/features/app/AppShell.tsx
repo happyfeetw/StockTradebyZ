@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -35,6 +35,14 @@ import {
 } from 'lucide-react'
 import '../../App.css'
 import { UiPreferenceProvider, useUiPreferences, type AppLanguage, type AppThemePreference } from './uiPreferences'
+import {
+  stepsForWorkbenchWorkflowMode,
+  workbenchWorkflowModeById,
+  workbenchWorkflowModes,
+  workbenchWorkflowSteps,
+  type WorkbenchWorkflowModeId,
+  type WorkbenchWorkflowStepId,
+} from './workbenchWorkflow'
 import {
   artifactFileUrl,
   cancelRun,
@@ -1932,6 +1940,10 @@ function RunsView() {
   })
   const [preselectStrategiesTouched, setPreselectStrategiesTouched] = useState(false)
   const [workflowBatchId, setWorkflowBatchId] = useState('')
+  const workflowStopRequestedRef = useRef(false)
+  const [workbenchWorkflowModeId, setWorkbenchWorkflowModeId] = useState<WorkbenchWorkflowModeId>('skip-fetch')
+  const [workbenchWorkflowState, setWorkbenchWorkflowState] = useState<WorkbenchWorkflowRunState | null>(null)
+  const [workbenchWorkflowError, setWorkbenchWorkflowError] = useState('')
 
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 15_000 })
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: listRuns, refetchInterval: 10_000 })
@@ -1943,10 +1955,11 @@ function RunsView() {
     refetchInterval: 15_000,
   })
   const runs = runsQuery.data?.runs ?? []
-  const workflowBatches = workflowBatchesQuery.data?.batches ?? []
+  const workflowBatches = useMemo(() => workflowBatchesQuery.data?.batches ?? [], [workflowBatchesQuery.data?.batches])
   const activeWorkflowBatch = workflowBatches.find((batch) => batch.id === workflowBatchId) ?? workflowBatches[0] ?? null
   const activeRunId = selectedRunId ?? (requestedRunId || runs[0]?.id || '')
   const activeRunSummary = runs.find((run) => run.id === activeRunId)
+  const liveRun = runs.find((run) => isLiveStatus(run.status)) ?? null
   const activeRunIsLive = Boolean(
     activeRunId
     && (!activeRunSummary || activeRunSummary.status === 'queued' || activeRunSummary.status === 'running' || activeRunSummary.status === 'cancelling'),
@@ -1970,26 +1983,17 @@ function RunsView() {
     enabled: Boolean(activeRunId),
   })
 
-  const defaultStrategyIds = settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? []
-  const defaultStrategyKey = defaultStrategyIds.join('|')
-
-  useEffect(() => {
-    if (preselectStrategiesTouched || defaultStrategyIds.length === 0) return
-    setPreselectForm((current) => {
-      if (current.strategy_ids.length > 0) return current
-      return { ...current, strategy_ids: [...defaultStrategyIds] }
-    })
-  }, [defaultStrategyKey, defaultStrategyIds, preselectStrategiesTouched])
-
-  useEffect(() => {
-    if (workflowBatches.length === 0) {
-      if (workflowBatchId) setWorkflowBatchId('')
-      return
-    }
-    if (!workflowBatchId || !workflowBatches.some((batch) => batch.id === workflowBatchId)) {
-      setWorkflowBatchId(workflowBatches[0].id)
-    }
-  }, [workflowBatches, workflowBatchId])
+  const defaultStrategyIds = useMemo(
+    () => settingsQuery.data?.product_preferences.preferences.default_strategy_ids ?? [],
+    [settingsQuery.data?.product_preferences.preferences.default_strategy_ids],
+  )
+  const effectivePreselectStrategyIds = preselectStrategiesTouched || preselectForm.strategy_ids.length > 0
+    ? preselectForm.strategy_ids
+    : defaultStrategyIds
+  const effectivePreselectForm = {
+    ...preselectForm,
+    strategy_ids: effectivePreselectStrategyIds,
+  }
 
   const createMutation = useMutation({
     mutationFn: () => createDiagnosticRun(false),
@@ -2011,7 +2015,7 @@ function RunsView() {
       queryClient.invalidateQueries({ queryKey: ['run-artifacts', response.run.id] })
     },
     onError: async (_error, _variables, startedAt) => {
-      const started = startedAt ?? Date.now()
+      const started = startedAt ?? 0
       const response = await queryClient.fetchQuery({ queryKey: ['runs'], queryFn: listRuns })
       const latest = response.runs[0]
       if (latest?.kind === 'market_data' && Date.parse(latest.created_at) >= started - 1_000) {
@@ -2027,7 +2031,7 @@ function RunsView() {
   })
 
   const preselectMutation = useMutation({
-    mutationFn: () => createPreselectRun(compactPreselectRequest(preselectForm)),
+    mutationFn: () => createPreselectRun(compactPreselectRequest(effectivePreselectForm)),
     onSuccess: (response) => {
       selectRun(response.run.id)
       queryClient.invalidateQueries({ queryKey: ['runs'] })
@@ -2038,7 +2042,7 @@ function RunsView() {
   })
 
   const workflowChartExportMutation = useMutation({
-    mutationFn: (batch: CandidateBatchSummary) =>
+    mutationFn: (batch: WorkflowBatchRef) =>
       createChartExportRun({
         candidate_batch_id: batch.id,
       }),
@@ -2052,7 +2056,7 @@ function RunsView() {
   })
 
   const workflowReviewMutation = useMutation({
-    mutationFn: (batch: CandidateBatchSummary) =>
+    mutationFn: (batch: WorkflowBatchRef) =>
       createReviewProviderRun({
         candidate_batch_id: batch.id,
         provider: 'gemini-cli',
@@ -2072,13 +2076,14 @@ function RunsView() {
   })
 
   const workflowArchiveMutation = useMutation({
-    mutationFn: (batch: CandidateBatchSummary) => {
-      if (!batch.latest_review_run_id) {
+    mutationFn: ({ batch, reviewRunId }: { batch: WorkflowBatchRef; reviewRunId?: string | null }) => {
+      const resolvedReviewRunId = reviewRunId?.trim()
+      if (!resolvedReviewRunId) {
         throw new Error(t('Selected batch has no review run to archive'))
       }
       return createArchiveRun({
         candidate_batch_id: batch.id,
-        review_run_id: batch.latest_review_run_id,
+        review_run_id: resolvedReviewRunId,
       })
     },
     onSuccess: (response) => {
@@ -2103,6 +2108,7 @@ function RunsView() {
   const healthState = healthQuery.isLoading ? 'checking' : healthQuery.isError ? 'offline' : 'online'
   const marketDataResult = marketDataMutation.isSuccess ? marketDataMutation.data : null
   const preselectResult = preselectMutation.isSuccess ? preselectMutation.data : null
+  const workbenchWorkflowPending = workbenchWorkflowState?.status === 'running' || workbenchWorkflowState?.status === 'stopping'
 
   function updateMarketDataField(key: keyof MarketDataRunRequest, value: string) {
     setMarketDataForm((current) => ({ ...current, [key]: value }))
@@ -2115,10 +2121,13 @@ function RunsView() {
   function togglePreselectStrategy(strategyId: StrategyPreferenceId) {
     setPreselectStrategiesTouched(true)
     setPreselectForm((current) => {
-      const selected = current.strategy_ids.includes(strategyId)
+      const currentStrategyIds = preselectStrategiesTouched || current.strategy_ids.length > 0
+        ? current.strategy_ids
+        : defaultStrategyIds
+      const selected = currentStrategyIds.includes(strategyId)
       const strategyIds = selected
-        ? current.strategy_ids.filter((id) => id !== strategyId)
-        : [...current.strategy_ids, strategyId]
+        ? currentStrategyIds.filter((id) => id !== strategyId)
+        : [...currentStrategyIds, strategyId]
       return { ...current, strategy_ids: strategyIds }
     })
   }
@@ -2126,6 +2135,175 @@ function RunsView() {
   function selectRun(runId: string) {
     setSelectedRunId(runId)
     setSearchParams(nonEmptyParams({ run_id: runId }), { replace: true })
+  }
+
+  async function invalidateWorkflowQueries(runId?: string | null) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['runs'] }),
+      queryClient.invalidateQueries({ queryKey: ['candidate-batches'] }),
+      queryClient.invalidateQueries({ queryKey: ['candidates'] }),
+      queryClient.invalidateQueries({ queryKey: ['reviews'] }),
+      queryClient.invalidateQueries({ queryKey: ['archive-snapshots'] }),
+      queryClient.invalidateQueries({ queryKey: ['archive-rows'] }),
+      runId ? queryClient.invalidateQueries({ queryKey: ['run', runId] }) : Promise.resolve(),
+      runId ? queryClient.invalidateQueries({ queryKey: ['run-events', runId] }) : Promise.resolve(),
+      runId ? queryClient.invalidateQueries({ queryKey: ['run-artifacts', runId] }) : Promise.resolve(),
+    ])
+  }
+
+  async function runWorkbenchWorkflow() {
+    const mode = workbenchWorkflowModeById(workbenchWorkflowModeId)
+    const steps = [...mode.steps]
+    const blockingRun = runs.find((run) => isLiveStatus(run.status))
+    if (blockingRun) {
+      setWorkbenchWorkflowError(`${t('A run is already active')}: ${blockingRun.id}`)
+      selectRun(blockingRun.id)
+      return
+    }
+    if (steps.includes('preselect') && effectivePreselectStrategyIds.length === 0) {
+      setWorkbenchWorkflowError(t('Choose at least one strategy before running preselect.'))
+      return
+    }
+    if (!steps.includes('preselect') && steps.some((step) => step === 'chart-export' || step === 'review' || step === 'archive') && !activeWorkflowBatch) {
+      setWorkbenchWorkflowError(t('Create a candidate batch first.'))
+      return
+    }
+    if (steps.includes('review') && !steps.includes('chart-export') && activeWorkflowBatch && !findLatestRun(runs, 'chart_export', 'succeeded', activeWorkflowBatch.id)) {
+      setWorkbenchWorkflowError(t('Export charts before review.'))
+      return
+    }
+
+    workflowStopRequestedRef.current = false
+    setWorkbenchWorkflowError('')
+    const startedAt = new Date().toISOString()
+    const completedStepIds: WorkbenchWorkflowStepId[] = []
+    let currentRunId: string | null = null
+    let currentBatch: WorkflowBatchRef | null = activeWorkflowBatch ? { id: activeWorkflowBatch.id } : null
+    let currentReviewRunId: string | null = activeWorkflowBatch?.latest_review_run_id ?? null
+
+    setWorkbenchWorkflowState({
+      modeId: mode.id,
+      status: 'running',
+      currentStepId: null,
+      completedStepIds: [],
+      currentRunId,
+      startedAt,
+      message: t('Workflow started'),
+    })
+
+    try {
+      for (const stepId of steps) {
+        if (workflowStopRequestedRef.current) {
+          throw new Error(t('Workflow stop requested.'))
+        }
+
+        const stepLabel = workbenchWorkflowSteps[stepId].label
+        setWorkbenchWorkflowState({
+          modeId: mode.id,
+          status: 'running',
+          currentStepId: stepId,
+          completedStepIds: [...completedStepIds],
+          currentRunId,
+          startedAt,
+          message: `${t('Running')}: ${stepLabel}`,
+        })
+
+        if (stepId === 'market-data') {
+          const response = await marketDataMutation.mutateAsync()
+          currentRunId = response.run.id
+          selectRun(currentRunId)
+          ensureWorkflowStepSucceeded(response.run, stepLabel)
+        } else if (stepId === 'preselect') {
+          const response = await preselectMutation.mutateAsync()
+          currentRunId = response.run.id
+          currentBatch = { id: response.batch.id }
+          currentReviewRunId = null
+          setWorkflowBatchId(response.batch.id)
+          selectRun(currentRunId)
+          ensureWorkflowStepSucceeded(response.run, stepLabel)
+        } else if (stepId === 'chart-export') {
+          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          const response = await workflowChartExportMutation.mutateAsync(currentBatch)
+          currentRunId = response.run.id
+          selectRun(currentRunId)
+          ensureWorkflowStepSucceeded(response.run, stepLabel)
+        } else if (stepId === 'review') {
+          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          const response = await workflowReviewMutation.mutateAsync(currentBatch)
+          currentRunId = response.run.id
+          currentReviewRunId = response.review_run.id
+          selectRun(currentRunId)
+          ensureWorkflowStepSucceeded(response.run, stepLabel)
+        } else if (stepId === 'archive') {
+          if (!currentBatch) throw new Error(t('Create a candidate batch first.'))
+          const response = await workflowArchiveMutation.mutateAsync({
+            batch: currentBatch,
+            reviewRunId: currentReviewRunId,
+          })
+          currentRunId = response.run.id
+          selectRun(currentRunId)
+          ensureWorkflowStepSucceeded(response.run, stepLabel)
+        }
+
+        completedStepIds.push(stepId)
+        await invalidateWorkflowQueries(currentRunId)
+        setWorkbenchWorkflowState({
+          modeId: mode.id,
+          status: 'running',
+          currentStepId: null,
+          completedStepIds: [...completedStepIds],
+          currentRunId,
+          startedAt,
+          message: `${stepLabel} ${t('Done')}`,
+        })
+      }
+
+      setWorkbenchWorkflowState({
+        modeId: mode.id,
+        status: 'succeeded',
+        currentStepId: null,
+        completedStepIds: [...completedStepIds],
+        currentRunId,
+        startedAt,
+        message: t('Workflow completed'),
+      })
+    } catch (error) {
+      const stopped = workflowStopRequestedRef.current || errorText(error).toLowerCase().includes('cancel')
+      const message = stopped ? t('Workflow stopped') : errorText(error)
+      setWorkbenchWorkflowError(message)
+      setWorkbenchWorkflowState({
+        modeId: mode.id,
+        status: stopped ? 'cancelled' : 'failed',
+        currentStepId: null,
+        completedStepIds: [...completedStepIds],
+        currentRunId,
+        startedAt,
+        message,
+      })
+      await invalidateWorkflowQueries(currentRunId)
+    } finally {
+      workflowStopRequestedRef.current = false
+    }
+  }
+
+  function requestWorkbenchWorkflowStop() {
+    workflowStopRequestedRef.current = true
+    setWorkbenchWorkflowState((current) => (
+      current && current.status === 'running'
+        ? { ...current, status: 'stopping', message: t('Cancellation requested; waiting for a safe stop point') }
+        : current
+    ))
+    const immediateRunId = workbenchWorkflowState?.currentRunId ?? liveRun?.id ?? null
+    if (immediateRunId) {
+      cancelMutation.mutate(immediateRunId)
+      return
+    }
+    void queryClient.fetchQuery({ queryKey: ['runs'], queryFn: listRuns }).then((response) => {
+      const latestLiveRun = response.runs.find((run) => isLiveStatus(run.status))
+      if (latestLiveRun) cancelMutation.mutate(latestLiveRun.id)
+    }).catch(() => {
+      // The workflow loop still observes the local stop request even if the live run lookup fails.
+    })
   }
 
   return (
@@ -2162,10 +2340,10 @@ function RunsView() {
         </div>
       ) : null}
 
-      {workflowChartExportMutation.isError || workflowReviewMutation.isError || workflowArchiveMutation.isError ? (
+      {workflowChartExportMutation.isError || workflowReviewMutation.isError || workflowArchiveMutation.isError || workbenchWorkflowError ? (
         <div className="alert" role="alert">
           <ShieldAlert size={18} aria-hidden="true" />
-          <span>{errorText(workflowChartExportMutation.error ?? workflowReviewMutation.error ?? workflowArchiveMutation.error)}</span>
+          <span>{workbenchWorkflowError || errorText(workflowChartExportMutation.error ?? workflowReviewMutation.error ?? workflowArchiveMutation.error)}</span>
         </div>
       ) : null}
 
@@ -2173,11 +2351,21 @@ function RunsView() {
         runs={runs}
         batches={workflowBatches}
         activeBatch={activeWorkflowBatch}
-        activeBatchId={workflowBatchId}
+        modeId={workbenchWorkflowModeId}
+        workflowState={workbenchWorkflowState}
+        marketDataForm={marketDataForm}
+        preselectForm={preselectForm}
+        liveRun={liveRun}
         integrations={settingsQuery.data?.external_integrations ?? []}
         strategies={strategiesQuery.data?.strategies ?? []}
-        selectedStrategyIds={preselectForm.strategy_ids}
+        selectedStrategyIds={effectivePreselectStrategyIds}
         onBatchChange={setWorkflowBatchId}
+        onModeChange={setWorkbenchWorkflowModeId}
+        onMarketDataFieldChange={updateMarketDataField}
+        onPreselectFieldChange={updatePreselectField}
+        onPreselectStrategyToggle={togglePreselectStrategy}
+        onStartWorkflow={() => void runWorkbenchWorkflow()}
+        onStopWorkflow={requestWorkbenchWorkflowStop}
         onDownloadData={() => marketDataMutation.mutate()}
         onRunPreselect={() => preselectMutation.mutate()}
         onExportCharts={() => {
@@ -2187,14 +2375,16 @@ function RunsView() {
           if (activeWorkflowBatch) workflowReviewMutation.mutate(activeWorkflowBatch)
         }}
         onArchive={() => {
-          if (activeWorkflowBatch) workflowArchiveMutation.mutate(activeWorkflowBatch)
+          if (activeWorkflowBatch) {
+            workflowArchiveMutation.mutate({ batch: activeWorkflowBatch, reviewRunId: activeWorkflowBatch.latest_review_run_id })
+          }
         }}
         pending={{
-          marketData: marketDataMutation.isPending,
-          preselect: preselectMutation.isPending,
-          chartExport: workflowChartExportMutation.isPending,
-          review: workflowReviewMutation.isPending,
-          archive: workflowArchiveMutation.isPending,
+          marketData: marketDataMutation.isPending || workbenchWorkflowPending,
+          preselect: preselectMutation.isPending || workbenchWorkflowPending,
+          chartExport: workflowChartExportMutation.isPending || workbenchWorkflowPending,
+          review: workflowReviewMutation.isPending || workbenchWorkflowPending,
+          archive: workflowArchiveMutation.isPending || workbenchWorkflowPending,
         }}
       />
 
@@ -2329,11 +2519,18 @@ function RunsView() {
               value={preselectForm.pick_date}
               onChange={(value) => updatePreselectField('pick_date', value)}
             />
+            <FilterInput
+              label="End date"
+              type="date"
+              placeholder="optional"
+              value={preselectForm.end_date}
+              onChange={(value) => updatePreselectField('end_date', value)}
+            />
             <fieldset className="run-strategy-selector">
               <legend>{t('Strategies for this run')}</legend>
               <div className="run-strategy-grid">
                 {(strategiesQuery.data?.strategies ?? []).map((strategy) => {
-                  const selected = preselectForm.strategy_ids.includes(strategy.id)
+                  const selected = effectivePreselectStrategyIds.includes(strategy.id)
                   return (
                     <label key={strategy.id} className={selected ? 'strategy-option selected' : 'strategy-option'}>
                       <input
@@ -2351,7 +2548,7 @@ function RunsView() {
                 {strategiesQuery.isLoading ? <p className="muted">{t('Loading strategies')}</p> : null}
               </div>
             </fieldset>
-            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending || preselectForm.strategy_ids.length === 0}>
+            <button type="submit" className="action-button run-setup-submit" disabled={preselectMutation.isPending || effectivePreselectStrategyIds.length === 0}>
               {preselectMutation.isPending ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
               <span>{t('Run preselect')}</span>
             </button>
@@ -2441,8 +2638,22 @@ type WorkflowPendingState = {
   archive: boolean
 }
 
+type WorkbenchWorkflowStatus = 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled'
+
+type WorkbenchWorkflowRunState = {
+  modeId: WorkbenchWorkflowModeId
+  status: WorkbenchWorkflowStatus
+  currentStepId: WorkbenchWorkflowStepId | null
+  completedStepIds: WorkbenchWorkflowStepId[]
+  currentRunId: string | null
+  startedAt: string
+  message: string
+}
+
+type WorkflowBatchRef = Pick<CandidateBatchSummary, 'id'>
+
 type WorkflowStep = {
-  id: string
+  id: WorkbenchWorkflowStepId
   title: string
   detail: string
   icon: LucideIcon
@@ -2457,11 +2668,21 @@ function WorkflowPlanPanel({
   runs,
   batches,
   activeBatch,
-  activeBatchId,
+  modeId,
+  workflowState,
+  marketDataForm,
+  preselectForm,
+  liveRun,
   integrations,
   strategies,
   selectedStrategyIds,
   onBatchChange,
+  onModeChange,
+  onMarketDataFieldChange,
+  onPreselectFieldChange,
+  onPreselectStrategyToggle,
+  onStartWorkflow,
+  onStopWorkflow,
   onDownloadData,
   onRunPreselect,
   onExportCharts,
@@ -2472,11 +2693,21 @@ function WorkflowPlanPanel({
   runs: RunSummary[]
   batches: CandidateBatchSummary[]
   activeBatch: CandidateBatchSummary | null
-  activeBatchId: string
+  modeId: WorkbenchWorkflowModeId
+  workflowState: WorkbenchWorkflowRunState | null
+  marketDataForm: Record<keyof MarketDataRunRequest, string>
+  preselectForm: PreselectFormState
+  liveRun: RunSummary | null
   integrations: ExternalIntegrationStatus[]
   strategies: StrategyDefinition[]
   selectedStrategyIds: StrategyPreferenceId[]
   onBatchChange: (batchId: string) => void
+  onModeChange: (modeId: WorkbenchWorkflowModeId) => void
+  onMarketDataFieldChange: (key: keyof MarketDataRunRequest, value: string) => void
+  onPreselectFieldChange: (key: PreselectTextField, value: string) => void
+  onPreselectStrategyToggle: (strategyId: StrategyPreferenceId) => void
+  onStartWorkflow: () => void
+  onStopWorkflow: () => void
   onDownloadData: () => void
   onRunPreselect: () => void
   onExportCharts: () => void
@@ -2485,6 +2716,10 @@ function WorkflowPlanPanel({
   pending: WorkflowPendingState
 }) {
   const { t } = useUiPreferences()
+  const mode = workbenchWorkflowModeById(modeId)
+  const selectedPlan = stepsForWorkbenchWorkflowMode(modeId)
+  const selectedPlanSet = new Set(selectedPlan)
+  const workflowActive = workflowState?.status === 'running' || workflowState?.status === 'stopping'
   const tushare = findIntegration(integrations, 'tushare')
   const gemini = findIntegration(integrations, 'gemini_cli')
   const latestMarketData = findLatestRun(runs, 'market_data', 'succeeded')
@@ -2503,6 +2738,44 @@ function WorkflowPlanPanel({
     : t('No strategy selected')
   const marketBlocked = Boolean(tushare && !tushare.configured)
   const reviewBlocked = Boolean(gemini && !gemini.configured)
+  const modeRequiresExistingBatch = !selectedPlanSet.has('preselect')
+    && selectedPlan.some((step) => step === 'chart-export' || step === 'review' || step === 'archive')
+  const modeRequiresExistingCharts = selectedPlanSet.has('review') && !selectedPlanSet.has('chart-export')
+  const startBlockedReason = workflowActive
+    ? t('Workflow is running')
+    : liveRun
+      ? `${t('A run is already active')}: ${liveRun.id}`
+      : selectedPlanSet.has('market-data') && marketBlocked
+        ? t('Tushare token is not configured')
+        : selectedPlanSet.has('preselect') && selectedStrategyIds.length === 0
+          ? t('Choose at least one strategy before running preselect.')
+          : modeRequiresExistingBatch && !hasCandidateBatch
+            ? t('Create a candidate batch first.')
+            : selectedPlanSet.has('review') && reviewBlocked
+              ? t('Gemini CLI is not configured')
+              : modeRequiresExistingCharts && !hasChartExport
+                ? t('Export charts before review.')
+                : ''
+  const canStartWorkflow = !startBlockedReason
+  const canStopWorkflow = workflowActive || Boolean(liveRun)
+  const workflowDoneLabel = workflowState?.completedStepIds.length
+    ? workflowState.completedStepIds.map((stepId) => workbenchWorkflowSteps[stepId].label).join(', ')
+    : t('none')
+  const currentWorkflowStepLabel = workflowState?.currentStepId
+    ? workbenchWorkflowSteps[workflowState.currentStepId].label
+    : workflowState?.message ?? mode.description
+  const workflowStatusChipState = workflowState?.status === 'succeeded'
+    ? 'done'
+    : workflowActive
+      ? 'running'
+      : workflowState?.status === 'failed' || workflowState?.status === 'cancelled' || startBlockedReason
+        ? 'blocked'
+        : 'ready'
+  const workflowStatusChipLabel = workflowState
+    ? workbenchWorkflowStatusLabel(workflowState.status)
+    : startBlockedReason
+      ? 'Blocked'
+      : 'Ready'
 
   const steps: WorkflowStep[] = [
     {
@@ -2587,24 +2860,14 @@ function WorkflowPlanPanel({
       onAction: onArchive,
       disabled: pending.archive || !hasReview,
     },
-    {
-      id: 'analytics',
-      title: t('Analytics'),
-      detail: hasArchive ? t('Archive evidence is ready for analysis.') : t('Archive first to lock the acceptance snapshot.'),
-      icon: BarChart3,
-      state: hasArchive ? 'ready' : 'waiting',
-      actionLabel: t('Open analytics'),
-      to: hasArchive && activeBatch ? `/analytics?pick_date=${encodeURIComponent(activeBatch.pick_date)}` : undefined,
-      disabled: !hasArchive,
-    },
   ]
 
   return (
     <section className="workflow-plan-panel" aria-label={t('Workflow plan')}>
       <div className="panel-heading workflow-plan-heading">
         <div>
-          <h2>{t('Workflow plan')}</h2>
-          <p>{t('Run the product workflow from daily data to archive evidence.')}</p>
+          <h2>{t('Workbench workflow')}</h2>
+          <p>{t('Legacy Workbench run modes are the primary workflow entry.')}</p>
         </div>
         <div className="workflow-readiness">
           <IntegrationChip status={tushare} fallbackLabel="Tushare" />
@@ -2612,39 +2875,174 @@ function WorkflowPlanPanel({
         </div>
       </div>
 
-      <div className="workflow-batch-row">
-        <label className="filter-field workflow-batch-select">
-          <span>{t('Active candidate batch')}</span>
-          <select
-            value={activeBatch?.id ?? activeBatchId}
-            onChange={(event) => onBatchChange(event.target.value)}
-            disabled={batches.length === 0}
-          >
-            {batches.length === 0 ? <option value="">{t('No candidate batches yet')}</option> : null}
-            {batches.map((batch) => (
-              <option key={batch.id} value={batch.id}>
-                {batch.pick_date} / {batch.candidate_count} {t('candidates')} / {batch.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="workflow-batch-summary">
-          <DataPair label="Batch" value={activeBatch?.id ?? t('Not linked')} />
-          <DataPair label="Pick date" value={activeBatch?.pick_date ?? t('Not set')} />
-          <DataPair label="Strategies" value={activeBatch ? Object.keys(activeBatch.strategy_counts ?? {}).join(', ') || t('none') : selectedStrategyLabel} />
+      <div className="workbench-workflow-grid">
+        <div className="workbench-config-panel" aria-label={t('Task configuration')}>
+          <div className="workbench-section-heading">
+            <div>
+              <h3>{t('Task configuration')}</h3>
+              <p>{t('Run config is captured per product run; default YAML stays untouched.')}</p>
+            </div>
+            <span className={`workflow-state-chip ${workflowStatusChipState}`}>
+              {t(workflowStatusChipLabel)}
+            </span>
+          </div>
+
+          <label className="filter-field">
+            <span>{t('Run mode')}</span>
+            <select value={modeId} onChange={(event) => onModeChange(event.target.value as WorkbenchWorkflowModeId)} disabled={workflowActive}>
+              {workbenchWorkflowModes.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <p className="workbench-mode-description">{mode.description}</p>
+
+          <div className="workbench-parameter-grid">
+            <FilterInput
+              label="Start date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={marketDataForm.start}
+              onChange={(value) => onMarketDataFieldChange('start', value)}
+            />
+            <FilterInput
+              label="End date"
+              type="date"
+              placeholder="YYYY-MM-DD"
+              value={marketDataForm.end}
+              onChange={(value) => onMarketDataFieldChange('end', value)}
+            />
+            <FilterInput
+              label="Workers"
+              placeholder="4"
+              value={marketDataForm.workers}
+              onChange={(value) => onMarketDataFieldChange('workers', value)}
+            />
+            <FilterInput
+              label="Pick date"
+              type="date"
+              placeholder="optional"
+              value={preselectForm.pick_date}
+              onChange={(value) => onPreselectFieldChange('pick_date', value)}
+            />
+            <FilterInput
+              label="End date"
+              type="date"
+              placeholder="optional"
+              value={preselectForm.end_date}
+              onChange={(value) => onPreselectFieldChange('end_date', value)}
+            />
+          </div>
+
+          <label className="filter-field workbench-batch-select">
+            <span>{t('Active candidate batch')}</span>
+            <select
+              value={activeBatch?.id ?? ''}
+              onChange={(event) => onBatchChange(event.target.value)}
+              disabled={batches.length === 0 || workflowActive}
+            >
+              {batches.length === 0 ? <option value="">{t('No candidate batches yet')}</option> : null}
+              {batches.map((batch) => (
+                <option key={batch.id} value={batch.id}>
+                  {batch.pick_date} / {batch.candidate_count} {t('candidates')} / {batch.id}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <fieldset className="run-strategy-selector workbench-strategy-selector">
+            <legend>{t('Strategies for this run')}</legend>
+            <div className="run-strategy-grid">
+              {strategies.map((strategy) => {
+                const selected = selectedStrategyIds.includes(strategy.id)
+                return (
+                  <label key={strategy.id} className={selected ? 'strategy-option selected' : 'strategy-option'}>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => onPreselectStrategyToggle(strategy.id)}
+                      disabled={workflowActive}
+                    />
+                    <span>
+                      <strong>{strategy.label}</strong>
+                      <small>{strategy.description}</small>
+                    </span>
+                  </label>
+                )
+              })}
+              {strategies.length === 0 ? <p className="muted">{t('Loading strategies')}</p> : null}
+            </div>
+          </fieldset>
+
+          <div className="workbench-actions">
+            <button type="button" className="action-button" onClick={onStartWorkflow} disabled={!canStartWorkflow}>
+              {workflowActive ? <Loader2 className="spin" size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+              <span>{t('Start run')}</span>
+            </button>
+            <button type="button" className="action-button danger" onClick={onStopWorkflow} disabled={!canStopWorkflow}>
+              <Ban size={17} aria-hidden="true" />
+              <span>{t('Stop current task')}</span>
+            </button>
+          </div>
+          {startBlockedReason ? <p className="workbench-blocker">{startBlockedReason}</p> : null}
+        </div>
+
+        <div className="workbench-plan-panel" aria-label={t('Run plan')}>
+          <div className="workbench-section-heading">
+            <div>
+              <h3>{t('Run plan')}</h3>
+              <p>{t('Step order mirrors the legacy Workbench command plan.')}</p>
+            </div>
+            <span className="pending-chip">{mode.label}</span>
+          </div>
+
+          <div className="workbench-plan-list">
+            {selectedPlan.map((stepId, index) => {
+              const step = workbenchWorkflowSteps[stepId]
+              const stepState = workflowState?.currentStepId === stepId
+                ? 'running'
+                : workflowState?.completedStepIds.includes(stepId)
+                  ? 'done'
+                  : 'waiting'
+              return (
+                <div className={`workbench-plan-row ${stepState}`} key={step.id}>
+                  <span>{index + 1}</span>
+                  <strong>{step.label}</strong>
+                  <code>{step.command}</code>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="workflow-batch-summary">
+            <DataPair label="Batch" value={activeBatch?.id ?? t('Not linked')} />
+            <DataPair label="Pick date" value={activeBatch?.pick_date ?? t('Not set')} />
+            <DataPair label="Strategies" value={activeBatch ? Object.keys(activeBatch.strategy_counts ?? {}).join(', ') || t('none') : selectedStrategyLabel} />
+          </div>
+
+          <div className="workbench-run-state">
+            <DataPair label="Mode" value={mode.label} />
+            <DataPair label="Current step" value={currentWorkflowStepLabel} />
+            <DataPair label="Completed steps" value={workflowDoneLabel} />
+          </div>
         </div>
       </div>
 
       <div className="workflow-step-list">
         {steps.map((step) => {
           const Icon = step.icon
+          const runtimeState = workflowState?.currentStepId === step.id
+            ? 'running'
+            : workflowState?.completedStepIds.includes(step.id)
+              ? 'done'
+              : step.state
           return (
-            <article className={`workflow-step-card ${step.state}`} key={step.id}>
+            <article className={`workflow-step-card ${runtimeState} ${selectedPlanSet.has(step.id) ? 'planned' : ''}`} key={step.id}>
               <div className="workflow-step-icon" aria-hidden="true">
                 <Icon size={18} />
               </div>
               <div className="workflow-step-copy">
-                <span className={`workflow-state-chip ${step.state}`}>{t(workflowStateLabel(step.state))}</span>
+                <span className={`workflow-state-chip ${runtimeState}`}>{t(workflowStateLabel(runtimeState))}</span>
                 <h3>{step.title}</h3>
                 <p>{step.detail}</p>
               </div>
@@ -2660,7 +3058,7 @@ function WorkflowPlanPanel({
                   onClick={step.onAction}
                   disabled={step.disabled}
                 >
-                  {step.state === 'running' || step.disabled && step.state === 'ready' ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
+                  {runtimeState === 'running' || step.disabled && runtimeState === 'ready' ? <Loader2 className="spin" size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
                   <span>{step.actionLabel}</span>
                 </button>
               ) : null}
@@ -3967,6 +4365,20 @@ function workflowStateLabel(state: WorkflowStepState) {
   if (state === 'blocked') return 'Blocked'
   if (state === 'ready') return 'Ready'
   return 'Waiting'
+}
+
+function workbenchWorkflowStatusLabel(status: WorkbenchWorkflowStatus) {
+  if (status === 'succeeded') return 'Succeeded'
+  if (status === 'failed') return 'Failed'
+  if (status === 'cancelled') return 'Cancelled'
+  if (status === 'stopping') return 'Cancelling'
+  return 'Running'
+}
+
+function ensureWorkflowStepSucceeded(run: RunSummary, stepLabel: string) {
+  if (run.status !== 'succeeded') {
+    throw new Error(`${stepLabel}: ${statusLabels[run.status]}`)
+  }
 }
 
 function runConfigSnapshotEntries(run: RunSummary) {

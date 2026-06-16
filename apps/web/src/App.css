@@ -602,6 +602,7 @@ html[data-theme="dark"] .workbench-plan-panel {
 
 .workbench-section-heading p,
 .workbench-mode-description,
+.workbench-context-note,
 .workbench-blocker {
   margin-top: 4px;
   color: var(--text-muted);

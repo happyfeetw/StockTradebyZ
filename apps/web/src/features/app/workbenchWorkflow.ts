@@ -66,7 +66,7 @@ export const workbenchWorkflowModes: readonly WorkbenchWorkflowMode[] = [
   {
     id: 'preselect-and-charts',
     label: '初选+导出图表',
-    description: '只生成候选批次并导出候选图表。',
+    description: '生成初选结果并导出候选图表。',
     steps: ['preselect', 'chart-export'],
   },
   {
@@ -78,19 +78,19 @@ export const workbenchWorkflowModes: readonly WorkbenchWorkflowMode[] = [
   {
     id: 'preselect-only',
     label: '只跑初选',
-    description: '只生成候选批次。',
+    description: '只生成初选结果。',
     steps: ['preselect'],
   },
   {
     id: 'charts-only',
     label: '只导出图表',
-    description: '对当前候选批次导出图表。',
+    description: '对已有初选结果导出图表。',
     steps: ['chart-export'],
   },
   {
     id: 'review-only',
     label: '只跑复评',
-    description: '对当前候选批次复评，并按旧 Workbench 默认行为归档。',
+    description: '对已有初选结果复评，并按旧 Workbench 默认行为归档。',
     steps: ['review', 'archive'],
   },
 ]

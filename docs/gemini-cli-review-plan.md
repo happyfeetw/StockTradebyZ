@@ -10,6 +10,9 @@ R7 状态：常规产品复评入口是 `POST /api/runs/review/provider`，
 `python run_all.py` wrapper 默认已退休，只能在显式设置对应 rollback flag 时
 用于迁移、parity 或事故恢复。
 
+> AGY 迁移探索：Antigravity CLI 迁移不在本文档直接展开，当前探索设计见
+> [`docs/agy-cli-review-migration-exploration-plan.md`](agy-cli-review-migration-exploration-plan.md)。
+
 ## 背景
 
 历史 legacy 主流程为：

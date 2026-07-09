@@ -1,0 +1,46 @@
+# agy_cli_review.yaml
+# Antigravity CLI 实验复评配置（相对路径基于项目根目录）
+
+# 候选列表 JSON
+candidates: data/candidates/candidates_latest.json
+
+# 候选图表目录（其下按 pick_date 分目录）
+kline_dir: data/kline
+
+# 实验结果输出目录。保持与正式 data/review/{pick_date} 隔离。
+output_dir: data/review/agy_cli_experimental
+
+# 提示词文件
+prompt_path: agent/prompt.md
+
+# AGY CLI 可执行文件名或绝对路径
+agy_bin: agy
+
+# AGY print mode 超时
+print_timeout: 10m
+
+# Python 子进程总超时（秒）
+timeout_seconds: 900
+
+# 相邻 CLI 调用间隔（秒）
+request_delay: 10
+
+# 默认只跑 1 支，避免实验 reviewer 误跑完整批次
+max_items: 1
+
+# true: 跳过已存在的 agy-cli-experimental 单股 JSON（断点续跑）
+skip_existing: true
+
+# 推荐最小分数门槛
+suggest_min_score: 4.0
+
+# 保存每次 AGY CLI 调用的 prompt/stdout/stderr/meta
+save_raw_cli_io: true
+
+# 原始调用日志目录；留空时使用 data/review/agy_cli_experimental/{pick_date}/agy_cli_runs
+raw_log_dir: ""
+
+# 只用于校验当前 Antigravity 持久模型设置；AGY 1.0.1 仍没有 per-call --model。
+settings_path: ~/.gemini/antigravity-cli/settings.json
+expected_model_label: ""
+fail_on_model_mismatch: false
